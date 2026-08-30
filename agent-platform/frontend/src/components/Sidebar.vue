@@ -21,7 +21,10 @@
           <text x="16" y="22" text-anchor="middle" fill="white" font-size="18" font-weight="bold" font-family="sans-serif">A</text>
         </svg>
       </div>
+      <!-- 高山流水 · 知音印章（仅夜墨/宣纸主题显示） -->
+      <img class="sidebar__logo-seal" :src="sealLogo" alt="知音印章" />
       <span v-show="!collapsed" class="sidebar__logo-text">Agent平台</span>
+      <span v-show="!collapsed" class="sidebar__logo-brand">高山流水</span>
     </div>
 
     <!-- 导航列表 -->
@@ -85,6 +88,8 @@ import {
 import { useAuthStore } from '@/stores/auth'
 import { isModuleEnabled, getModulePermission, type ModuleKey } from '@/config/modules'
 import { unhandledEventCount } from '@/api/security'
+// 高山流水 · 知音印章（ART-ASSET-0006）
+import sealLogo from '@/assets/art/brand/seal-logo.webp'
 
 defineProps<{
   collapsed: boolean
@@ -307,6 +312,83 @@ function isNavItemActive(path: string): boolean {
 .sidebar__footer {
   padding: var(--spacing-2);
   border-top: 1px solid var(--color-border-light);
+}
+
+// ============================================================
+// 高山流水 · 溪岸侧栏（ART-DIR-0002 P1，仅 ye-mo / xuan-zhi 生效）
+// ============================================================
+// 印章/字标默认隐藏（旧主题用原 SVG + 文字）
+.sidebar__logo-seal,
+.sidebar__logo-brand {
+  display: none;
+}
+
+[data-theme="ye-mo"],
+[data-theme="xuan-zhi"] {
+  .sidebar__logo-icon,
+  .sidebar__logo-text {
+    display: none;
+  }
+
+  .sidebar__logo-seal {
+    display: block;
+    width: 28px;
+    height: 28px;
+    object-fit: contain;
+    flex-shrink: 0;
+  }
+
+  .sidebar__logo-brand {
+    display: block;
+    font-family: var(--font-display);
+    font-size: var(--font-size-lg);
+    letter-spacing: 0.14em;
+    color: var(--color-text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+  }
+
+  // 活跃项：左侧 2px 朱砂竖痕 + 淡青底光（「溪边水草」）
+  .sidebar__nav-item {
+    position: relative;
+
+    &--active {
+      color: var(--color-primary);
+      background: rgba(var(--color-primary-rgb), 0.10);
+      font-weight: var(--font-weight-medium);
+
+      &::before {
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 20%;
+        bottom: 20%;
+        width: 2px;
+        border-radius: 1px;
+        background: var(--ink-zhusha, #b54434);
+      }
+    }
+
+    &:hover {
+      background: rgba(var(--color-primary-rgb), 0.05);
+    }
+  }
+
+  // logo 区底部换发丝渐变线（远山淡去）
+  .sidebar__logo {
+    border-bottom: none;
+    position: relative;
+
+    &::after {
+      content: '';
+      position: absolute;
+      left: var(--spacing-4);
+      right: var(--spacing-4);
+      bottom: 0;
+      height: 1px;
+      background: linear-gradient(90deg, var(--color-border) 0%, transparent 80%);
+    }
+  }
 }
 
 .sidebar__toggle {

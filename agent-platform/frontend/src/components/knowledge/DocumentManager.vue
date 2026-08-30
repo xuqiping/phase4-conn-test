@@ -39,7 +39,7 @@
       size="small"
       @update:expanded-row-keys="onExpandedChange"
     />
-    <n-empty v-if="!loading && docs.length === 0" description="暂无文档，上传一个开始解析与索引" />
+    <InkEmptyState v-if="!loading && docs.length === 0" type="data" description="暂无文档，上传一个开始解析与索引" />
 
     <!-- 上传选项（docType / 索引方式 / 手动文本 / Excel sheet） -->
     <DocumentOptionsModal
@@ -97,11 +97,12 @@
 <script setup lang="ts">
 import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
-  NButton, NDataTable, NEmpty, NIcon, NInput, NModal, NSpace, NTag, NUpload, NUploadDragger, useMessage
+  NButton, NDataTable, NIcon, NInput, NModal, NSpace, NTag, NUpload, NUploadDragger, useMessage
 } from 'naive-ui'
 import type { DataTableColumns, UploadCustomRequestOptions } from 'naive-ui'
 import { CloudUploadOutline, CreateOutline } from '@vicons/ionicons5'
 import { useKnowledgeStore } from '@/stores/knowledge'
+import InkEmptyState from '@/components/InkEmptyState.vue'
 import { useAuthStore } from '@/stores/auth'
 import { knowledgeApi } from '@/api/knowledge'
 import type { KnowledgeDocument, KnowledgeDocumentMetadataUpdate, KnowledgeDocumentVersion, KnowledgeNode, SheetPreview, UploadOptions } from '@/api/knowledge'

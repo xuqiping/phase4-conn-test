@@ -25,7 +25,7 @@
         </div>
       </div>
     </div>
-    <n-empty v-else description="暂未配置个人API Key，将使用全局供应商" />
+    <InkEmptyState v-else type="data" description="暂未配置个人API Key，将使用全局供应商" />
 
     <n-modal v-model:show="showModal" preset="card" :title="editingId ? '编辑API Key' : '添加API Key'" :style="{ maxWidth: '480px', width: '90vw' }">
       <n-form label-placement="left" label-width="100">
@@ -53,9 +53,10 @@
 
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
-import { NButton, NIcon, NModal, NForm, NFormItem, NInput, NSelect, NTag, NEmpty, useMessage } from 'naive-ui'
+import { NButton, NIcon, NModal, NForm, NFormItem, NInput, NSelect, NTag, useMessage } from 'naive-ui'
 import { AddOutline } from '@vicons/ionicons5'
 import { llmApi } from '@/api/llm'
+import InkEmptyState from '@/components/InkEmptyState.vue'
 import type { UserLlmProvider, UserLlmProviderRequest, LlmProvider } from '@/api/llm'
 
 const message = useMessage()

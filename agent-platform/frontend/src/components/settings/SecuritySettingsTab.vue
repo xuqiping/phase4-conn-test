@@ -11,7 +11,7 @@
         <n-spin size="small" />
         <span>加载中…</span>
       </div>
-      <n-empty v-else-if="credentials.length === 0" description="暂无凭证数据" />
+      <InkEmptyState v-else-if="credentials.length === 0" type="data" description="暂无凭证数据" />
       <n-space v-else vertical :size="12">
         <div
           v-for="item in credentials"
@@ -200,10 +200,11 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import type { FormInst, FormRules } from 'naive-ui'
 import {
-  NCard, NForm, NFormItem, NInput, NButton, NEmpty, NTag,
+  NCard, NForm, NFormItem, NInput, NButton, NTag,
   NAlert, NSpace, NSpin, NModal, useMessage, useDialog
 } from 'naive-ui'
 import { authApi, type CredentialItem, type AuthChannels } from '@/api/auth'
+import InkEmptyState from '@/components/InkEmptyState.vue'
 import { useAuthStore } from '@/stores/auth'
 import TotpSettingsCard from './TotpSettingsCard.vue'
 

@@ -1,6 +1,11 @@
 <template>
-  <!-- Naive UI 的 ConfigProvider 用于全局配置暗色主题 -->
-  <n-config-provider :theme="darkTheme" :locale="zhCN" :date-locale="dateZhCN">
+  <!-- Naive UI ConfigProvider：主题基座与 themeOverrides 随当前主题计算（高山流水双主题接入） -->
+  <n-config-provider
+    :theme="naiveBaseTheme"
+    :theme-overrides="naiveOverrides"
+    :locale="zhCN"
+    :date-locale="dateZhCN"
+  >
     <n-message-provider>
       <n-dialog-provider>
         <n-notification-provider>
@@ -12,7 +17,20 @@
 </template>
 
 <script setup lang="ts">
-import { darkTheme, zhCN, dateZhCN } from 'naive-ui'
+import { computed, onMounted } from 'vue'
+import { zhCN, dateZhCN } from 'naive-ui'
+import { useThemeStore } from '@/stores/theme'
+import { getNaiveBaseTheme, getNaiveOverrides } from '@/styles/naive-overrides'
+
+const themeStore = useThemeStore()
+
+// 启动即初始化主题（含登录页等不经 MainLayout 的路由）
+onMounted(() => {
+  themeStore.initTheme()
+})
+
+const naiveBaseTheme = computed(() => getNaiveBaseTheme(themeStore.currentTheme))
+const naiveOverrides = computed(() => getNaiveOverrides(themeStore.currentTheme))
 </script>
 
 <style lang="scss">

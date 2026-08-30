@@ -306,4 +306,31 @@ async function handleUserMenu(key: string) {
     white-space: nowrap;
   }
 }
+
+// ============================================================
+// 高山流水 · 顶栏（ART-DIR-0002 P2，仅 ye-mo / xuan-zhi 生效）
+// 页标题文楷化 + 底部发丝渐变线（远山淡去）
+// ============================================================
+[data-theme="ye-mo"],
+[data-theme="xuan-zhi"] {
+  .app-header__page-title {
+    font-family: var(--font-display);
+    letter-spacing: 0.06em;
+  }
+
+  .app-header {
+    border-bottom: none;
+    position: relative;
+
+    &::after {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 1px;
+      background: linear-gradient(90deg, var(--color-border) 0%, transparent 80%);
+    }
+  }
+}
 </style>

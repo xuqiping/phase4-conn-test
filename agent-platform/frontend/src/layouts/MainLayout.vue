@@ -22,6 +22,13 @@
 
       <!-- 主内容区 -->
       <main class="main-layout__content">
+        <!-- 高山流水 · 晨昏云雾背景层（仅夜墨/宣纸主题可见） -->
+        <div
+          class="main-layout__mist"
+          :class="`main-layout__mist--${mistPeriod}`"
+          :style="{ '--mist-img': `url(${mistImage})` }"
+          aria-hidden="true"
+        ></div>
         <router-view v-slot="{ Component }">
           <transition name="fade" mode="out-in">
             <component :is="Component" />
@@ -33,7 +40,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import Sidebar from '@/components/Sidebar.vue'
 import AppHeader from '@/components/AppHeader.vue'
@@ -46,6 +53,17 @@ const authStore = useAuthStore()
 const themeStore = useThemeStore()
 const route = useRoute()
 const { isMobile } = useBreakpoints()
+
+// 晨昏判定：6:00–17:59 为晨，其余为暮（驱动云雾背景层两版）
+const mistPeriod = computed(() => {
+  const h = new Date().getHours()
+  return h >= 6 && h < 18 ? 'dawn' : 'dusk'
+})
+
+// 晨昏云雾美术资产（ART-ASSET-0002，已验收回填）
+import mistDawn from '@/assets/art/workbench/mist-dawn.webp'
+import mistDusk from '@/assets/art/workbench/mist-dusk.webp'
+const mistImage = computed(() => (mistPeriod.value === 'dawn' ? mistDawn : mistDusk))
 
 // 侧栏折叠状态（桌面端）
 const sidebarCollapsed = ref(getStorage<boolean>(STORAGE_KEYS.SIDEBAR_COLLAPSED) || false)
@@ -140,5 +158,59 @@ onMounted(async () => {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+</style>
+
+<!-- ============================================================
+     高山流水 · 主内容区云雾背景层（仅 ye-mo / xuan-zhi 生效）
+     现为纯 CSS 渐变占位；ART-ASSET-0002 回填后把 background-image
+     换成 mist-dawn/mist-dusk 图片即可（--mist-img 钩子已留）
+     ============================================================ -->
+<style lang="scss">
+.main-layout__mist {
+  display: none; // 旧主题不出现
+}
+
+[data-theme="ye-mo"],
+[data-theme="xuan-zhi"] {
+  .main-layout__content {
+    position: relative;
+  }
+
+  .main-layout__mist {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0.18;
+    background-image: var(--mist-img, none);
+    background-size: cover;
+    background-position: center top;
+    // 占位渐变：柔光自顶部弥漫 + 底部远山剪影
+    background-color: transparent;
+
+    &--dawn {
+      background-image: var(--mist-img, linear-gradient(180deg,
+        rgba(var(--color-primary-rgb), 0.10) 0%,
+        transparent 45%));
+    }
+
+    &--dusk {
+      background-image: var(--mist-img, linear-gradient(180deg,
+        rgba(138, 128, 163, 0.12) 0%,
+        transparent 45%));
+    }
+  }
+
+  // 内容压在云雾层之上
+  .main-layout__content > *:not(.main-layout__mist) {
+    position: relative;
+    z-index: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .main-layout__mist { opacity: 0.06 !important; }
 }
 </style>

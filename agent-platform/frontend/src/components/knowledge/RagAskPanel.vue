@@ -67,13 +67,14 @@
         </div>
       </div>
     </div>
-    <n-empty v-else class="rag-ask__empty" description="选择知识库并提问，答案将流式返回并标注证据引用。" />
+    <InkEmptyState v-else class="rag-ask__empty" type="data" description="选择知识库并提问，答案将流式返回并标注证据引用。" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref, onUnmounted } from 'vue'
-import { NButton, NEmpty, NInput, NSelect, NSpin, NTag, useMessage } from 'naive-ui'
+import { NButton, NInput, NSelect, NSpin, NTag, useMessage } from 'naive-ui'
+import InkEmptyState from '@/components/InkEmptyState.vue'
 import { askStream, knowledgeApi, type RagCitation } from '@/api/knowledge'
 import { useProjectGroupStore } from '@/stores/projectGroup'
 import { getStorage, STORAGE_KEYS } from '@/utils/storage'
@@ -248,4 +249,16 @@ onUnmounted(() => { abortController?.abort() })
 .rag-ask__citation-title { color: var(--color-text-primary, #eee); }
 .rag-ask__citation-meta { color: var(--color-text-tertiary, #777); font-size: 12px; }
 .rag-ask__empty { padding: var(--spacing-5) 0; }
+
+// 高山流水批次C：问题输入框 focus 淡青边光（仅 ink 主题，旧三主题零变化）
+[data-theme="ye-mo"],
+[data-theme="xuan-zhi"] {
+  .rag-ask__query {
+    transition: box-shadow 300ms var(--ease-cloud);
+
+    &:focus-within {
+      box-shadow: 0 0 0 3px rgba(var(--color-primary-rgb), 0.12);
+    }
+  }
+}
 </style>

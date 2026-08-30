@@ -341,4 +341,22 @@ function handleSend() {
     flex-wrap: wrap;
   }
 }
+
+// 高山流水批次C · 流水：输入框 focus 边框淡青扩散涟漪（仅 ink 主题，旧三主题零变化）
+[data-theme="ye-mo"],
+[data-theme="xuan-zhi"] {
+  .chat-input__row :deep(.n-input) {
+    transition: box-shadow 300ms var(--ease-cloud), border-color 300ms var(--ease-cloud);
+
+    &:focus-within {
+      box-shadow: 0 0 0 3px rgba(var(--color-primary-rgb), 0.12);
+      border-color: var(--color-primary);
+    }
+
+    .n-input__border,
+    .n-input__state-border {
+      transition: border-color 300ms var(--ease-cloud);
+    }
+  }
+}
 </style>

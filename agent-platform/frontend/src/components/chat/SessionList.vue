@@ -254,4 +254,14 @@ function formatTime(dateStr: string | null): string {
   font-size: 11px;
   color: var(--color-text-tertiary);
 }
+
+// 高山流水批次C · 流水：活跃会话左侧 2px 淡青竖痕（如溪边水草；非朱砂——会话是流水意象）
+// 仅 ink 主题；旧三主题保持原 3px 主色边
+[data-theme="ye-mo"],
+[data-theme="xuan-zhi"] {
+  .session-list__item--active {
+    border-left-width: 2px;
+    border-left-color: var(--color-primary);
+  }
+}
 </style>
