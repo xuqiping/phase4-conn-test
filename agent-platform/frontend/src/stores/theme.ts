@@ -15,6 +15,11 @@ export interface ThemeMeta {
   name: ThemeName
   label: string
   description: string
+  /**
+   * 隐藏标志（FR-3）：true = 不出现在主题选择器（高山流水量产决策：只保留 夜墨/宣纸 对外可见）。
+   * 隐藏≠删除——scss/类型/naive 覆盖分支全保留，恢复对外可见 = 删掉本标志一行。
+   */
+  hidden?: boolean
   /** 预览色块：主色 + 渐变起始色 + 渐变结束色 */
   colors: {
     primary: string
@@ -30,6 +35,7 @@ export const THEME_LIST: ThemeMeta[] = [
     name: 'deep-space',
     label: 'Deep Space',
     description: '深邃宇宙 — 冷蓝强调，玻璃拟态',
+    hidden: true,
     colors: {
       primary: '#4F7CFF',
       gradientStart: '#4F7CFF',
@@ -41,6 +47,7 @@ export const THEME_LIST: ThemeMeta[] = [
     name: 'dark-pro',
     label: 'Dark Pro',
     description: '暗夜专业 — 绿色强调，视觉舒适',
+    hidden: true,
     colors: {
       primary: '#10B981',
       gradientStart: '#10B981',
@@ -52,6 +59,7 @@ export const THEME_LIST: ThemeMeta[] = [
     name: 'cyber-glow',
     label: 'Cyber Glow',
     description: '赛博辉光 — 霓虹多色，发光边框',
+    hidden: true,
     colors: {
       primary: '#E040FB',
       gradientStart: '#E040FB',
@@ -94,6 +102,8 @@ export const useThemeStore = defineStore('theme', () => {
   const currentThemeMeta = computed(() =>
     THEME_LIST.find(t => t.name === currentTheme.value) || THEME_LIST[0]
   )
+  /** 主题选择器可见清单（FR-3：hidden 主题不展示，恢复=删标志） */
+  const visibleThemes = computed(() => THEME_LIST.filter(t => !t.hidden))
 
   // === Actions ===
 
@@ -110,15 +120,23 @@ export const useThemeStore = defineStore('theme', () => {
   }
 
   /**
-   * 初始化主题（应用启动时调用）
+   * 初始化主题（应用启动时调用）。
+   * FR-3 迁移：存量用户 localStorage 若存的是被隐藏的旧主题 → 落夜墨并改写持久化，
+   * 避免出现「选择器里没有的暗色主题」幽灵态。
    */
   function initTheme() {
+    const meta = THEME_LIST.find(t => t.name === currentTheme.value)
+    if (meta?.hidden) {
+      setTheme('ye-mo')
+      return
+    }
     setTheme(currentTheme.value)
   }
 
   return {
     currentTheme,
     currentThemeMeta,
+    visibleThemes,
     setTheme,
     initTheme
   }

@@ -53,7 +53,7 @@
 import { computed } from 'vue'
 import { NModal, NIcon } from 'naive-ui'
 import { CheckmarkOutline } from '@vicons/ionicons5'
-import { useThemeStore, THEME_LIST, type ThemeName } from '@/stores/theme'
+import { useThemeStore, type ThemeName } from '@/stores/theme'
 
 defineProps<{
   show: boolean
@@ -65,7 +65,8 @@ const emit = defineEmits<{
 
 const themeStore = useThemeStore()
 const currentTheme = computed(() => themeStore.currentTheme)
-const themeList = THEME_LIST
+// FR-3：可见主题来自 store（hidden 的旧 3 套不展示；模块级常量快照不会随 store 变，必须走响应式）
+const themeList = computed(() => themeStore.visibleThemes)
 
 /** 选择主题 */
 function selectTheme(name: ThemeName) {

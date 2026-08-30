@@ -33,16 +33,33 @@ describe('theme store', () => {
     expect(document.documentElement.getAttribute('data-theme')).toBe('dark-pro')
   })
 
-  it('initTheme applies stored theme', () => {
+  it('initTheme keeps stored visible theme（xuan-zhi）', () => {
+    localStorage.setItem(STORAGE_KEYS.THEME, JSON.stringify('xuan-zhi'))
+    setActivePinia(createPinia())
+    const store = useThemeStore()
+    store.initTheme()
+    expect(document.documentElement.getAttribute('data-theme')).toBe('xuan-zhi')
+  })
+
+  // FR-3 迁移：存量旧主题（已隐藏）→ 落夜墨并改写持久化，不出现「选择器里没有的幽灵主题」
+  it('initTheme migrates stored hidden theme to ye-mo and persists', () => {
     localStorage.setItem(STORAGE_KEYS.THEME, JSON.stringify('cyber-glow'))
     setActivePinia(createPinia())
     const store = useThemeStore()
     store.initTheme()
-    expect(document.documentElement.getAttribute('data-theme')).toBe('cyber-glow')
+    expect(store.currentTheme).toBe('ye-mo')
+    expect(document.documentElement.getAttribute('data-theme')).toBe('ye-mo')
+    expect(getStorage<string>(STORAGE_KEYS.THEME)).toBe('ye-mo')
   })
 
   it('THEME_LIST has 5 themes（旧三套 + 高山流水双主题）', () => {
     expect(THEME_LIST).toHaveLength(5)
     expect(THEME_LIST.map(t => t.name)).toEqual(['deep-space', 'dark-pro', 'cyber-glow', 'ye-mo', 'xuan-zhi'])
+  })
+
+  // FR-3 隐藏口径：选择器只见 夜墨/宣纸；隐藏≠删除（THEME_LIST 仍 5 项）
+  it('visibleThemes only exposes ye-mo and xuan-zhi', () => {
+    const store = useThemeStore()
+    expect(store.visibleThemes.map(t => t.name)).toEqual(['ye-mo', 'xuan-zhi'])
   })
 })
