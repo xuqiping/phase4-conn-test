@@ -21,7 +21,7 @@
 - UI库：Naive UI（暗色主题）
 - 状态：Pinia stores（`stores/auth.ts`、`stores/theme.ts`）
 - API：`src/api/request.ts` Axios实例（自动JWT注入+401刷新）
-- 主题：3套暗色（deep-space/dark-pro/cyber-glow），CSS变量驱动
+- 主题：高山流水双主题 夜墨ye-mo(默认)/宣纸xuan-zhi，CSS变量驱动；旧3套暗色 hidden 隐藏未删（theme.ts）
 - 样式：Sass，BEM命名，CSS变量引用主题色
 - 路由：`src/router/index.ts`，守卫检查认证
 
