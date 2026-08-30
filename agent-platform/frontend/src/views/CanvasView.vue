@@ -1,5 +1,7 @@
 <template>
   <div class="canvas-view">
+    <!-- 雾中浮岛场景层（ART-DIR-0002R 方向二，仅 ink 主题渲染） -->
+    <ModuleScene scene="canvas" />
     <!-- 无权限兜底（直访 /canvas 无 canvas:write） -->
     <n-card v-if="!canEdit" class="canvas-view__forbid" title="无访问权限">
       <p>无限画布需要「canvas:write」权限。请联系管理员授权后重试。</p>
@@ -7,21 +9,23 @@
 
     <!-- 列表模式：我的画布 -->
     <div v-else-if="!editingId" class="canvas-view__list">
-      <div class="canvas-view__header">
-        <h2 class="canvas-view__title">我的画布</h2>
-        <n-button type="primary" :loading="creating" @click="onCreate">
-          <template #icon><n-icon :component="AddOutline" /></template>
-          新建画布
-        </n-button>
-      </div>
+      <!-- 高山流水 P3：统一页头（新建画布进 actions） -->
+      <PageHeader title="我的画布">
+        <template #actions>
+          <n-button type="primary" :loading="creating" @click="onCreate">
+            <template #icon><n-icon :component="AddOutline" /></template>
+            新建画布
+          </n-button>
+        </template>
+      </PageHeader>
 
       <n-spin :show="loadingList">
-        <n-empty v-if="!canvases.length" description="还没有画布，点击「新建画布」开始创作" />
+        <InkEmptyState v-if="!canvases.length" type="data" description="还没有画布，点击「新建画布」开始创作" />
         <div v-else class="canvas-view__grid">
           <div
             v-for="c in canvases"
             :key="c.id"
-            class="canvas-card"
+            class="canvas-card u-ink-card"
             @click="openEditor(c.id)"
           >
             <div class="canvas-card__icon">
@@ -402,6 +406,9 @@ import type { ResolveVO } from '@/types/asset'
 import { MEDIA_TYPE } from '@/types/asset'
 import type { CanvasGroup, CanvasNode, CanvasSnapshot, MentionCandidate, StoryboardSegment } from '@/types/canvas'
 import CanvasBoard from '@/components/canvas/CanvasBoard.vue'
+import InkEmptyState from '@/components/InkEmptyState.vue'
+import PageHeader from '@/components/PageHeader.vue'
+import ModuleScene from '@/components/ModuleScene.vue'
 import PropertyPanel from '@/components/canvas/PropertyPanel.vue'
 import FocusEditOverlay from '@/components/canvas/FocusEditOverlay.vue'
 import AnnotateOverlay, { type AnnotateConfirmPayload } from '@/components/canvas/AnnotateOverlay.vue'
@@ -2825,19 +2832,6 @@ function flushPendingSave() {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-3);
-}
-
-.canvas-view__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.canvas-view__title {
-  font-size: var(--font-size-xl);
-  font-weight: var(--font-weight-bold);
-  color: var(--color-text-primary);
-  margin: 0;
 }
 
 .canvas-view__grid {
