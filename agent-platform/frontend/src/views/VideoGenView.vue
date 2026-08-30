@@ -1,19 +1,21 @@
 <template>
   <div class="video-gen">
-    <div class="video-gen__header">
-      <h2>视频生成</h2>
-      <span class="video-gen__sub">文生视频 / 图+视频+音频 多模态参考生视频</span>
-    </div>
+    <!-- 雾中浮岛场景层（ART-DIR-0002R 方向二，仅 ink 主题渲染） -->
+    <ModuleScene scene="video-gen" />
+    <!-- 高山流水批次C：统一页头（ART-DIR-0002 P3，ink 主题文楷+发丝线，旧主题零变化） -->
+    <PageHeader title="视频生成" sub="文生视频 / 图+视频+音频 多模态参考生视频" />
 
     <!-- 无权限：gated 前端落地（菜单已隐藏入口，此处兜底直访 URL 场景） -->
-    <n-empty
+    <InkEmptyState
       v-if="!canGen"
+      type="forbidden"
       description="无 media:gen 权限，请联系管理员授权"
       class="video-gen__forbidden"
     />
 
-    <n-empty
+    <InkEmptyState
       v-else-if="modelsLoaded && models.length === 0"
+      type="data"
       description="暂无可用视频模型，请联系管理员在「全局模型供应商」配置 VIDEO 类供应商"
       class="video-gen__forbidden"
     />
@@ -23,7 +25,7 @@
       <n-tab-pane name="gen" tab="视频生成" display-directive="show">
         <div class="video-gen__grid" :class="{ 'video-gen__grid--mobile': isMobile }">
       <!-- 左：生成表单 -->
-      <n-card class="video-gen__form" title="生成参数" size="small">
+      <n-card class="video-gen__form u-ink-card" title="生成参数" size="small">
         <n-form label-placement="top">
           <n-form-item label="视频模型">
             <n-select
@@ -286,7 +288,7 @@
       <!-- 右：活动任务 + 历史 -->
       <div class="video-gen__result">
         <!-- 活动任务 -->
-        <n-card class="video-gen__active" size="small">
+        <n-card class="video-gen__active u-ink-card" size="small">
           <template #header>
             <n-space align="center" size="small">
               <span>当前任务</span>
@@ -393,7 +395,7 @@
         </n-card>
 
         <!-- 历史列表 -->
-        <n-card class="video-gen__history" title="历史任务" size="small">
+        <n-card class="video-gen__history u-ink-card" title="历史任务" size="small">
           <div class="video-gen__history-filters">
             <n-input
               v-model:value="historyQuery"
@@ -475,7 +477,7 @@
 import { uuid } from '@/utils/uuid'
 import { h, computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import {
-  NAlert, NButton, NCard, NDataTable, NDatePicker, NEmpty, NForm, NFormItem, NInput,
+  NAlert, NButton, NCard, NDataTable, NDatePicker, NForm, NFormItem, NInput,
   NModal, NSelect, NSpace, NSpin, NSwitch, NTabPane, NTabs, NTag, NUpload,
   useDialog, useMessage
 } from 'naive-ui'
@@ -501,6 +503,9 @@ import MediaTaskVideoPreview from '@/components/media/MediaTaskVideoPreview.vue'
 import MediaTaskRequestDetails from '@/components/media/MediaTaskRequestDetails.vue'
 import SaveVideoToAssetDialog from '@/components/media/SaveVideoToAssetDialog.vue'
 import VideoReversePanel from '@/components/media/VideoReversePanel.vue'
+import InkEmptyState from '@/components/InkEmptyState.vue'
+import PageHeader from '@/components/PageHeader.vue'
+import ModuleScene from '@/components/ModuleScene.vue'
 import { MEDIA_TYPE } from '@/types/asset'
 import type { AssetFilePicked } from '@/types/asset'
 import type { MentionCandidate } from '@/types/canvas'
@@ -1516,23 +1521,7 @@ onUnmounted(() => {
   height: 100%;
   overflow-y: auto;
 
-  &__header {
-    display: flex;
-    align-items: baseline;
-    gap: var(--spacing-3);
-    margin-bottom: var(--spacing-4);
-
-    h2 {
-      margin: 0;
-      font-size: 20px;
-      color: var(--color-text-primary);
-    }
-  }
-
-  &__sub {
-    font-size: 13px;
-    color: var(--color-text-secondary);
-  }
+  // 页头已由 PageHeader 组件承担（批次C）
 
   &__forbidden {
     padding: var(--spacing-8) 0;
@@ -1849,9 +1838,6 @@ onUnmounted(() => {
     &__history-filters {
       grid-template-columns: 1fr;
     }
-  }
-  .video-gen__header {
-    flex-wrap: wrap;
   }
 }
 .video-gen__estimate {
