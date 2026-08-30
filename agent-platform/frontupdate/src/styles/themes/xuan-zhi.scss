@@ -1,0 +1,71 @@
+// ============================================================
+// 宣纸 xuan-zhi 主题 — 高山流水·亮色（DESIGN-TOKEN-0001）
+// 宣纸底 + 墨色文 + 深天青主色 + 朱砂印章点缀
+// ============================================================
+
+[data-theme="xuan-zhi"] {
+  // === 主色：深天青（亮底保对比度）===
+  --color-primary:         #35687F;
+  --color-primary-hover:   #2F5D72;
+  --color-primary-active:  #28505F;
+  --color-primary-light:   rgba(53, 104, 127, 0.12);
+  --color-primary-rgb:     53, 104, 127;
+
+  // === 语义色 ===
+  --color-secondary:       #6B655A;
+  --color-success:         #3E8E63;
+  --color-warning:         #B07A28;
+  --color-danger:          #C03A2E;
+  --color-info:            #4A6E9E;
+
+  // === 背景层级：宣纸 ===
+  --color-bg:              #F5F1E6;
+  --color-surface:         #ECE6D6;
+  --color-card:            #FDFBF4;
+  --color-elevated:        #FFFEFA;
+  --color-overlay:         rgba(38, 34, 28, 0.5);
+
+  // === 文字：墨色 ===
+  --color-text-primary:    #26221C;
+  --color-text-secondary:  #6B655A;
+  --color-text-tertiary:   #9A927F;
+  --color-text-inverse:    #F5F1E6;
+  --color-text-link:       #35687F;
+
+  // === 边框 ===
+  --color-border:          #D8D0BC;
+  --color-border-light:    #E4DCC8;
+  --color-border-focus:    #35687F;
+
+  // === 渐变：深天青 → 石青 ===
+  --color-gradient-start:  #35687F;
+  --color-gradient-end:    #4E7FA6;
+
+  // === 品牌点缀：朱砂印章 ===
+  --color-seal:            #B54434;
+
+  // === 字体 ===
+  --font-family-base: 'Noto Sans SC', 'Inter', 'PingFang SC', 'Microsoft YaHei', -apple-system, sans-serif;
+
+  // === 圆角收敛 ===
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+
+  // === 阴影：暖纸柔影 ===
+  --shadow-sm:      0 1px 3px rgba(74, 63, 43, 0.08);
+  --shadow-base:    0 2px 10px rgba(74, 63, 43, 0.10);
+  --shadow-md:      0 6px 20px rgba(74, 63, 43, 0.12);
+  --shadow-lg:      0 10px 32px rgba(74, 63, 43, 0.14);
+  --shadow-xl:      0 16px 48px rgba(74, 63, 43, 0.16);
+  --shadow-primary: 0 4px 16px rgba(53, 104, 127, 0.18);
+  --shadow-glow:    0 0 24px rgba(53, 104, 127, 0.06);
+
+  // === 动效：云雾缓动 ===
+  --duration-fast:    150ms;
+  --duration-normal:  300ms;
+  --duration-slow:    400ms;
+  --duration-slower:  400ms;
+  --ease-out:      cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-in-out:   cubic-bezier(0.22, 0.61, 0.36, 1);
+}

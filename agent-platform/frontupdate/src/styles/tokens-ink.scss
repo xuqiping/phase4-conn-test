@@ -1,0 +1,54 @@
+// ============================================================
+// 高山流水 · 原始层原语（DESIGN-TOKEN-0001）
+// 传统色板 + 书法字体 + 云雾缓动 + 纹理参数
+// 只被 ye-mo.scss / xuan-zhi.scss 引用，不直接用于组件
+// ============================================================
+
+// === 书法展示字体（霞鹜文楷 SIL OFL，子集化自托管）===
+// 文件由 scripts/subset-font.py 生成到 public/fonts/；缺失时静默回退正文栈
+@font-face {
+  font-family: 'LXGW WenKai';
+  src: url('/fonts/lxgw-wenkai-display.woff2') format('woff2');
+  font-display: swap;
+  font-weight: 400;
+  font-style: normal;
+}
+
+:root {
+  // === 传统色原语（命名=色名，值=文化色）===
+  --ink-dai:            #151D29;  // 黛蓝 · 远山墨色（暗主题主背景）
+  --ink-yaqing:         #0F151E;  // 鸦青 · 深层/侧栏
+  --ink-moding:         #1C2634;  // 墨锭 · 暗主题卡片面
+  --ink-elevated-dark:  #24303F;  // 暗主题浮层
+  --ink-xuanzhi:        #F5F1E6;  // 宣纸 · 亮主题主背景
+  --ink-xuanzhi-deep:   #ECE6D6;  // 宣纸深一档（亮主题侧栏）
+  --ink-shuxuan:        #FDFBF4;  // 熟宣 · 亮主题卡片面
+  --ink-mo:             #26221C;  // 墨色 · 亮主题正文
+  --ink-yuebai:         #DFE7EE;  // 月白 · 暗主题正文
+  --ink-tianqing:       #8FBCD4;  // 天青 · 暗主题品牌主色
+  --ink-tianqing-deep:  #3D7A94;  // 深天青 · 亮主题品牌主色（保对比度）
+  --ink-tianshuibi:     #A8D5C8;  // 天水碧 · 选中态
+  --ink-shiqing:        #4E7FA6;  // 石青 · 图表序列
+  --ink-shilv:          #5E9A7E;  // 石绿 · 图表序列
+  --ink-mushanzi:       #8A80A3;  // 暮山紫 · 图表序列/过渡
+  --ink-zhusha:         #B54434;  // 朱砂 · 印章/关键强调（非状态色）
+  --ink-zheshi:         #B07A45;  // 赭石 · 暖色辅助
+
+  // === 展示字体栈（标题/空状态短句专用，正文禁用）===
+  --font-display: 'LXGW WenKai', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+
+  // === 云雾缓动与三档时长 ===
+  --ease-cloud: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --dur-mist-fast:   150ms;
+  --dur-mist-normal: 300ms;
+  --dur-mist-slow:   400ms;
+}
+
+// === 全局降级：减少动态偏好时，装饰动效整体关闭（ART-QA 红线）===
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

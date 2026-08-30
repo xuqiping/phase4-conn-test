@@ -1,0 +1,101 @@
+// ============================================================
+// 高山流水 · 现代意境工具类（2026-08-28 修订：去水墨肌理）
+// 柔和渐变 + 雾感层次 + 极简山形；无宣纸/泼墨/枯笔等传统纹理
+// 红线：装饰层 opacity ≤ 0.12，永远压在文字层之下
+// ============================================================
+
+// --- 页面标题/品牌位：展示字体（每屏 ≤1 处，STYLE-DNA 基因 4）---
+.u-display-font {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: 0.04em;
+}
+
+// --- 晨昏云雾背景层（工作台首屏，资产 0002 回填后激活）---
+// 用法：<div class="u-mist-layer" style="background-image: var(--mist-url)"></div>
+.u-mist-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.15;
+  background-size: cover;
+  background-position: center;
+
+  @media (prefers-reduced-motion: reduce) {
+    opacity: 0.08; // 静态化保留氛围、关闭动效
+  }
+}
+
+// --- 极简山形剪影（纯 CSS 渐变远山，现代扁平表达）---
+// 用法：装饰性容器加 .u-mountain-haze，底部出现两重远山剪影
+.u-mountain-haze {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background:
+      radial-gradient(ellipse 90% 30% at 18% 112%, rgba(var(--color-primary-rgb), 0.08) 0%, transparent 70%),
+      radial-gradient(ellipse 65% 24% at 72% 116%, rgba(var(--color-primary-rgb), 0.05) 0%, transparent 70%);
+  }
+}
+
+// --- 极细分隔线（现代留白式分隔，替代原飞白笔触）---
+.u-hairline-divider {
+  height: 1px;
+  border: none;
+  margin: var(--spacing-6, 24px) 0;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    var(--color-border) 20%,
+    var(--color-border) 80%,
+    transparent 100%);
+}
+
+// --- 绢本卡（ART-DIR-0002 P4：统一卡片语言，仅 ink 主题生效）---
+// 用法：容器加 .u-ink-card；hover 微浮，过渡统一 ease-cloud
+[data-theme="ye-mo"],
+[data-theme="xuan-zhi"] {
+  .u-ink-card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border-light);
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    transition: transform var(--dur-mist-fast, 300ms) var(--ease-cloud),
+      box-shadow var(--dur-mist-fast, 300ms) var(--ease-cloud);
+
+    &:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      transition: none;
+      &:hover { transform: none; }
+    }
+  }
+}
+
+[data-theme="xuan-zhi"] .u-ink-card {
+  box-shadow: 0 2px 8px rgba(38, 34, 28, 0.08);
+
+  &:hover {
+    box-shadow: 0 8px 24px rgba(38, 34, 28, 0.14);
+  }
+}
+
+// --- 发丝渐变线（左实右无，「远山淡去」；页头/卡头分界用）---
+[data-theme="ye-mo"],
+[data-theme="xuan-zhi"] {
+  .u-hairline-fade {
+    height: 1px;
+    border: none;
+    background: linear-gradient(90deg, var(--color-border) 0%, transparent 80%);
+  }
+}
