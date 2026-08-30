@@ -232,6 +232,19 @@ public class MediaBillingService {
                                          Integer tokensInput, Integer videoSeconds, Integer imageCount,
                                          String status, Long refId, boolean hasReference,
                                          Long projectGroupId, String resolution, BigDecimal heldPoints) {
+        return settleMediaSuccess(userId, providerId, model, kind, tokensInput, videoSeconds, imageCount,
+                status, refId, hasReference, projectGroupId, resolution, heldPoints, null);
+    }
+
+    /**
+     * HHX-9：+tokensOutput 版本——Context-IR 文本任务按 CHAT 口径 in/out 双腿计价与记账
+     * （老调用方不传 = null，行为不变：视频秒计费/图片张计费不看输出 token）。
+     */
+    public BigDecimal settleMediaSuccess(Long userId, Long providerId, String model, String kind,
+                                         Integer tokensInput, Integer videoSeconds, Integer imageCount,
+                                         String status, Long refId, boolean hasReference,
+                                         Long projectGroupId, String resolution, BigDecimal heldPoints,
+                                         Integer tokensOutput) {
         if (heldPoints == null || heldPoints.signum() <= 0) {
             return chargeMedia(userId, providerId, model, kind, tokensInput, videoSeconds, imageCount,
                     status, refId, hasReference, projectGroupId, resolution);
@@ -241,7 +254,7 @@ public class MediaBillingService {
         }
         try {
             BigDecimal yuan = pricingService.computeCost(kind, providerId, model,
-                    tokensInput, null, videoSeconds, imageCount, hasReference, resolution);
+                    tokensInput, tokensOutput, videoSeconds, imageCount, hasReference, resolution);
             BigDecimal points = ratioService.toPoints(yuan);
             BigDecimal actual = points == null ? BigDecimal.ZERO : points;
             BigDecimal diff = actual.subtract(heldPoints);
@@ -282,14 +295,14 @@ public class MediaBillingService {
             }
             // usage 记实耗（同 chargeMedia 口径，taskId 锚定 drill-down）
             usageCollector.record(userId, providerId, LlmUsageLogEntity.SCOPE_GLOBAL, model, kind,
-                    tokensInput, null, yuan, points, status, null, refId, null, projectGroupId);
+                    tokensInput, tokensOutput, yuan, points, status, null, refId, null, projectGroupId);
             return actual;
         } catch (BusinessException e) {
             // 补扣失败（个人差额期间余额耗尽）：实耗已发生，记 FAILED usage 平台可见缺口；
             // 预扣额已确认扣过——返回预扣额供 worker 在 markSucceeded 失败时 unwind
             // A2：FAILED 行也落 gid——组任务缺口可按组过滤
             usageCollector.record(userId, providerId, LlmUsageLogEntity.SCOPE_GLOBAL, model, kind,
-                    tokensInput, null, null, null, LlmUsageLogEntity.STATUS_FAILED, e.toString(), refId,
+                    tokensInput, tokensOutput, null, null, LlmUsageLogEntity.STATUS_FAILED, e.toString(), refId,
                     null, projectGroupId);
             log.warn("媒体结算补扣失败(已记FAILED,预扣在手) userId={} model={} kind={} refId={} : {}",
                     userId, model, kind, refId, e.toString());

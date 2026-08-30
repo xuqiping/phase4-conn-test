@@ -136,6 +136,30 @@ public class MediaStorageService {
     }
 
     /**
+     * HHX-9：Context-IR 增强文本落 stored_files(source=MEDIA)——与视频/图片产物同一存储咽喉点
+     * （复用 storeStream：防路径穿越 + 登记 owner）。文本来自上游响应体（无回源下载，不经 SSRF 面）；
+     * 上限 1MB（增强提示词典型几 KB，留足冗余）。
+     *
+     * @return fileId（写入 media_gen_tasks.result_file_id，前端按 .md 展示/下载）
+     */
+    public String storeText(String text, Long userId, String nameHint) {
+        if (text == null || text.isBlank()) {
+            throw new IllegalStateException("增强文本为空");
+        }
+        byte[] bytes = text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        if (bytes.length > 1024 * 1024) {
+            throw new IllegalStateException("增强文本超限（>1MB）");
+        }
+        String fileName = (nameHint == null || nameHint.isBlank() ? "context-ir" : nameHint) + ".md";
+        try (InputStream in = new java.io.ByteArrayInputStream(bytes)) {
+            return fileStorageService.storeStream(in, fileName, "text/markdown",
+                    (long) bytes.length, userId, StoredFileEntity.SOURCE_MEDIA);
+        } catch (Exception e) {
+            throw new IllegalStateException("增强文本落盘失败: " + rootMessage(e), e);
+        }
+    }
+
+    /**
      * 流式下载 URL → 临时文件（DataBuffer 逐块写盘，不经堆内存聚合，无 maxInMemorySize 上限）。
      * 用 URI 对象传，跳过 WebClient 的 UriBuilderFactory 二次编码——预签名链接 query 含已编码字符，
      * 若用 .uri(String) 会被当 URI 模板再次编码，破坏签名 → TOS 返 400 AccessDenied。

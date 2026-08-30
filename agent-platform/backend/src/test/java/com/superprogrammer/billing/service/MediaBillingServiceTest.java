@@ -327,6 +327,31 @@ class MediaBillingServiceTest {
     }
 
     @Test
+    void settleMediaSuccess_contextIr_chatInOutOfLegs() {
+        // HHX-9：Context-IR CHAT 结算——tokensOutput 透传 computeCost 与 usage 双腿（老 13 参重载恒 null）
+        when(walletService.isEnabled()).thenReturn(true);
+        when(pricingService.computeCost(eq(LlmUsageLogEntity.KIND_CHAT), eq(7L), eq("minimax-h3-context-ir"),
+                eq(1800), eq(4000), eq(null), eq(null), anyBoolean(), any()))
+                .thenReturn(new BigDecimal("0.104000"));
+        when(ratioService.toPoints(new BigDecimal("0.104000"))).thenReturn(new BigDecimal("10"));
+
+        BigDecimal actual = service.settleMediaSuccess(100L, 7L, "minimax-h3-context-ir",
+                LlmUsageLogEntity.KIND_CHAT, 1800, null, null, LlmUsageLogEntity.STATUS_SUCCESS,
+                9L, false, null, null, new BigDecimal("10"), 4000);
+
+        assertEquals(new BigDecimal("10"), actual);
+        // 实耗==预扣 → 钱包不动
+        verify(walletService, never()).chargeIdempotent(anyLong(), any(), anyString(), anyLong(),
+                anyString(), anyString());
+        // usage 记 in/out 双腿（老链路 out 恒 null 的回归锚点）
+        verify(usageCollector).record(eq(100L), eq(7L), eq(LlmUsageLogEntity.SCOPE_GLOBAL),
+                eq("minimax-h3-context-ir"), eq(LlmUsageLogEntity.KIND_CHAT),
+                eq(1800), eq(4000), eq(new BigDecimal("0.104000")), eq(new BigDecimal("10")),
+                eq(LlmUsageLogEntity.STATUS_SUCCESS), eq(null), eq(9L),
+                org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull());
+    }
+
+    @Test
     void settleMediaSuccess_supplementFails_recordsFailedReturnsHeld() {
         // B5（Q10=A）后语义：补扣余额耗尽 → chargeToDebt 挂账接管（不再落 FAILED），
         // 返实耗 80（worker unwind 按实耗退）。挂账腿本身在 PointsWalletServiceTest 覆盖，此处验编排。

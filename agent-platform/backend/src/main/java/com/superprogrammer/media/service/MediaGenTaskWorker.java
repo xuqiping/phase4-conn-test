@@ -280,6 +280,11 @@ public class MediaGenTaskWorker {
      */
     private Outcome handleSucceeded(MediaGenTask task, MediaGenResult result, MediaGenRequest request) {
         Long taskId = task.getId();
+        // HHX-9：Context-IR 文本结果分支——必须先于 video_url 判空（文本结果本来无 URL，
+        // 走旧链路会被误判「返回成功但无 video_url」→ DOWNLOAD_FAILED）
+        if (MediaGenTask.TYPE_CONTEXT_IR.equals(task.getTaskType())) {
+            return handleContextIrSucceeded(task, result);
+        }
         String videoUrl = result.getResultUrl();
         if (videoUrl == null || videoUrl.isBlank()) {
             boolean t = txService.markDownloadFailed(taskId, "Ark 返回成功但无 video_url");
@@ -327,6 +332,63 @@ public class MediaGenTaskWorker {
         // 问题修复 #1 #7：视频生成成功落审计，带模型+实扣积分（关联键 targetId=taskId，与 submit 行对应）
         auditMediaSuccess(task, "video_gen_success", LlmUsageLogEntity.KIND_VIDEO, chargedPoints, null);
         return new Outcome(true, transitioned);
+    }
+
+    /**
+     * HHX-9：Context-IR 成功处理（与视频/图片同骨架：落产物 → CHAT 结算 → fail-closed → 终态）。
+     * 产物=增强文本 .md（storeText，无回源下载）；计价走 KIND_CHAT 价表行 in/out 双腿
+     * （settleMediaSuccess 14 参重载带 tokensOutput——视频/图片链路不传该参，行为不变）。
+     * 审计 detail 不落 resultText 正文（只落长度日志），防提示词全文进审计库。
+     */
+    private Outcome handleContextIrSucceeded(MediaGenTask task, MediaGenResult result) {
+        Long taskId = task.getId();
+        String text = result.getResultText();
+        if (text == null || text.isBlank()) {
+            boolean t = txService.markDownloadFailed(taskId, "Context-IR 返回成功但无增强文本");
+            log.warn("Context-IR 任务无增强文本 taskId={}", taskId);
+            return new Outcome(false, t);
+        }
+        String fileId;
+        try {
+            fileId = mediaStorageService.storeText(text, task.getUserId(), "ctxir-task-" + taskId);
+        } catch (Exception e) {
+            log.error("增强文本落盘失败 taskId={}: {}", taskId, e.getMessage(), e);
+            boolean t = txService.markDownloadFailed(taskId, "增强文本落盘失败: " + rootMessage(e));
+            return new Outcome(false, t);
+        }
+        Integer tokensCost = toInt(result.getUsageTokens());
+        // 预扣多退少补（同视频口径）；CHAT 结算 in/out 拆腿
+        BigDecimal held = Boolean.TRUE.equals(task.getHoldApplied()) ? task.getEstimatedCost() : null;
+        BigDecimal chargedPoints = mediaBillingService.settleMediaSuccess(task.getUserId(), task.getProviderId(),
+                task.getModel(), LlmUsageLogEntity.KIND_CHAT, toInt(result.getUsageInputTokens()),
+                null, null, usageStatus(MediaGenTask.FLAG_SUCCESS), taskId, false,
+                task.getProjectGroupId(), null, held, toInt(result.getUsageOutputTokens()));
+        // 第二层 fail-closed（同视频）：结算一分没扣到 → 退预扣、标 FAILED、不交付文本
+        if (chargedPoints == null && task.getUserId() != null && mediaBillingService.billingEnabled()) {
+            mediaBillingService.refundMediaCharged(task.getUserId(), held, held,
+                    LlmUsageLogEntity.KIND_CHAT, taskId, task.getProjectGroupId());
+            boolean t = txService.markFailed(taskId, "结算扣费失败（积分不足或价表缺失），增强文本未交付");
+            log.warn("Context-IR 任务结算未扣分转 FAILED taskId={} userId={}", taskId, task.getUserId());
+            return new Outcome(false, t);
+        }
+        boolean transitioned;
+        try {
+            transitioned = txService.markSucceeded(taskId, fileId, tokensCost, MediaGenTask.FLAG_SUCCESS);
+        } catch (RuntimeException e) {
+            // 扣了却落库失败：撤销已扣（防对账黑洞），再抛交 process()→markFailed
+            mediaBillingService.refundMediaCharged(task.getUserId(), chargedPoints, held,
+                    LlmUsageLogEntity.KIND_CHAT, taskId, task.getProjectGroupId());
+            throw e;
+        }
+        auditMediaSuccess(task, "context_ir_success", LlmUsageLogEntity.KIND_CHAT, chargedPoints, null);
+        log.info("Context-IR 任务成功 taskId={} 增强文本长度={} tokens={}",
+                taskId, text.length(), tokensCost);
+        return new Outcome(true, transitioned);
+    }
+
+    /** HHX-9：Long→Integer null 安全转换（Context-IR token 计数 Integer 口径足够）。 */
+    private static Integer toInt(Long v) {
+        return v == null ? null : Math.toIntExact(v);
     }
 
     // ---------- 图片任务路径（Seedream 同步生图，与视频异步轮询零耦合） ----------

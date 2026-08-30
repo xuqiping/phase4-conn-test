@@ -286,6 +286,61 @@ class MediaGenTaskWorkerTest {
     }
 
     @Test
+    void contextIrSucceeded_storesText_settlesChatInOutOfLegs() {
+        // HHX-9：Context-IR 成功——文本落 storeText（不走视频下载）、CHAT 结算 in/out 双腿（14 参重载）、
+        // markSucceeded 带 total tokens；resultUrl 判空链路完全不碰
+        MediaGenTask task = pendingTask(1L, 100L, "cct-1");
+        task.setTaskType(MediaGenTask.TYPE_CONTEXT_IR);
+        task.setModel("minimax-h3-context-ir");
+        task.setRequestConfig("{\"prompt\":\"一只猫\",\"duration\":5}");
+        when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
+        when(taskMapper.selectById(1L)).thenReturn(task);
+        when(arkProvider.queryTask(eq("cct-1"), any())).thenReturn(MediaGenResult.builder()
+                .status(MediaGenResult.STATUS_SUCCEEDED)
+                .resultText("增强后的提示词……")
+                .usageTokens(5800L).usageInputTokens(1800L).usageOutputTokens(4000L)
+                .build());
+        when(mediaStorageService.storeText(eq("增强后的提示词……"), eq(100L), anyString()))
+                .thenReturn("fid-md");
+        when(mediaBillingService.settleMediaSuccess(anyLong(), any(), anyString(), anyString(),
+                any(), any(), any(), anyString(), anyLong(), anyBoolean(), any(), any(), any(), any()))
+                .thenReturn(new BigDecimal("10"));
+
+        worker.poll();
+
+        verify(mediaStorageService, never()).downloadAndStore(anyString(), anyLong(), anyString());
+        verify(txService).markSucceeded(eq(1L), eq("fid-md"), eq(5800), eq(MediaGenTask.FLAG_SUCCESS));
+        verify(mediaBillingService).settleMediaSuccess(eq(100L), any(), eq("minimax-h3-context-ir"),
+                eq(LlmUsageLogEntity.KIND_CHAT), eq(1800), isNull(), isNull(),
+                eq(LlmUsageLogEntity.STATUS_SUCCESS), eq(1L), anyBoolean(),
+                isNull(), isNull(), isNull(), eq(4000));
+        verify(auditLogService).recordTask(eq("media"), eq("context_ir_success"), eq("media_gen_task"),
+                eq("1"), eq(100L), isNull(), isNull(), contains("minimax-h3-context-ir"),
+                eq(com.superprogrammer.common.audit.AuditLogEntity.RESULT_SUCCESS));
+    }
+
+    @Test
+    void contextIrSucceeded_noText_marksDownloadFailedWithTextMessage() {
+        // 坑点 #3 锚定：CONTEXT_IR 任务 resultUrl 为空 ≠ 视频判空路径——按文本分支「无增强文本」处理
+        MediaGenTask task = pendingTask(1L, 100L, "cct-1");
+        task.setTaskType(MediaGenTask.TYPE_CONTEXT_IR);
+        task.setModel("minimax-h3-context-ir");
+        when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
+        when(taskMapper.selectById(1L)).thenReturn(task);
+        when(arkProvider.queryTask(eq("cct-1"), any())).thenReturn(
+                result(MediaGenResult.STATUS_SUCCEEDED, null, null, null));
+        when(txService.markDownloadFailed(anyLong(), anyString())).thenReturn(true);
+
+        worker.poll();
+
+        verify(txService).markDownloadFailed(eq(1L), contains("无增强文本"));
+        verify(txService, never()).markSucceeded(anyLong(), anyString(), anyInt(), anyString());
+        verify(mediaStorageService, never()).storeText(anyString(), any(), anyString());
+        verify(mediaBillingService, never()).settleMediaSuccess(anyLong(), any(), anyString(), anyString(),
+                any(), any(), any(), anyString(), anyLong(), anyBoolean(), any(), any(), any(), any());
+    }
+
+    @Test
     void succeededButNoVideoUrl_marksDownloadFailed() {
         MediaGenTask task = pendingTask(1L, 100L, "cct-1");
         when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
