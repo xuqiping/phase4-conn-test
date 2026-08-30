@@ -1,6 +1,7 @@
 package com.superprogrammer.media.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.asset.service.AssetService;
 import com.superprogrammer.billing.service.InflightGateService;
@@ -52,6 +53,8 @@ public class MediaGenTaskService {
     private static final Set<String> ATTACHMENT_KINDS = Set.of("image", "video", "audio");
     /** 提示词长度上限（对齐画布/资产 8000；原 2000 过短）。 */
     private static final int PROMPT_MAX_LEN = 8000;
+    /** HHX-9：Context-IR 提交期估算输出 token（增强提示词典型 3-4k，取上限档；结算按实）。 */
+    private static final int CONTEXT_IR_EST_OUT_TOKENS = 4000;
 
     private final MediaGenTaskMapper taskMapper;
     private final MediaModelService mediaModelService;
@@ -126,6 +129,16 @@ public class MediaGenTaskService {
                        String refFileId, List<AttachmentRef> attachments,
                        String model, Long userId, boolean admin, String frameRole,
                        Long projectGroupId) {
+        return submit(prompt, ratio, duration, resolution, watermark, generateAudio, taskType,
+                refFileId, attachments, model, userId, admin, frameRole, projectGroupId, null);
+    }
+
+    /** HHX-10：+sourceTaskId 再生成源任务版本（仅 model 后缀 -regeneration 生效，其余忽略）。 */
+    public Long submit(String prompt, String ratio, Integer duration, String resolution,
+                       Boolean watermark, Boolean generateAudio, String taskType,
+                       String refFileId, List<AttachmentRef> attachments,
+                       String model, Long userId, boolean admin, String frameRole,
+                       Long projectGroupId, Long sourceTaskId) {
         if (!properties.isGenEnabled()) {
             throw new BusinessException(ErrorCode.UNPROCESSABLE, "视频生成功能未开启");
         }
@@ -146,7 +159,8 @@ public class MediaGenTaskService {
         try {
             mediaHeld = mediaInflightGate.acquire(userId, MediaInflightGateService.KIND_VIDEO);
             Long taskId = doSubmit(prompt, ratio, duration, resolution, watermark, generateAudio, taskType,
-                    refFileId, attachments, model, userId, admin, frameRole, projectGroupId, balance);
+                    refFileId, attachments, model, userId, admin, frameRole, projectGroupId, balance,
+                    sourceTaskId);
             // 指标：落库成功才计提交（acquire 失败/参数校验失败不计）
             bizMetrics.mediaSubmit(MediaGenTask.TYPE_TEXT2IMAGE.equals(taskType)
                     || MediaGenTask.TYPE_IMAGE2IMAGE.equals(taskType)
@@ -167,7 +181,7 @@ public class MediaGenTaskService {
                           Boolean watermark, Boolean generateAudio, String taskType,
                           String refFileId, List<AttachmentRef> attachments,
                           String model, Long userId, boolean admin, String frameRole,
-                          Long projectGroupId, java.math.BigDecimal poolBalance) {
+                          Long projectGroupId, java.math.BigDecimal poolBalance, Long sourceTaskId) {
 
         // 1) 解析 provider + model（指定 model 时跨 VIDEO provider 反查，未指定走旧默认路径）
         LlmProviderEntity provider;
@@ -193,42 +207,60 @@ public class MediaGenTaskService {
         }
         MediaModelCapability cap = capabilityService.resolve(resolvedModel, provider.getConfig());
 
-        // 2) 参数校验（基础白名单 + 模型能力上限）
-        validate(prompt, ratio, duration, resolution, generateAudio, taskType, refFileId, attachments,
-                cap, userId, admin);
+        // HHX-9/10：附属任务分流——context-ir（提示词增强，输入同生成）/ regeneration（2K 再生成，输入仅源任务）
+        boolean auxContextIr = isContextIrModel(resolvedModel);
+        boolean auxRegeneration = isRegenerationModel(resolvedModel);
+        MediaGenTask sourceTask = null;
+        if (auxRegeneration) {
+            sourceTask = requireRegenerationSource(sourceTaskId, provider, userId, admin);
+        } else {
+            // 2) 参数校验（基础白名单 + 模型能力上限）
+            validate(prompt, ratio, duration, resolution, generateAudio, taskType, refFileId, attachments,
+                    cap, userId, admin);
+        }
 
-        // 3) attachments 非空 → 服务端派生 IMAGE2VIDEO（多模态参考生视频）
-        String resolvedType = (attachments != null && !attachments.isEmpty())
+        // 3) attachments 非空 → 服务端派生 IMAGE2VIDEO（多模态参考生视频）；附属任务固定专属类型
+        String resolvedType = auxRegeneration ? MediaGenTask.TYPE_REGENERATION
+                : auxContextIr ? MediaGenTask.TYPE_CONTEXT_IR
+                : (attachments != null && !attachments.isEmpty())
                 ? MediaGenTask.TYPE_IMAGE2VIDEO
                 : (taskType == null || taskType.isBlank() ? MediaGenTask.TYPE_TEXT2VIDEO : taskType);
 
         Map<String, Object> config = new HashMap<>();
-        config.put("prompt", prompt);
-        config.put("ratio", ratio);
-        config.put("duration", duration);
-        config.put("resolution", resolution);
-        config.put("watermark", Boolean.TRUE.equals(watermark));
-        config.put("generateAudio", Boolean.TRUE.equals(generateAudio));
-        if (refFileId != null) config.put("refFileId", refFileId);
-        // C2 参考帧位置：归一化（只认 last=尾帧，其余 first=首帧默认），仅 refFileId 通道有意义
-        if (refFileId != null) {
-            config.put("frameRole", "last".equalsIgnoreCase(frameRole) ? "last" : "first");
-        }
-        if (attachments != null && !attachments.isEmpty()) {
-            List<Map<String, String>> list = new ArrayList<>(attachments.size());
-            for (AttachmentRef a : attachments) {
-                // F3：kind 归一化后落库（校验用的就是归一化值；worker/Ark 映射直接查表不再二次处理）
-                // frameRole 归一化：仅 first_frame/last_frame 落库（null 省略，=普通参考图）
-                String kind = a.getKind().trim().toLowerCase();
-                String role = normalizeFrameRole(a.getFrameRole(), kind);
-                Map<String, String> item = new java.util.LinkedHashMap<>();
-                item.put("fileId", a.getFileId());
-                item.put("kind", kind);
-                if (role != null) item.put("frameRole", role);
-                if (a.getName() != null && !a.getName().isBlank()) item.put("name", a.getName().strip());
-                list.add(item);
+        if (auxRegeneration) {
+            // 再生成入参极简：源任务（平台 id 留痕 + 上游 ark id 出站用）+ 继承时长 + 锁 2k
+            config.put("sourceTaskId", sourceTask.getId());
+            config.put("sourceArkTaskId", sourceTask.getArkTaskId());
+            config.put("duration", regenerationDurationOf(sourceTask));
+            config.put("resolution", "2k");
+        } else {
+            config.put("prompt", prompt);
+            config.put("ratio", ratio);
+            config.put("duration", duration);
+            config.put("resolution", resolution);
+            config.put("watermark", Boolean.TRUE.equals(watermark));
+            config.put("generateAudio", Boolean.TRUE.equals(generateAudio));
+            if (refFileId != null) config.put("refFileId", refFileId);
+            // C2 参考帧位置：归一化（只认 last=尾帧，其余 first=首帧默认），仅 refFileId 通道有意义
+            if (refFileId != null) {
+                config.put("frameRole", "last".equalsIgnoreCase(frameRole) ? "last" : "first");
             }
-            config.put("attachments", list);
+            if (attachments != null && !attachments.isEmpty()) {
+                List<Map<String, String>> list = new ArrayList<>(attachments.size());
+                for (AttachmentRef a : attachments) {
+                    // F3：kind 归一化后落库（校验用的就是归一化值；worker/Ark 映射直接查表不再二次处理）
+                    // frameRole 归一化：仅 first_frame/last_frame 落库（null 省略，=普通参考图）
+                    String kind = a.getKind().trim().toLowerCase();
+                    String role = normalizeFrameRole(a.getFrameRole(), kind);
+                    Map<String, String> item = new java.util.LinkedHashMap<>();
+                    item.put("fileId", a.getFileId());
+                    item.put("kind", kind);
+                    if (role != null) item.put("frameRole", role);
+                    if (a.getName() != null && !a.getName().isBlank()) item.put("name", a.getName().strip());
+                    list.add(item);
+                }
+                config.put("attachments", list);
+            }
         }
 
         MediaGenTask task = new MediaGenTask();
@@ -245,8 +277,18 @@ public class MediaGenTaskService {
         // 计划5 Step5：估价快照（V133 estimated_cost，积分口径；TOKEN 模式提交期无 token 维度/价表缺价记 0+WARN）
         boolean hasRefVideo = attachments != null && attachments.stream()
                 .anyMatch(a -> a.getKind() != null && "video".equalsIgnoreCase(a.getKind().trim()));
-        java.math.BigDecimal estimatedPoints = estimateVideoPoints(provider.getId(), resolvedModel,
-                duration, hasRefVideo, resolution);
+        // HHX-9/10：附属任务估价——context-ir 走 CHAT 估算公式（结算按实 token 多退少补）；
+        // regeneration 按源任务继承时长 × 锁 2k 秒价（价表 regeneration 行）。
+        java.math.BigDecimal estimatedPoints;
+        if (auxContextIr) {
+            estimatedPoints = estimateContextIrPoints(provider.getId(), resolvedModel, prompt, attachments);
+        } else if (auxRegeneration) {
+            estimatedPoints = estimateVideoPoints(provider.getId(), resolvedModel,
+                    regenerationDurationOf(sourceTask), false, "2k");
+        } else {
+            estimatedPoints = estimateVideoPoints(provider.getId(), resolvedModel,
+                    duration, hasRefVideo, resolution);
+        }
         // 2026-08-25 fail-closed 硬闸：估不出价/估价为 0 → 一律拒提交（个人/组池同闸）。
         // 估价 0 会跳过下方三重预检与预扣——余额不足用户可无限白嫖真实生成的视频（17x 安全审计后续发现）。
         // 系统调用（userId=null）/计费开关关 跳过；免费模型请配极小正值价。
@@ -302,16 +344,22 @@ public class MediaGenTaskService {
         Map<String, Object> submitDetail = new LinkedHashMap<>();
         submitDetail.put("model", resolvedModel);
         submitDetail.put("taskType", resolvedType);
-        submitDetail.put("ratio", ratio);
-        submitDetail.put("duration", duration);
-        submitDetail.put("resolution", resolution);
+        if (auxRegeneration) {
+            submitDetail.put("sourceTaskId", sourceTask.getId());
+            submitDetail.put("duration", regenerationDurationOf(sourceTask));
+        } else {
+            submitDetail.put("ratio", ratio);
+            submitDetail.put("duration", duration);
+            submitDetail.put("resolution", resolution);
+        }
         auditLogService.recordTask("media", "video_submit", "media_gen_task", String.valueOf(task.getId()),
                 userId, MDC.get("username"), task.getClientIp(), toJson(submitDetail),
                 com.superprogrammer.common.audit.AuditLogEntity.RESULT_SUCCESS);
 
-        log.info("提交视频生成任务 taskId={} userId={} type={} model={} ratio={} res={} audio={} 附件={}",
+        log.info("提交视频生成任务 taskId={} userId={} type={} model={} ratio={} res={} audio={} 附件={}{}",
                 task.getId(), userId, resolvedType, resolvedModel, ratio, resolution, generateAudio,
-                attachments == null ? 0 : attachments.size());
+                attachments == null ? 0 : attachments.size(),
+                auxRegeneration ? " 源任务=" + sourceTask.getId() : "");
         return task.getId();
     }
 
@@ -773,6 +821,14 @@ public class MediaGenTaskService {
     public Map<String, Object> estimatePreview(String kind, String model, Integer videoSeconds,
                                                String resolution, boolean hasReference, Integer imageCount,
                                                Long userId, Long projectGroupId) {
+        return estimatePreview(kind, model, videoSeconds, resolution, hasReference, imageCount,
+                userId, projectGroupId, null);
+    }
+
+    /** HHX-9：+promptChars 版本（context-ir 按提示词长度估 CHAT 价；其余 kind 忽略该参）。 */
+    public Map<String, Object> estimatePreview(String kind, String model, Integer videoSeconds,
+                                               String resolution, boolean hasReference, Integer imageCount,
+                                               Long userId, Long projectGroupId, Integer promptChars) {
         java.math.BigDecimal est = java.math.BigDecimal.ZERO;
         try {
             if ("IMAGE".equalsIgnoreCase(kind)) {
@@ -780,6 +836,13 @@ public class MediaGenTaskService {
                 if (provider != null) {
                     est = estimateImagePoints(provider.getId(), model,
                             imageCount == null || imageCount <= 0 ? 1 : imageCount);
+                }
+            } else if (isContextIrModel(model)) {
+                // context-ir：CHAT 估算公式（预览无附件时长，仅提示词长度；提交侧同口径更全）
+                LlmProviderEntity provider = mediaModelService.resolveProviderByModel(model);
+                if (provider != null) {
+                    est = estimateContextIrPoints(provider.getId(), model,
+                            promptChars == null ? 0 : promptChars, 0);
                 }
             } else {
                 LlmProviderEntity provider;
@@ -891,6 +954,90 @@ public class MediaGenTaskService {
         java.math.BigDecimal yuan = pricingService.computeCost(
                 com.superprogrammer.billing.entity.LlmUsageLogEntity.KIND_IMAGE,
                 providerId, model, null, null, null, imageCount, false);
+        return pointsRatioService.toPoints(yuan);
+    }
+
+    // ---------- HHX-9/10：附属任务（context-ir / regeneration）提交期分流 ----------
+
+    /** 平台模型 id 后缀判定（与 MinimaxVideoProvider 同口径；service 层不依赖 provider 类）。 */
+    private static boolean isContextIrModel(String model) {
+        return model != null && model.trim().toLowerCase().endsWith("-context-ir");
+    }
+
+    private static boolean isRegenerationModel(String model) {
+        return model != null && model.trim().toLowerCase().endsWith("-regeneration");
+    }
+
+    /**
+     * HHX-10：再生成源任务校验链（逐条 400/403/404 拒）：
+     * 缺参 → 不存在 → 非本人（admin/系统旁路）→ 未成功 → 非同 provider → 源是附属任务
+     * （只许对生成结果再生成，链式再生成不做）→ 超 7 天窗口（上游查询/再生成时效同口径）。
+     */
+    private MediaGenTask requireRegenerationSource(Long sourceTaskId, LlmProviderEntity provider,
+                                                   Long userId, boolean admin) {
+        if (sourceTaskId == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "再生成须提供源任务（sourceTaskId）");
+        }
+        MediaGenTask source = taskMapper.selectById(sourceTaskId);
+        if (source == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "源任务不存在: " + sourceTaskId);
+        }
+        if (!admin && userId != null && !userId.equals(source.getUserId())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权对该源任务再生成: " + sourceTaskId);
+        }
+        if (!MediaGenTask.STATUS_SUCCEEDED.equals(source.getStatus())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "源任务未成功（当前 " + source.getStatus() + "），仅成功任务可 2K 再生成");
+        }
+        if (!provider.getId().equals(source.getProviderId())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "源任务非本供应商生成，不能再生成");
+        }
+        if (isContextIrModel(source.getModel()) || isRegenerationModel(source.getModel())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "仅视频生成任务可再生成（提示词增强/再生成任务不可）");
+        }
+        if (source.getArkTaskId() == null || source.getArkTaskId().isBlank()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "源任务缺少上游任务号，无法再生成");
+        }
+        if (source.getCreatedAt() == null
+                || source.getCreatedAt().isBefore(java.time.OffsetDateTime.now().minusDays(7))) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "源任务已超 7 天再生成窗口");
+        }
+        return source;
+    }
+
+    /** HHX-10：继承源任务时长（requestConfig.duration；缺失兜底 5 秒——仅估价用，出站不传时长）。 */
+    private int regenerationDurationOf(MediaGenTask source) {
+        try {
+            JsonNode d = objectMapper.readTree(source.getRequestConfig()).path("duration");
+            if (d.isNumber() && d.asInt() > 0) {
+                return d.asInt();
+            }
+        } catch (Exception e) {
+            log.warn("解析源任务时长失败按 5s 计 taskId={}: {}", source.getId(), e.getMessage());
+        }
+        return 5;
+    }
+
+    /**
+     * HHX-9：Context-IR 提交期估价（CHAT 价表行 5.8/23 ¥每百万）。
+     * 估算口径（spec §5）：in = 提示词字符×0.75 + 图×1500（视频/音频附件时长提交期不可得按 0，
+     * 低估不吞钱——结算按上游 prompt/completion 实测 token 多退少补）；out = 4000 固定。
+     */
+    private java.math.BigDecimal estimateContextIrPoints(Long providerId, String model, String prompt,
+                                                         List<AttachmentRef> attachments) {
+        int images = attachments == null ? 0 : (int) attachments.stream()
+                .filter(a -> a.getKind() != null && "image".equalsIgnoreCase(a.getKind().trim()))
+                .count();
+        return estimateContextIrPoints(providerId, model,
+                prompt == null ? 0 : prompt.length(), images);
+    }
+
+    private java.math.BigDecimal estimateContextIrPoints(Long providerId, String model,
+                                                         int promptChars, int imageCount) {
+        int in = (int) Math.ceil(promptChars * 0.75) + imageCount * 1500;
+        java.math.BigDecimal yuan = pricingService.computeCost(
+                com.superprogrammer.billing.entity.LlmUsageLogEntity.KIND_CHAT,
+                providerId, model, in, CONTEXT_IR_EST_OUT_TOKENS, null, null, false);
         return pointsRatioService.toPoints(yuan);
     }
 

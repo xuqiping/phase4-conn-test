@@ -560,6 +560,7 @@ public class MediaGenTaskWorker {
         boolean generateAudio = false;
         String refFileId = null;
         String frameRole = null;
+        Long sourceArkTaskId = null;
         List<String[]> attachments = new java.util.ArrayList<>(); // [fileId, kind, frameRole?]
         try {
             JsonNode cfg = objectMapper.readTree(task.getRequestConfig());
@@ -571,6 +572,14 @@ public class MediaGenTaskWorker {
             generateAudio = cfg.path("generateAudio").asBoolean(false);
             refFileId = cfg.path("refFileId").asText(null);
             frameRole = cfg.path("frameRole").asText(null);
+            // HHX-10：再生成源任务上游 id（提交时已校验非空；出站 body source_task_id 用它。
+            // 落库为数字或纯数字字符串（ark_task_id 列是 varchar，中转返数字 id）两种形态都收）
+            JsonNode src = cfg.path("sourceArkTaskId");
+            if (src.isNumber()) {
+                sourceArkTaskId = src.asLong();
+            } else if (src.isTextual() && src.asText().matches("\\d+")) {
+                sourceArkTaskId = Long.parseLong(src.asText());
+            }
             for (JsonNode a : cfg.path("attachments")) {
                 String fileId = a.path("fileId").asText(null);
                 String kind = a.path("kind").asText(null);
@@ -591,7 +600,8 @@ public class MediaGenTaskWorker {
                 .resolution(resolution)
                 .watermark(watermark)
                 .generateAudio(generateAudio)
-                .taskType(task.getTaskType());
+                .taskType(task.getTaskType())
+                .sourceTaskId(sourceArkTaskId);
         // Ark 的 reference_video/image_url 均接受公网 URL：视频/图片走签名 URL（修复VI 2x#5——
         // 图片弃 base64，消 ×4/3 膨胀与多图 64MB 请求体隐雷）；音频仍 data URI（官方 audio_url）。
         if (resolveAttachments && !attachments.isEmpty() && task.getUserId() != null) {

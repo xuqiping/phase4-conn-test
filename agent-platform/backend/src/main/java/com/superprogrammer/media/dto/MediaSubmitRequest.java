@@ -3,7 +3,6 @@ package com.superprogrammer.media.dto;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
-import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
@@ -27,7 +26,10 @@ import java.util.List;
 @Data
 public class MediaSubmitRequest {
 
-    @NotBlank(message = "提示词不能为空")
+    /**
+     * 提示词。普通生成 / context-ir 必填（service 侧校验空即拒）；
+     * regeneration 再生成必传空/null（输入只有源任务 id）——HHX-10 起 @NotBlank 下放 service 分流校验。
+     */
     private String prompt;
 
     /** 画面比例（官方 ratio），默认 16:9。 */
@@ -73,4 +75,10 @@ public class MediaSubmitRequest {
 
     /** 计划5 Step5：组池计费归属（null=个人钱包）；须为本人可见的项目组成员。 */
     private Long projectGroupId;
+
+    /**
+     * HHX-10：2K 再生成源任务（平台 media_gen_tasks.id；仅 model 后缀 -regeneration 时有效）。
+     * 源任务须：存在 / 本人（admin 旁路）/ SUCCEEDED / 同 provider 非附属模型 / 提交未满 7 天。
+     */
+    private Long sourceTaskId;
 }

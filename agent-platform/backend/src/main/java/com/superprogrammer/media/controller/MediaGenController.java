@@ -76,7 +76,7 @@ public class MediaGenController {
                 request.getWatermark(), request.getGenerateAudio(), taskType,
                 request.getRefFileId(), request.getAttachments(),
                 request.getModel(), getCurrentUserId(), isAdmin(), request.getFrameRole(),
-                request.getProjectGroupId());
+                request.getProjectGroupId(), request.getSourceTaskId());
         return ResponseEntity.ok(R.ok("任务已提交", Map.of("id", taskId, "status", MediaGenTask.STATUS_PENDING)));
     }
 
@@ -131,9 +131,10 @@ public class MediaGenController {
             @RequestParam(required = false) String resolution,
             @RequestParam(required = false, defaultValue = "false") boolean hasReference,
             @RequestParam(required = false) Integer imageCount,
-            @RequestParam(required = false) Long projectGroupId) {
+            @RequestParam(required = false) Long projectGroupId,
+            @RequestParam(required = false) Integer promptChars) {
         return ResponseEntity.ok(R.ok(taskService.estimatePreview(kind, model, videoSeconds,
-                resolution, hasReference, imageCount, getCurrentUserId(), projectGroupId)));
+                resolution, hasReference, imageCount, getCurrentUserId(), projectGroupId, promptChars)));
     }
 
     /**

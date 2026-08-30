@@ -831,4 +831,169 @@ class MediaGenTaskServiceTest {
         assertTrue(e.getMessage().contains("不支持比例模式"), e.getMessage());
         verify(taskMapper, never()).insert(any());
     }
+
+    // ---------- HHX-9/10：附属任务提交分流（context-ir / regeneration） ----------
+
+    private static final String MM_CTX_IR = "minimax-h3-context-ir";
+    private static final String MM_REGEN = "minimax-h3-regeneration";
+
+    private void stubMmModel(String model) {
+        lenient().when(mediaModelService.resolveProviderByModel(model)).thenReturn(provider);
+    }
+
+    private void stubChatEstimate(java.math.BigDecimal yuan) {
+        // computeCost 8 参重载（kind, providerId, model, in, out, videoSeconds, imageCount, hasReference）
+        lenient().when(pricingService.computeCost(
+                org.mockito.ArgumentMatchers.eq("CHAT"), org.mockito.ArgumentMatchers.eq(7L),
+                org.mockito.ArgumentMatchers.eq(MM_CTX_IR),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.anyBoolean()))
+                .thenReturn(yuan);
+        lenient().when(pointsRatioService.toPoints(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new java.math.BigDecimal("1"));
+    }
+
+    @Test
+    void submit_contextIr_taskTypeContextIr_chatEstimate() {
+        stubMmModel(MM_CTX_IR);
+        stubChatEstimate(new java.math.BigDecimal("0.092"));
+        List<AttachmentRef> attachments = images(2);
+
+        service.submit("一只猫在霓虹街头", null, 5, null, null, null, null, null,
+                attachments, MM_CTX_IR, USER_ID, false, null, null, null);
+
+        ArgumentCaptor<MediaGenTask> captor = ArgumentCaptor.forClass(MediaGenTask.class);
+        verify(taskMapper).insert(captor.capture());
+        MediaGenTask task = captor.getValue();
+        assertEquals(MediaGenTask.TYPE_CONTEXT_IR, task.getTaskType());
+        assertTrue(task.getRequestConfig().contains("一只猫在霓虹街头"), "config 落提示词");
+        assertTrue(task.getRequestConfig().contains("\"attachments\""), "附件照常多模态输入");
+        assertEquals(0, task.getEstimatedCost().compareTo(new java.math.BigDecimal("1")),
+                "CHAT 估价经 toPoints 折积分");
+        // 估算 in = ceil(8 字×0.75)=6 + 2 图×1500 = 3006，out=4000 固定
+        org.mockito.ArgumentCaptor<Integer> in = org.mockito.ArgumentCaptor.forClass(Integer.class);
+        verify(pricingService).computeCost(
+                org.mockito.ArgumentMatchers.eq("CHAT"), org.mockito.ArgumentMatchers.eq(7L),
+                org.mockito.ArgumentMatchers.eq(MM_CTX_IR), in.capture(),
+                org.mockito.ArgumentMatchers.eq(4000),
+                org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.anyBoolean());
+        assertEquals(3006, in.getValue());
+    }
+
+    @Test
+    void submit_regeneration_sourceValidationChain() {
+        stubMmModel(MM_REGEN);
+
+        // 1) 缺 sourceTaskId → 400
+        BusinessException e1 = assertThrows(BusinessException.class, () ->
+                service.submit(null, null, null, null, null, null, null, null, null,
+                        MM_REGEN, USER_ID, false, null, null, null));
+        assertEquals(ErrorCode.BAD_REQUEST.getCode(), e1.getCode());
+
+        // 2) 源任务不存在 → 404
+        when(taskMapper.selectById(100L)).thenReturn(null);
+        BusinessException e2 = assertThrows(BusinessException.class, () ->
+                service.submit(null, null, null, null, null, null, null, null, null,
+                        MM_REGEN, USER_ID, false, null, null, 100L));
+        assertEquals(ErrorCode.NOT_FOUND.getCode(), e2.getCode());
+
+        // 3) 非本人 → 403（admin 旁路不在此测）
+        MediaGenTask foreign = regenSource(100L);
+        foreign.setUserId(99L);
+        when(taskMapper.selectById(100L)).thenReturn(foreign);
+        BusinessException e3 = assertThrows(BusinessException.class, () ->
+                service.submit(null, null, null, null, null, null, null, null, null,
+                        MM_REGEN, USER_ID, false, null, null, 100L));
+        assertEquals(ErrorCode.FORBIDDEN.getCode(), e3.getCode());
+
+        // 4) 源未成功 → 400
+        MediaGenTask running = regenSource(100L);
+        running.setStatus(MediaGenTask.STATUS_RUNNING);
+        when(taskMapper.selectById(100L)).thenReturn(running);
+        BusinessException e4 = assertThrows(BusinessException.class, () ->
+                service.submit(null, null, null, null, null, null, null, null, null,
+                        MM_REGEN, USER_ID, false, null, null, 100L));
+        assertEquals(ErrorCode.BAD_REQUEST.getCode(), e4.getCode());
+
+        // 5) 源超 7 天窗口 → 400
+        MediaGenTask stale = regenSource(100L);
+        stale.setCreatedAt(java.time.OffsetDateTime.now().minusDays(8));
+        when(taskMapper.selectById(100L)).thenReturn(stale);
+        BusinessException e5 = assertThrows(BusinessException.class, () ->
+                service.submit(null, null, null, null, null, null, null, null, null,
+                        MM_REGEN, USER_ID, false, null, null, 100L));
+        assertTrue(e5.getMessage().contains("7 天"), e5.getMessage());
+
+        verify(taskMapper, never()).insert(any());
+    }
+
+    private MediaGenTask regenSource(Long id) {
+        MediaGenTask t = new MediaGenTask();
+        t.setId(id);
+        t.setUserId(USER_ID);
+        t.setProviderId(7L);
+        t.setModel("minimax-h3");
+        t.setTaskType(MediaGenTask.TYPE_TEXT2VIDEO);
+        t.setStatus(MediaGenTask.STATUS_SUCCEEDED);
+        t.setArkTaskId("424010985738629");
+        t.setCreatedAt(java.time.OffsetDateTime.now());
+        t.setRequestConfig("{\"prompt\":\"p\",\"duration\":8,\"resolution\":\"768p\"}");
+        return t;
+    }
+
+    @Test
+    void submit_regeneration_happyPath_minimalConfig_andSecondPricing() {
+        stubMmModel(MM_REGEN);
+        when(taskMapper.selectById(100L)).thenReturn(regenSource(100L));
+
+        service.submit(null, null, null, null, null, null, null, null, null,
+                MM_REGEN, USER_ID, false, null, null, 100L);
+
+        ArgumentCaptor<MediaGenTask> captor = ArgumentCaptor.forClass(MediaGenTask.class);
+        verify(taskMapper).insert(captor.capture());
+        MediaGenTask task = captor.getValue();
+        assertEquals(MediaGenTask.TYPE_REGENERATION, task.getTaskType());
+        String cfg = task.getRequestConfig();
+        assertTrue(cfg.contains("\"sourceArkTaskId\":\"424010985738629\""), cfg);
+        assertTrue(cfg.contains("\"sourceTaskId\":100"), cfg);
+        assertTrue(cfg.contains("\"resolution\":\"2k\""), cfg);
+        assertFalse(cfg.contains("\"prompt\""), "再生成无提示词");
+        // 估价：继承源时长 8s × regeneration 行（2k 秒价），无参考视频
+        verify(pricingService).estimateVideoYuan(7L, MM_REGEN, 8, "2k", false);
+    }
+
+    @Test
+    void submit_regeneration_foreignProviderSource_400() {
+        stubMmModel(MM_REGEN);
+        MediaGenTask other = regenSource(100L);
+        other.setProviderId(999L);
+        when(taskMapper.selectById(100L)).thenReturn(other);
+        BusinessException e = assertThrows(BusinessException.class, () ->
+                service.submit(null, null, null, null, null, null, null, null, null,
+                        MM_REGEN, USER_ID, false, null, null, 100L));
+        assertTrue(e.getMessage().contains("非本供应商"), e.getMessage());
+        verify(taskMapper, never()).insert(any());
+    }
+
+    @Test
+    void estimatePreview_contextIr_usesPromptCharsChatFormula() {
+        stubMmModel(MM_CTX_IR);
+        stubChatEstimate(new java.math.BigDecimal("0.023"));
+        when(walletService.getBalance(USER_ID)).thenReturn(new java.math.BigDecimal("100"));
+
+        java.util.Map<String, Object> out = service.estimatePreview("VIDEO", MM_CTX_IR, null, null,
+                false, null, USER_ID, null, 100);
+
+        assertEquals(0, ((java.math.BigDecimal) out.get("estimatedPoints"))
+                .compareTo(new java.math.BigDecimal("1")));
+        // in = ceil(100×0.75)=75，out=4000
+        verify(pricingService).computeCost(
+                org.mockito.ArgumentMatchers.eq("CHAT"), org.mockito.ArgumentMatchers.eq(7L),
+                org.mockito.ArgumentMatchers.eq(MM_CTX_IR),
+                org.mockito.ArgumentMatchers.eq(75), org.mockito.ArgumentMatchers.eq(4000),
+                org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.anyBoolean());
+    }
 }

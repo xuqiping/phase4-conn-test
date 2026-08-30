@@ -25,6 +25,11 @@ public class MediaGenTask {
 
     public static final String TYPE_TEXT2VIDEO = "TEXT2VIDEO";
     public static final String TYPE_IMAGE2VIDEO = "IMAGE2VIDEO";
+
+    /** HHX-9：MiniMax Context-IR 提示词增强（文本出参，CHAT 计价）；task_type 列无 CHECK 直接可写。 */
+    public static final String TYPE_CONTEXT_IR = "CONTEXT_IR";
+    /** HHX-10：MiniMax 2K 再生成（输入仅源任务 id，VIDEO/SECOND 计价）。 */
+    public static final String TYPE_REGENERATION = "REGENERATION";
     /** 图片生成任务类型（V84 起，Seedream 生图）：纯文生图 / 参考图生图（图生图/多图融合）。 */
     public static final String TYPE_TEXT2IMAGE = "TEXT2IMAGE";
     public static final String TYPE_IMAGE2IMAGE = "IMAGE2IMAGE";
