@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import type { AxiosResponse } from 'axios'
 import PricingConfigView from './PricingConfigView.vue'
 import { billingApi } from '@/api/billing'
@@ -43,6 +44,9 @@ function response<T>(data: T): AxiosResponse<T> {
 function mountView() {
   return mount(PricingConfigView, { global: { stubs: { teleport: true } } })
 }
+
+// 页面含 ModuleScene（useThemeStore），挂载前需活动 pinia
+beforeEach(() => setActivePinia(createPinia()))
 
 describe('PricingConfigView FR-F20-01', () => {
   beforeEach(() => {

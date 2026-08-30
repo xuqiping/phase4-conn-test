@@ -1,15 +1,15 @@
 <template>
   <div class="pricing-config">
-    <div v-if="!canManage" class="pricing-config__noperm"><n-empty description="无 pricing:manage 权限" /></div>
+    <!-- 雾中浮岛场景层（ART-DIR-0002R 方向二 admin 淡版，仅 ink 主题渲染） -->
+    <ModuleScene scene="admin" lite />
+    <div v-if="!canManage" class="pricing-config__noperm"><InkEmptyState type="forbidden" description="无 pricing:manage 权限" /></div>
     <template v-else>
-      <n-card title="模型价表">
-        <template #header-extra>
-          <n-space>
-            <n-button @click="handleExport" :loading="exporting">导出</n-button>
-            <n-button @click="handleDownloadTemplate" :loading="downloadingTemplate">下载模板</n-button>
-            <n-button @click="triggerImport" :loading="importing">导入</n-button>
-            <n-button type="primary" @click="openPricingModal()">新增价表</n-button>
-          </n-space>
+      <PageHeader title="价表配置">
+        <template #actions>
+          <n-button @click="handleExport" :loading="exporting">导出</n-button>
+          <n-button @click="handleDownloadTemplate" :loading="downloadingTemplate">下载模板</n-button>
+          <n-button @click="triggerImport" :loading="importing">导入</n-button>
+          <n-button type="primary" @click="openPricingModal()">新增价表</n-button>
           <input
             ref="importFileInput"
             type="file"
@@ -18,6 +18,8 @@
             @change="onImportFileChange"
           />
         </template>
+      </PageHeader>
+      <n-card title="模型价表">
         <n-data-table :columns="pricingColumns" :data="pricingRules" :loading="loading" size="small" />
       </n-card>
 
@@ -181,12 +183,15 @@
 <script setup lang="ts">
 import { computed, h, onMounted, reactive, ref } from 'vue'
 import {
-  NAlert, NCard, NDataTable, NButton, NModal, NForm, NFormItem, NInput, NInputNumber, NSelect, NSpace, NPopconfirm, NEmpty, NTag, useMessage, useDialog
+  NAlert, NCard, NDataTable, NButton, NModal, NForm, NFormItem, NInput, NInputNumber, NSelect, NSpace, NPopconfirm, NTag, useMessage, useDialog
 } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { billingApi, KIND_LABEL, PRICING_RESOLUTION_SLOTS, pricingResolutionLabel } from '@/api/billing'
 import type { AvailablePricingModelVO, PricingRuleVO, PricingRuleRequest, PricingRuleExportItem, RatioTierVO, RatioTierRequest, BillingKind, VideoBillingMode, EstDeviationVO } from '@/api/billing'
 import { useAuthStore } from '@/stores/auth'
+import InkEmptyState from '@/components/InkEmptyState.vue'
+import PageHeader from '@/components/PageHeader.vue'
+import ModuleScene from '@/components/ModuleScene.vue'
 
 const authStore = useAuthStore()
 const message = useMessage()
