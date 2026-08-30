@@ -201,6 +201,10 @@ describe('VideoGenView HHX capability & aux-model linkage', () => {
       onSubmit: () => Promise<void>
     }
 
+    // 修复VI 补遗：参考图 hint 上限文案与 mediaLimits 单源一致（≤30MB/张，不再硬编码 8MB）
+    expect(wrapper.text()).toContain('≤30MB/张')
+    expect(wrapper.text()).not.toContain('8MB')
+
     // M1：t2v 纯文本——参考图/首帧/参考视频上传区整体隐藏
     vm.form.model = hhT2V.modelId
     vm.applyCapabilityConstraints()

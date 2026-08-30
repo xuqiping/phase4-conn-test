@@ -137,7 +137,7 @@
             <n-form-item v-if="capability.maxImages > 0">
               <template #label>
                 参考图
-                <span class="video-gen__hint">（{{ images.length }}/{{ frameCount > 0 ? 0 : capability.maxImages }}，≤8MB/张）</span>
+                <span class="video-gen__hint">（{{ images.length }}/{{ frameCount > 0 ? 0 : capability.maxImages }}，≤{{ KIND_LIMIT_LABEL.image }}/张）</span>
               </template>
               <div class="video-gen__tiles">
                 <div v-for="(a, i) in images" :key="a.id" class="video-gen__tile">
@@ -162,7 +162,7 @@
             <n-form-item v-if="capability.maxVideos > 0">
               <template #label>
                 参考视频
-                <span class="video-gen__hint">（{{ videos.length }}/{{ capability.maxVideos }}，≤50MB/个，运镜/动作参考）</span>
+                <span class="video-gen__hint">（{{ videos.length }}/{{ capability.maxVideos }}，≤{{ KIND_LIMIT_LABEL.video }}/个，运镜/动作参考）</span>
               </template>
               <n-alert v-if="!referenceVideoUsable" type="warning" :show-icon="false" style="margin-bottom: 10px">
                 当前环境未开放参考视频：需要配置 Ark 可访问的公网 HTTPS 地址和签名密钥后才能上传或从资产库选择。
@@ -192,7 +192,7 @@
             <n-form-item v-if="capability.maxAudios > 0">
               <template #label>
                 参考音频
-                <span class="video-gen__hint">（{{ audios.length }}/{{ capability.maxAudios }}，≤15MB/个，音色/BGM 参考）</span>
+                <span class="video-gen__hint">（{{ audios.length }}/{{ capability.maxAudios }}，≤{{ KIND_LIMIT_LABEL.audio }}/个，音色/BGM 参考）</span>
               </template>
               <div class="video-gen__tiles video-gen__tiles--audio">
                 <div v-for="(a, i) in audios" :key="a.id" class="video-gen__tile video-gen__tile--audio">
@@ -506,7 +506,7 @@ import type { AssetFilePicked } from '@/types/asset'
 import type { MentionCandidate } from '@/types/canvas'
 import { fetchFilePreview } from '@/api/file'
 import { interpolateAttachmentPrompt } from '@/utils/attachmentMention'
-import { KIND_LIMIT_BYTES } from '@/utils/mediaLimits'
+import { KIND_LIMIT_BYTES, KIND_LIMIT_LABEL } from '@/utils/mediaLimits'
 import { bucketRestoredAttachments } from '@/utils/mediaTaskRestore'
 import { canAddVideoAttachment, type VideoAttachmentTarget } from '@/utils/videoAttachmentMode'
 

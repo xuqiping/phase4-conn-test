@@ -646,7 +646,7 @@ public class MediaGenTaskService {
                 throw new BusinessException(ErrorCode.FORBIDDEN, "无权使用该参考图: " + fileId);
             }
         }
-        long maxBytes = MediaStorageService.KIND_MAX_BYTES.getOrDefault("image", 8L * 1024 * 1024);
+        long maxBytes = MediaStorageService.KIND_MAX_BYTES.getOrDefault("image", 30L * 1024 * 1024); // 防御缺省与 KIND_MAX_BYTES.image 同值（修复VI 8→30MB）
         if (meta.getSize() != null && meta.getSize() > maxBytes) {
             throw new BusinessException(ErrorCode.BAD_REQUEST,
                     "参考图过大: " + meta.getOriginalName() + "（≤" + (maxBytes / 1024 / 1024) + "MB）");
