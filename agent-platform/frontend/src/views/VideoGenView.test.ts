@@ -327,3 +327,30 @@ describe('VideoGenView HHX capability & aux-model linkage', () => {
     expect(wrapper.text()).not.toContain('入库到资产库')
   })
 })
+
+/** 全局默认视频模型：defaultModel 标记驱动初始选中（未标记回落第一个）。 */
+describe('VideoGenView default video model selection', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(mediaApi.listModels).mockResolvedValue(
+      response([model, makeModel({ modelId: 'minimax-h3', defaultModel: true, providerName: 'MiniMax' })]))
+    vi.mocked(mediaApi.listTasks).mockResolvedValue(
+      response({ records: [], total: 0, page: 1, size: 10, pages: 0 }))
+    vi.mocked(mediaApi.estimatePreview).mockResolvedValue(
+      response({ estimatedPoints: 10, affordable: true, balance: 100, personalScope: null }))
+  })
+
+  it('initial model = defaultModel-marked item, not list-first', async () => {
+    const wrapper = await mountView()
+    const vm = wrapper.vm as unknown as { form: { model: string } }
+    expect(vm.form.model).toBe('minimax-h3')
+  })
+
+  it('no defaultModel mark → falls back to list-first (unchanged legacy behavior)', async () => {
+    vi.mocked(mediaApi.listModels).mockResolvedValue(
+      response([model, makeModel({ modelId: 'minimax-h3', providerName: 'MiniMax' })]))
+    const wrapper = await mountView()
+    const vm = wrapper.vm as unknown as { form: { model: string } }
+    expect(vm.form.model).toBe(model.modelId)
+  })
+})

@@ -491,7 +491,7 @@
             :options="videoModelOptions"
             size="small"
             clearable
-            placeholder="默认（provider 首个视频模型）"
+            placeholder="默认（管理员默认视频模型）"
             @update:value="onVideoModelChange"
           />
         </div>
@@ -1302,6 +1302,7 @@ onMounted(async () => {
     // 修复VI VE（2x#6）：视频模型改 /media/models（MediaModelVO 带 capability，与独立视频页同源；
     // llmApi.listVideoModels 无能力画像，参数只能硬编码——本 chunk 换源）
     videoModels.value = v.data.data ?? []
+    applyDefaultVideoModel()
   } catch {
     // 模型列表可选，失败静默（下拉空态不崩；视频参数回落下方保守兜底档，不白屏）
   }
@@ -1328,7 +1329,23 @@ function applyDefaultImageModel() {
   node.data.model = fallback.modelId
   emit('data-changed')
 }
-watch(() => props.node?.id, () => applyDefaultImageModel())
+watch(() => props.node?.id, () => {
+  applyDefaultImageModel()
+  applyDefaultVideoModel()
+})
+/**
+ * 视频节点未显式选模型时补默认——管理员全局默认视频模型（defaultModel 标记，附属档除外）
+ * ?? 画布候选第一个。走 onVideoModelChange 顺带把 ratio/分辨率/时长收敛进该模型能力区间
+ * （画布提交对不支持字段传值直接被后端拒）。覆盖所有创建路径与两个时机（同图片默认范式）。
+ */
+function applyDefaultVideoModel() {
+  const node = props.node
+  if (!node || node.type !== 'video' || node.data.model) return
+  const candidates = videoModels.value.filter(m => !isContextIrModelId(m.modelId) && !isRegenerationModelId(m.modelId))
+  const fallback = candidates.find(m => m.defaultModel) ?? candidates[0]
+  if (!fallback) return
+  onVideoModelChange(fallback.modelId)
+}
 /** 按 providerName 分组（与 chat ModelSelector 同范式；结构类型兼容 AvailableModel/ImageModelVO）。 */
 function groupModels(list: { providerName: string; displayName: string; modelId: string }[]) {
   const grouped = new Map<string, { type: 'group'; label: string; key: string; children: { label: string; value: string }[] }>()

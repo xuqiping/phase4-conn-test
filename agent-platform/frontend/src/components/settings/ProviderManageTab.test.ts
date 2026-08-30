@@ -10,6 +10,10 @@ const apiMock = vi.hoisted(() => ({
   listProviders: vi.fn(),
   exportProviders: vi.fn()
 }))
+const sysApiMock = vi.hoisted(() => ({
+  getLlmModelDefaults: vi.fn(),
+  updateLlmModelDefaults: vi.fn()
+}))
 const msgMock = vi.hoisted(() => ({
   success: vi.fn(),
   error: vi.fn(),
@@ -34,9 +38,8 @@ vi.mock('@/api/system', async (importOriginal) => {
     ...original,
     systemApi: {
       ...original.systemApi,
-      getLlmModelDefaults: vi.fn().mockResolvedValue({
-        data: { code: 200, msg: 'success', data: { chatModel: null, embeddingModel: null, imageModel: null } }
-      })
+      getLlmModelDefaults: sysApiMock.getLlmModelDefaults,
+      updateLlmModelDefaults: sysApiMock.updateLlmModelDefaults
     }
   }
 })
@@ -60,6 +63,11 @@ type ExportVm = {
   confirmExport: () => Promise<void>
 }
 
+type DefaultsVm = ExportVm & {
+  modelDefaults: { chatModel: string | null; embeddingModel: string | null; imageModel: string | null; videoModel: string | null }
+  saveModelDefaults: () => Promise<void>
+}
+
 async function mountTab(): Promise<ExportVm> {
   const wrapper = mount(ProviderManageTab)
   await flushPromises()
@@ -72,6 +80,9 @@ describe('ProviderManageTab 导出密码确认（修复VIII B4）', () => {
     vi.clearAllMocks()
     apiMock.listProviders.mockResolvedValue({
       data: { code: 200, msg: 'success', data: [] }
+    })
+    sysApiMock.getLlmModelDefaults.mockResolvedValue({
+      data: { code: 200, msg: 'success', data: { chatModel: null, embeddingModel: null, imageModel: null, videoModel: null } }
     })
     Object.defineProperty(URL, 'createObjectURL', { value: createObjectURL, configurable: true })
     Object.defineProperty(URL, 'revokeObjectURL', { value: revokeObjectURL, configurable: true })
@@ -128,5 +139,49 @@ describe('ProviderManageTab 导出密码确认（修复VIII B4）', () => {
     expect(msgMock.success).toHaveBeenCalledWith('导出成功')
     expect(createObjectURL).toHaveBeenCalledTimes(1)
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock')
+  })
+})
+
+describe('ProviderManageTab 默认视频模型（全局默认模型扩展）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    apiMock.listProviders.mockResolvedValue({
+      data: {
+        code: 200, msg: 'success',
+        data: [{
+          id: 1, name: 'minimax-h3', displayName: 'MiniMax H3', status: 'ACTIVE',
+          category: 'VIDEO', protocol: 'minimax', models: '["minimax-h3","minimax-h3-regeneration"]', sortOrder: 0
+        }]
+      }
+    })
+    sysApiMock.getLlmModelDefaults.mockResolvedValue({
+      data: { code: 200, msg: 'success', data: { chatModel: null, embeddingModel: null, imageModel: null, videoModel: null } }
+    })
+  })
+
+  it('渲染「默认视频模型」下拉：候选 = 启用 VIDEO provider 模型全集（含附属档）', async () => {
+    const wrapper = mount(ProviderManageTab)
+    await flushPromises()
+    expect(wrapper.text()).toContain('默认视频模型')
+    const vm = wrapper.vm as unknown as DefaultsVm
+    // videoModelOptions 是 setup 闭包 computed——经 vm 可达（script setup 绑定挂 proxy）
+    const options = (vm as unknown as { videoModelOptions: { label: string; value: string }[] }).videoModelOptions
+    expect(options.map(o => o.value)).toEqual(['minimax-h3', 'minimax-h3-regeneration'])
+  })
+
+  it('选中默认视频模型 → PUT 全量默认模型（body 含 videoModel）', async () => {
+    sysApiMock.updateLlmModelDefaults.mockResolvedValueOnce({
+      data: { code: 200, msg: 'success', data: { chatModel: null, embeddingModel: null, imageModel: null, videoModel: 'minimax-h3' } }
+    })
+    const wrapper = mount(ProviderManageTab)
+    await flushPromises()
+    const vm = wrapper.vm as unknown as DefaultsVm
+    vm.modelDefaults.videoModel = 'minimax-h3'
+    await vm.saveModelDefaults()
+    expect(sysApiMock.updateLlmModelDefaults).toHaveBeenCalledWith(
+      expect.objectContaining({ videoModel: 'minimax-h3' }))
+    expect(msgMock.success).toHaveBeenCalledWith('默认模型已更新')
+    expect(vm.modelDefaults.videoModel).toBe('minimax-h3')
   })
 })

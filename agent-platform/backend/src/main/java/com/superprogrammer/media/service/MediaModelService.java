@@ -40,6 +40,8 @@ public class MediaModelService {
      * 列出全部可选视频模型（跨所有 ACTIVE VIDEO provider，按 sortOrder 顺序）。
      */
     public List<MediaModelVO> listModels() {
+        // 全局默认视频模型标记（配置失效/未配 → null，无命中项，前端回落列表第一个）
+        String defaultVideoModel = systemSettingService.getDefaultVideoModel();
         List<MediaModelVO> result = new ArrayList<>();
         for (LlmProviderEntity provider : listMediaProviders()) {
             for (String model : parseModels(provider.getModels())) {
@@ -48,6 +50,7 @@ public class MediaModelService {
                         .modelId(model)
                         .displayName(buildDisplayName(provider, model))
                         .providerName(provider.getName())
+                        .defaultModel(model.equals(defaultVideoModel))
                         .maxImages(cap.getMaxImages())
                         .maxVideos(cap.getMaxVideos())
                         .maxAudios(cap.getMaxAudios())

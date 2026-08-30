@@ -70,6 +70,8 @@ public class MediaGenTaskService {
     private final MediaInflightGateService mediaInflightGate;
     /** 媒体提交指标（media.task.submitted）。 */
     private final BizMetrics bizMetrics;
+    /** 全局默认视频模型（media.default.video-model）：未指定 model 提交时的优先回落。 */
+    private final com.superprogrammer.system.service.SystemSettingService systemSettingService;
     /** 审计：submit 编程式落库（关联键 targetId=taskId，问题修复 #8）。 */
     private final AuditLogService auditLogService;
     /** 计划5 Step5：组池预检（成员身份+组池余额，估价值）。 */
@@ -183,19 +185,31 @@ public class MediaGenTaskService {
                           String model, Long userId, boolean admin, String frameRole,
                           Long projectGroupId, java.math.BigDecimal poolBalance, Long sourceTaskId) {
 
-        // 1) 解析 provider + model（指定 model 时跨 VIDEO provider 反查，未指定走旧默认路径）
+        // 1) 解析 provider + model（指定 model 时跨 VIDEO provider 反查；未指定优先管理员配置的
+        //    全局默认视频模型（media.default.video-model），未配置/已失效回落旧默认 provider 路径）
         LlmProviderEntity provider;
         String resolvedModel;
         if (model == null || model.isBlank()) {
-            provider = mediaModelService.defaultProvider();
-            if (provider == null) {
-                throw new BusinessException(ErrorCode.NOT_FOUND,
-                        "未找到默认视频 provider(name=" + properties.getProviderName()
-                                + ")，请先在「全局模型供应商」建一条 VIDEO 类 provider");
-            }
-            resolvedModel = mediaModelService.firstModelOf(provider);
-            if (resolvedModel == null) {
-                throw new BusinessException(ErrorCode.BAD_REQUEST, "视频 provider 未配置模型列表（models）");
+            String defaultVideoModel = systemSettingService.getDefaultVideoModel();
+            LlmProviderEntity defaultHit = defaultVideoModel == null ? null
+                    : mediaModelService.resolveProviderByModel(defaultVideoModel);
+            if (defaultHit != null) {
+                provider = defaultHit;
+                resolvedModel = defaultVideoModel;
+            } else {
+                if (defaultVideoModel != null) {
+                    log.warn("全局默认视频模型 {} 已失效（不在任何 ACTIVE VIDEO provider），回落默认 provider 首模型", defaultVideoModel);
+                }
+                provider = mediaModelService.defaultProvider();
+                if (provider == null) {
+                    throw new BusinessException(ErrorCode.NOT_FOUND,
+                            "未找到默认视频 provider(name=" + properties.getProviderName()
+                                    + ")，请先在「全局模型供应商」建一条 VIDEO 类 provider");
+                }
+                resolvedModel = mediaModelService.firstModelOf(provider);
+                if (resolvedModel == null) {
+                    throw new BusinessException(ErrorCode.BAD_REQUEST, "视频 provider 未配置模型列表（models）");
+                }
             }
         } else {
             provider = mediaModelService.resolveProviderByModel(model);
@@ -848,8 +862,15 @@ public class MediaGenTaskService {
                 LlmProviderEntity provider;
                 String resolvedModel;
                 if (model == null || model.isBlank()) {
-                    provider = mediaModelService.defaultProvider();
-                    resolvedModel = provider == null ? null : mediaModelService.firstModelOf(provider);
+                    // 未指定模型：优先管理员全局默认视频模型，未配置/失效回落默认 provider 首模型
+                    String defaultVideoModel = systemSettingService.getDefaultVideoModel();
+                    provider = defaultVideoModel == null ? null
+                            : mediaModelService.resolveProviderByModel(defaultVideoModel);
+                    resolvedModel = provider != null ? defaultVideoModel : null;
+                    if (provider == null) {
+                        provider = mediaModelService.defaultProvider();
+                        resolvedModel = provider == null ? null : mediaModelService.firstModelOf(provider);
+                    }
                 } else {
                     provider = mediaModelService.resolveProviderByModel(model);
                     resolvedModel = model;

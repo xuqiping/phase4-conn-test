@@ -318,6 +318,8 @@ class SystemSettingServiceTest {
 
         assertEquals(null, service.getDefaultChatModel());
         assertEquals(null, service.getDefaultEmbeddingModel());
+        assertEquals(null, service.getDefaultImageModel());
+        assertEquals(null, service.getDefaultVideoModel(), "未配置默认视频模型 → null（消费方回落）");
     }
 
     // ============================ V77 记忆标签大类词表 ============================

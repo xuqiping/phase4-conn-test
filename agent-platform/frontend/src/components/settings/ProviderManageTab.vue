@@ -30,9 +30,19 @@
             @update:value="saveModelDefaults"
           />
         </n-form-item>
+        <!-- 全局默认视频模型（视频生成页/画布视频节点初始选中 + 未指定模型提交回落） -->
+        <n-form-item label="默认视频模型">
+          <n-select
+            v-model:value="modelDefaults.videoModel"
+            :options="videoModelOptions"
+            clearable
+            placeholder="未配置：视频生成回落列表第一个模型"
+            @update:value="saveModelDefaults"
+          />
+        </n-form-item>
       </n-form>
       <div class="provider-manage__defaults-hint">
-        业务已显式选择模型时始终使用所选模型；仅未选择时使用这里的管理员默认。对话/向量无默认且未选择会明确报错；生图未配置默认回落列表第一个。
+        业务已显式选择模型时始终使用所选模型；仅未选择时使用这里的管理员默认。对话/向量无默认且未选择会明确报错；生图/视频未配置默认回落列表第一个。
       </div>
     </n-card>
 
@@ -149,7 +159,7 @@ const showModal = ref(false)
 const editingId = ref<number | null>(null)
 const testingId = ref<number | null>(null)
 const importInputRef = ref<HTMLInputElement | null>(null)
-const modelDefaults = ref<LlmModelDefaults>({ chatModel: null, embeddingModel: null, imageModel: null })
+const modelDefaults = ref<LlmModelDefaults>({ chatModel: null, embeddingModel: null, imageModel: null, videoModel: null })
 
 const modelsForCategory = (category: ProviderCategory) => providers.value
   .filter(provider => provider.status === 'ACTIVE' && (provider.category ?? 'CHAT') === category)
@@ -166,6 +176,8 @@ const chatModelOptions = computed(() => modelsForCategory('CHAT'))
 const embeddingModelOptions = computed(() => modelsForCategory('EMBEDDING'))
 /** 修复III C2（2x-2）：默认生图模型候选 = 启用 IMAGE provider 的模型全集 */
 const imageModelOptions = computed(() => modelsForCategory('IMAGE'))
+/** 默认视频模型候选 = 启用 VIDEO provider 的模型全集（含附属档，附属档也可设为默认——独立页支持其表单形态） */
+const videoModelOptions = computed(() => modelsForCategory('VIDEO'))
 
 const form = ref<LlmProviderCreateRequest>({
   name: '',

@@ -84,7 +84,9 @@ public class SystemSettingController {
         validateDefaultModel(request.getEmbeddingModel(), LlmProviderService.CATEGORY_EMBEDDING, "向量");
         // 修复III C2（2x-2）：默认生图模型（media:gen 侧图片节点/独立生图页默认选中）
         validateDefaultModel(request.getImageModel(), LlmProviderService.CATEGORY_IMAGE, "生图");
-        service.updateDefaultModels(request.getChatModel(), request.getEmbeddingModel(), request.getImageModel());
+        // 全局默认视频模型（仿生图默认范式：视频页/画布视频节点初始选中 + 提交回落）
+        validateDefaultModel(request.getVideoModel(), LlmProviderService.CATEGORY_VIDEO, "视频");
+        service.updateDefaultModels(request.getChatModel(), request.getEmbeddingModel(), request.getImageModel(), request.getVideoModel());
         return ResponseEntity.ok(R.ok("默认模型已更新", buildLlmModelDefaults()));
     }
 
@@ -101,6 +103,7 @@ public class SystemSettingController {
                 .chatModel(service.getDefaultChatModel())
                 .embeddingModel(service.getDefaultEmbeddingModel())
                 .imageModel(service.getDefaultImageModel())
+                .videoModel(service.getDefaultVideoModel())
                 .build();
     }
 

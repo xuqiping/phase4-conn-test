@@ -635,3 +635,79 @@ describe('PropertyPanel · 修复VI VE 视频参数 capability 对齐（2x#6）'
     wrapper.unmount()
   })
 })
+
+// 全局默认视频模型：视频节点未选模型 → 补默认（管理员默认标记（附属档除外） ?? 画布候选第一个）
+describe('PropertyPanel · 默认视频模型', () => {
+  it('未选模型 + 目录含 defaultModel 标记 → 自动选标记项并收敛参数（emit data-changed）', async () => {
+    const { mediaApi } = await import('@/api/media')
+    vi.mocked(mediaApi.listModels).mockResolvedValueOnce({
+      data: {
+        data: [
+          {
+            modelId: 'seedance-2.0', displayName: 'Seedance 2.0', providerName: 'Ark',
+            maxImages: 3, maxVideos: 1, maxAudios: 1, maxAttachments: 4,
+            supportedRatios: ['16:9', '9:16', '1:1', '21:9', 'adaptive'],
+            supportedResolutions: ['480p', '720p', '1080p', '4K'],
+            minDuration: 4, maxDuration: 15, supportsGenerateAudio: true,
+            videoDataUri: false, referenceVideoEnabled: true
+          },
+          {
+            modelId: 'minimax-h3', displayName: 'MiniMax H3', providerName: 'MiniMax', defaultModel: true,
+            maxImages: 9, maxVideos: 3, maxAudios: 3, maxAttachments: 15,
+            supportedRatios: ['16:9', '9:16', '1:1'], supportedResolutions: ['768p', '2k'],
+            minDuration: 4, maxDuration: 15, supportsGenerateAudio: true,
+            videoDataUri: false, referenceVideoEnabled: false
+          }
+        ] as import('@/api/media').MediaModelVO[]
+      }
+    } as unknown as Awaited<ReturnType<typeof mediaApi.listModels>>)
+    const node = mkNode({ prompt: 'p', resolution: '720p' })
+    node.type = 'video'
+    const wrapper = mount(PropertyPanel, { props: { node } })
+    await flushPromises()
+    expect(node.data.model).toBe('minimax-h3')
+    // 参数收敛进默认模型能力区间（720p 不在 768p/2k → 就近落 768p）
+    expect(node.data.resolution).toBe('768p')
+    expect(wrapper.emitted('data-changed')).toBeTruthy()
+    wrapper.unmount()
+  })
+
+  it('默认标记落在附属档（context-ir/regeneration）→ 画布跳过标记回落生成档第一个', async () => {
+    const { mediaApi } = await import('@/api/media')
+    vi.mocked(mediaApi.listModels).mockResolvedValueOnce({
+      data: {
+        data: [
+          {
+            modelId: 'minimax-h3-context-ir', displayName: 'CtxIr', providerName: 'MiniMax', defaultModel: true,
+            maxImages: 9, maxVideos: 3, maxAudios: 3, maxAttachments: 15,
+            supportedRatios: [], supportedResolutions: [],
+            minDuration: 4, maxDuration: 15, supportsGenerateAudio: false,
+            videoDataUri: false, referenceVideoEnabled: false
+          },
+          {
+            modelId: 'minimax-h3', displayName: 'MiniMax H3', providerName: 'MiniMax',
+            maxImages: 9, maxVideos: 3, maxAudios: 3, maxAttachments: 15,
+            supportedRatios: ['16:9'], supportedResolutions: ['768p', '2k'],
+            minDuration: 4, maxDuration: 15, supportsGenerateAudio: true,
+            videoDataUri: false, referenceVideoEnabled: false
+          }
+        ] as import('@/api/media').MediaModelVO[]
+      }
+    } as unknown as Awaited<ReturnType<typeof mediaApi.listModels>>)
+    const node = mkNode({ prompt: 'p' })
+    node.type = 'video'
+    const wrapper = mount(PropertyPanel, { props: { node } })
+    await flushPromises()
+    expect(node.data.model).toBe('minimax-h3')
+    wrapper.unmount()
+  })
+
+  it('已显式选模型 → 不被默认覆盖', async () => {
+    const node = mkNode({ prompt: 'p', model: 'seedance-2.0' })
+    node.type = 'video'
+    const wrapper = mount(PropertyPanel, { props: { node } })
+    await flushPromises()
+    expect(node.data.model).toBe('seedance-2.0')
+    wrapper.unmount()
+  })
+})

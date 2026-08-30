@@ -160,4 +160,38 @@ class MediaModelServiceTest {
         List<ImageModelVO> models = service.listImageModels();
         assertTrue(models.stream().noneMatch(ImageModelVO::isDefaultModel));
     }
+
+    // ---------- 全局默认视频模型标记（仿生图默认范式） ----------
+
+    private void givenVideoProviders() {
+        when(llmProviderService.listActive()).thenReturn(List.of(
+                provider("minimax-h3", "VIDEO", "[\"minimax-h3\",\"minimax-h3-regeneration\"]", null)));
+    }
+
+    @Test
+    void listModels_configuredDefault_marksMatchingModelOnly() {
+        givenVideoProviders();
+        when(systemSettingService.getDefaultVideoModel()).thenReturn("minimax-h3");
+        List<MediaModelVO> models = service.listModels();
+        assertEquals(2, models.size());
+        assertTrue(models.get(0).isDefaultModel(), "minimax-h3 命中配置默认");
+        assertFalse(models.get(1).isDefaultModel(), "regeneration 非配置默认");
+    }
+
+    @Test
+    void listModels_noDefaultConfigured_noModelMarked() {
+        givenVideoProviders();
+        when(systemSettingService.getDefaultVideoModel()).thenReturn(null);
+        List<MediaModelVO> models = service.listModels();
+        assertTrue(models.stream().noneMatch(MediaModelVO::isDefaultModel), "未配置默认 → 无标记，前端回落第一个");
+    }
+
+    @Test
+    void listModels_staleDefault_notInCatalog_noModelMarked() {
+        // 读宽容：配置的默认模型已被下架 → 无命中项，等价未配置
+        givenVideoProviders();
+        when(systemSettingService.getDefaultVideoModel()).thenReturn("removed-model");
+        List<MediaModelVO> models = service.listModels();
+        assertTrue(models.stream().noneMatch(MediaModelVO::isDefaultModel));
+    }
 }

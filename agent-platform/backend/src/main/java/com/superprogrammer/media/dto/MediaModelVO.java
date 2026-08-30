@@ -23,6 +23,10 @@ public class MediaModelVO {
     /** 所属 provider name（分组显示用）。 */
     private String providerName;
 
+    /** 是否管理员配置的全局默认视频模型（media.default.video-model；未配置/已失效无标记，
+     *  前端初始选中 = defaultModel 项 || 列表第一个）。 */
+    private boolean defaultModel;
+
     private int maxImages;
     private int maxVideos;
     private int maxAudios;

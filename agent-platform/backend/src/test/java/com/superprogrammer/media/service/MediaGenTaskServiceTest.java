@@ -65,6 +65,9 @@ class MediaGenTaskServiceTest {
     private com.superprogrammer.media.service.internal.MediaInflightGateService mediaInflightGate;
     @Mock
     private BizMetrics bizMetrics;
+    /** 全局默认视频模型设置（空 model 提交的优先回落；默认 null 走旧默认 provider 路径）。 */
+    @Mock
+    private com.superprogrammer.system.service.SystemSettingService systemSettingService;
     @Mock
     private com.superprogrammer.common.audit.AuditLogService auditLogService;
     /** 计划5 Step5：组池预检/估价 mock（估价缺价路径走 catch 记 0，不触发 NPE）。 */
@@ -101,7 +104,7 @@ class MediaGenTaskServiceTest {
                 taskMapper, mediaModelService,
                 new MediaModelCapabilityService(new ObjectMapper()),
                 fileStorageService, properties, new ObjectMapper(), assetService, walletService,
-                inflightGate, mediaInflightGate, bizMetrics, auditLogService,
+                inflightGate, mediaInflightGate, bizMetrics, systemSettingService, auditLogService,
                 groupWalletService, projectGroupService, pricingService, pointsRatioService,
                 mediaBillingService, memberMapper, memberBudgetService);
 
@@ -109,6 +112,8 @@ class MediaGenTaskServiceTest {
         lenient().when(mediaModelService.resolveProviderByModel(SEEDANCE_2)).thenReturn(provider);
         lenient().when(mediaModelService.defaultProvider()).thenReturn(provider);
         lenient().when(mediaModelService.firstModelOf(provider)).thenReturn(SEEDANCE_2);
+        // 默认未配置全局默认视频模型 → 空 model 走旧默认 provider 路径（既有用例零扰动）
+        lenient().when(systemSettingService.getDefaultVideoModel()).thenReturn(null);
     }
 
     private AttachmentRef att(String fileId, String kind) {
@@ -307,6 +312,40 @@ class MediaGenTaskServiceTest {
         verify(taskMapper).insert(captor.capture());
         assertEquals(SEEDANCE_2, captor.getValue().getModel());
         assertEquals(MediaGenTask.TYPE_TEXT2VIDEO, captor.getValue().getTaskType());
+    }
+
+    @Test
+    void submit_blankModel_globalDefaultVideoModelWins() {
+        // 管理员配置了全局默认视频模型 → 空 model 提交按配置模型路由（跨 provider 反查）
+        LlmProviderEntity other = new LlmProviderEntity();
+        other.setId(9L);
+        other.setName("minimax-h3");
+        other.setModels("[\"minimax-h3\"]");
+        when(systemSettingService.getDefaultVideoModel()).thenReturn("minimax-h3");
+        when(mediaModelService.resolveProviderByModel("minimax-h3")).thenReturn(other);
+
+        service.submit("p", "16:9", 5, "768p", false, false,
+                null, null, null, null, USER_ID, false);
+
+        ArgumentCaptor<MediaGenTask> captor = ArgumentCaptor.forClass(MediaGenTask.class);
+        verify(taskMapper).insert(captor.capture());
+        assertEquals("minimax-h3", captor.getValue().getModel());
+        // 默认 provider 路径不应被触碰
+        verify(mediaModelService, never()).defaultProvider();
+    }
+
+    @Test
+    void submit_blankModel_staleGlobalDefaultFallsBackToDefaultProvider() {
+        // 读宽容：配置的默认模型已下架（反查 null）→ 回落旧默认 provider 路径
+        when(systemSettingService.getDefaultVideoModel()).thenReturn("removed-model");
+        when(mediaModelService.resolveProviderByModel("removed-model")).thenReturn(null);
+
+        service.submit("p", "16:9", 5, "720p", false, false,
+                null, null, null, null, USER_ID, false);
+
+        ArgumentCaptor<MediaGenTask> captor = ArgumentCaptor.forClass(MediaGenTask.class);
+        verify(taskMapper).insert(captor.capture());
+        assertEquals(SEEDANCE_2, captor.getValue().getModel());
     }
 
     @Test

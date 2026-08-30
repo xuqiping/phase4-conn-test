@@ -577,7 +577,8 @@ async function loadModels() {
     const { data } = await mediaApi.listModels()
     models.value = data.data
     if (models.value.length > 0 && !form.model) {
-      form.model = models.value[0].modelId
+      // 全局默认视频模型（管理员配置 defaultModel 标记）优先，未配置/失效回落列表第一个
+      form.model = (models.value.find(m => m.defaultModel) ?? models.value[0]).modelId
       applyCapabilityConstraints()
     }
   } catch {
