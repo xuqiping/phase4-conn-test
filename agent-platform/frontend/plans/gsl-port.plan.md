@@ -184,11 +184,11 @@ C0 基线核对 ──→ C1 A类搬入 ──→ C2 基础设施换肤 ──�
 
 ## 安全检查清单（对照 PRD §6.4，P3 逐项验证）
 
-- [ ] api/** 与 stores 的 WS 鉴权/单飞刷新逻辑零变更（C 类文件零触碰，C2~C9 后 `git diff --stat` 确认 22 个 C 类文件不在改动列表）；
-- [ ] 零新增 npm 依赖（package.json diff 仅 scripts +1 行）；
-- [ ] `public/fonts/OFL-LXGW-WenKai.txt` 许可文件随包存在（C1 验证）；
-- [ ] 不引入外链 CDN 资源（字体/插画全自托管，grep 新文件无 `http(s)://` 引用外域）；
-- [ ] 不动 .env / 鉴权流 / 权限码；审计页三重兜底回归（C8 验证）。
+- [x] api/** 与 stores 的 WS 鉴权/单飞刷新逻辑零变更（C 类文件零触碰，C2~C9 后 `git diff --stat` 确认 22 个 C 类文件不在改动列表）；
+- [x] 零新增 npm 依赖（package.json diff 仅 scripts +1 行）；
+- [x] `public/fonts/OFL-LXGW-WenKai.txt` 许可文件随包存在（C1 验证）；
+- [x] 不引入外链 CDN 资源（字体/插画全自托管，grep 新文件无 `http(s)://` 引用外域）；
+- [x] 不动 .env / 鉴权流 / 权限码；审计页三重兜底回归（C8 验证）。
 
 ## 功能联动点清单（正向必漏 bug 清单）
 
