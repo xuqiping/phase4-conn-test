@@ -105,11 +105,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { NTabs, NTabPane, NButton, NSpin, NAlert, useMessage } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
-import { useThemeStore, THEME_LIST } from '@/stores/theme'
+import { useThemeStore } from '@/stores/theme'
 import { authApi, type AuthChannels } from '@/api/auth'
 import { isDingTalkEnabled } from '@/utils/dingtalk'
 import { parseWechatCallback, clearWechatCallbackParams } from '@/utils/wechat'
@@ -129,7 +129,8 @@ const themeStore = useThemeStore()
 
 // 初始化主题
 themeStore.initTheme()
-const themeList = THEME_LIST
+// FR-3：只展示可见主题（夜墨/宣纸），隐藏主题不进登录页选择器
+const themeList = computed(() => themeStore.visibleThemes)
 
 // 钉钉免登入口（仅当配置了 AppKey/RedirectURI 时显示扫码 Tab）
 const dingtalkEnabled = isDingTalkEnabled()
