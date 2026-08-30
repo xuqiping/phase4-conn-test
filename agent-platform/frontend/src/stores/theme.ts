@@ -8,7 +8,7 @@ import { ref, computed } from 'vue'
 import { STORAGE_KEYS, getStorage, setStorage } from '@/utils/storage'
 
 /** 主题名称类型 */
-export type ThemeName = 'deep-space' | 'dark-pro' | 'cyber-glow'
+export type ThemeName = 'deep-space' | 'dark-pro' | 'cyber-glow' | 'ye-mo' | 'xuan-zhi'
 
 /** 主题元信息（用于主题选择器展示）*/
 export interface ThemeMeta {
@@ -58,13 +58,35 @@ export const THEME_LIST: ThemeMeta[] = [
       gradientEnd: '#38BDF8',
       bg: '#0A0510'
     }
+  },
+  {
+    name: 'ye-mo',
+    label: '夜墨',
+    description: '高山流水 · 暗 — 黛蓝墨夜，天青点缀',
+    colors: {
+      primary: '#8FBCD4',
+      gradientStart: '#8FBCD4',
+      gradientEnd: '#4E7FA6',
+      bg: '#151D29'
+    }
+  },
+  {
+    name: 'xuan-zhi',
+    label: '宣纸',
+    description: '高山流水 · 明 — 宣纸月白，墨色正文',
+    colors: {
+      primary: '#3D7A94',
+      gradientStart: '#3D7A94',
+      gradientEnd: '#4E7FA6',
+      bg: '#F5F1E6'
+    }
   }
 ]
 
 export const useThemeStore = defineStore('theme', () => {
   // === 状态 ===
   const currentTheme = ref<ThemeName>(
-    getStorage<ThemeName>(STORAGE_KEYS.THEME) || 'deep-space'
+    getStorage<ThemeName>(STORAGE_KEYS.THEME) || 'ye-mo'
   )
 
   // === 计算属性 ===
