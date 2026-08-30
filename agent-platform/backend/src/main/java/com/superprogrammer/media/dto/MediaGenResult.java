@@ -27,8 +27,19 @@ public class MediaGenResult {
     private String status;
     /** 成功时的结果资源 URL（视频临时链接）。 */
     private String resultUrl;
+    /**
+     * HHX-5：成功时的结果文本（仅 Context-IR——增强后的结构化提示词，无视频 URL）。
+     * worker 将其落 .md 文件走 result_file_id 链路；视频任务恒 null。
+     */
+    private String resultText;
     /** Ark 真实 token 用量；null 表示未返，须估算。 */
     private Long usageTokens;
+    /**
+     * HHX-9：Context-IR 输入/输出 token 分计（usage.prompt_tokens/completion_tokens），
+     * CHAT 价（输入/输出分价）实扣用；视频任务（按秒计费）恒 null。
+     */
+    private Long usageInputTokens;
+    private Long usageOutputTokens;
     /** 失败原因（脱敏截断 ≤256）。 */
     private String errorMsg;
 }

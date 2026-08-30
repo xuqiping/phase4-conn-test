@@ -30,6 +30,10 @@ public class MediaGenRequest {
     /** TEXT2VIDEO 文生视频 / IMAGE2VIDEO 图生视频。 */
     public static final String TYPE_TEXT2VIDEO = "TEXT2VIDEO";
     public static final String TYPE_IMAGE2VIDEO = "IMAGE2VIDEO";
+    /** HHX-5：MiniMax H3-Context-IR（多模态素材→结构化增强提示词，只出文本不出视频）。 */
+    public static final String TYPE_CONTEXT_IR = "CONTEXT_IR";
+    /** HHX-6：MiniMax H3 视频再生成（768P 源任务超分 2K）。 */
+    public static final String TYPE_REGENERATION = "REGENERATION";
 
     /** 附件级参考帧 role（SeedDance 2.0 content[] 枚举）：首帧 / 尾帧；null=reference_image。 */
     public static final String FRAME_FIRST = "first_frame";
@@ -82,6 +86,12 @@ public class MediaGenRequest {
 
     /** 所属 llm_providers.id（多 MEDIA provider 路由用：create/query 按任务落库时的 provider 走）。 */
     private Long providerId;
+
+    /**
+     * HHX-6：再生源任务 id（media_gen_tasks.id，本平台行 id 而非中转侧 task id——提交时映射成
+     * 中转 source_task_id=源任务 ark_task_id）。仅 TYPE_REGENERATION 用，其余 null。
+     */
+    private Long sourceTaskId;
 
     /** 已解析的参考附件（图片/音频可为 data URI；参考视频必须为 Ark 可访问的 HTTPS URL）。 */
     @Data

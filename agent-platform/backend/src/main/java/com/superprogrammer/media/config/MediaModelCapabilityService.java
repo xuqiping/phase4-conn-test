@@ -35,6 +35,11 @@ public class MediaModelCapabilityService {
     private static final List<String> RES_FAST_MINI = List.of("480p", "720p");
     /** RE/MVR-5：MiniMax v2 官方 resolution 枚举仅 768P/2K（字典档小写口径，provider 出参映射大写）。 */
     private static final List<String> RES_MINIMAX = List.of("768p", "2k");
+    /** HHX-7：HappyHorse 官方 ratio 枚举 9 值（无 adaptive；与平台 ALL_RATIOS 不同集，不可混用）。 */
+    private static final List<String> HH_RATIOS =
+            List.of("16:9", "9:16", "1:1", "4:3", "3:4", "4:5", "5:4", "9:21", "21:9");
+    /** HHX-7：HappyHorse t2v/r2v 官方仅 720P/1080P（无 480P 档）。 */
+    private static final List<String> RES_HH_720_1080 = List.of("720p", "1080p");
 
     private final ObjectMapper objectMapper;
 
@@ -187,6 +192,18 @@ public class MediaModelCapabilityService {
         // RE/MVR-5：MiniMax（Hailuo 系，v2 端点）——参考上限官方：参考图≤9/参考视频≤3/参考音频≤3
         // （首尾帧图各≤1 含在图配额内）；分辨率仅 768P/2K、时长 4-15s、默认生成音频。
         if (id.contains("minimax") || id.contains("hailuo")) {
+            // HHX-7：再生成后缀档——输入只有源任务 id（无 prompt/附件），分辨率锁 2K，
+            // 时长继承源任务（4-15 是校验带）；ratios 空列表=前端隐藏比例控件。
+            if (id.endsWith("-regeneration")) {
+                return MediaModelCapability.builder()
+                        .maxImages(0).maxVideos(0).maxAudios(0).maxAttachments(0)
+                        .supportedRatios(List.of())
+                        .supportedResolutions(List.of("2k"))
+                        .minDuration(4).maxDuration(15)
+                        .supportsGenerateAudio(false)
+                        .videoDataUri(false)
+                        .build();
+            }
             return MediaModelCapability.builder()
                     .maxImages(9).maxVideos(3).maxAudios(3).maxAttachments(15)
                     .supportedRatios(ALL_RATIOS)
@@ -196,11 +213,45 @@ public class MediaModelCapabilityService {
                     .videoDataUri(true)
                     .build();
         }
-        // RF/MVR-6：HappyHorse 1.1（阿里百炼/DashScope）——纯图生视频：media first_frame 有且仅有 1 张，
-        // 无视频/音频参考；分辨率 480P/720P/1080P（官方默认 1080P，1080P 已核实支持）；
-        // 时长 [3,15] 默认 5；无 ratio（宽高跟随首帧）；官方无音频生成参数（输出 MP4 无音轨）→
-        // supportsGenerateAudio=false（plan 原写 true 系照抄 RE 模板，P2 核对官方文档后修正）。
-        if (id.contains("happyhorse") || id.contains("dashscope")) {
+        // RF/MVR-6 + HHX-7：HappyHorse 1.1 三形态按模型 id 后缀分档（官方参数表）。
+        // 公共：时长 [3,15] 默认 5；无音频生成参数（输出 MP4 无音轨）→ supportsGenerateAudio=false。
+        if (id.contains("happyhorse")) {
+            // t2v 文生视频：纯文本，无 media；分辨率 720P/1080P（无 480P）；ratio 官方 9 值默认 16:9。
+            if (id.endsWith("-t2v")) {
+                return MediaModelCapability.builder()
+                        .maxImages(0).maxVideos(0).maxAudios(0).maxAttachments(0)
+                        .supportedRatios(HH_RATIOS)
+                        .supportedResolutions(RES_HH_720_1080)
+                        .minDuration(3).maxDuration(15)
+                        .supportsGenerateAudio(false)
+                        .videoDataUri(false)
+                        .build();
+            }
+            // r2v 多图参考生视频：reference_image 1-9 张（短边≥400px）；720P/1080P；ratio 9 值。
+            if (id.endsWith("-r2v")) {
+                return MediaModelCapability.builder()
+                        .maxImages(9).maxVideos(0).maxAudios(0).maxAttachments(9)
+                        .supportedRatios(HH_RATIOS)
+                        .supportedResolutions(RES_HH_720_1080)
+                        .minDuration(3).maxDuration(15)
+                        .supportsGenerateAudio(false)
+                        .videoDataUri(false)
+                        .build();
+            }
+            // i2v 图生视频（及无后缀旧 id 默认）：media first_frame 有且仅有 1 张；
+            // 分辨率 480P/720P/1080P（官方默认 1080P）；官方无 ratio 参数（宽高跟随首帧）→
+            // ratios 空列表=前端隐藏比例控件。
+            return MediaModelCapability.builder()
+                    .maxImages(1).maxVideos(0).maxAudios(0).maxAttachments(1)
+                    .supportedRatios(List.of())
+                    .supportedResolutions(RES_UPTO_1080)
+                    .minDuration(3).maxDuration(15)
+                    .supportsGenerateAudio(false)
+                    .videoDataUri(true)
+                    .build();
+        }
+        // 非 happyhorse 的 dashscope 系（wanx 等旧模型）维持 i2v 画像（原合并分支拆分，行为不变）。
+        if (id.contains("dashscope")) {
             return MediaModelCapability.builder()
                     .maxImages(1).maxVideos(0).maxAudios(0).maxAttachments(1)
                     .supportedRatios(ALL_RATIOS)

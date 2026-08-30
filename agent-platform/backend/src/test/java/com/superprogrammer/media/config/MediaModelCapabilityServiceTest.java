@@ -211,4 +211,74 @@ class MediaModelCapabilityServiceTest {
         assertEquals(3, cap.getMinDuration());
         assertFalse(cap.isSupportsGenerateAudio());
     }
+
+    // ---------------- HHX-7：三形态后缀分档 + 再生成档 ----------------
+
+    @Test
+    void happyhorseT2v_textOnly_officialNineRatios() {
+        // t2v 纯文：0 图/0 附件；720p/1080p（无 480p）；官方 9 值 ratio（无 adaptive）
+        MediaModelCapability cap = service.resolve("happyhorse-1.1-t2v", null);
+        assertEquals(0, cap.getMaxImages());
+        assertEquals(0, cap.getMaxAttachments());
+        assertEquals(2, cap.getSupportedResolutions().size());
+        assertFalse(cap.getSupportedResolutions().contains("480p"));
+        assertEquals(9, cap.getSupportedRatios().size());
+        assertFalse(cap.getSupportedRatios().contains("adaptive"));
+        assertTrue(cap.getSupportedRatios().contains("4:5"));
+        assertTrue(cap.getSupportedRatios().contains("21:9"));
+        assertEquals(3, cap.getMinDuration());
+        assertEquals(15, cap.getMaxDuration());
+    }
+
+    @Test
+    void happyhorseR2v_nineReferenceImages() {
+        // r2v：reference_image 1-9 张；720p/1080p；官方 9 值 ratio
+        MediaModelCapability cap = service.resolve("happyhorse-1.1-r2v", null);
+        assertEquals(9, cap.getMaxImages());
+        assertEquals(9, cap.getMaxAttachments());
+        assertEquals(0, cap.getMaxVideos());
+        assertFalse(cap.getSupportedResolutions().contains("480p"));
+        assertEquals(9, cap.getSupportedRatios().size());
+        assertFalse(cap.isSupportsGenerateAudio());
+    }
+
+    @Test
+    void happyhorseI2v_noRatioParam_emptyRatioList() {
+        // i2v 官方无 ratio 参数（宽高跟随首帧）→ 空列表=前端隐藏比例控件（联动点 #2）
+        MediaModelCapability cap = service.resolve("happyhorse-1.1-i2v", null);
+        assertTrue(cap.getSupportedRatios().isEmpty());
+        assertEquals(1, cap.getMaxImages());
+        assertTrue(cap.getSupportedResolutions().contains("480p"));
+    }
+
+    @Test
+    void minimaxRegeneration_zeroInput_locked2k() {
+        // 再生成：全 0 输入、比例空、分辨率锁 2k、时长校验带 4-15（实际继承源任务）
+        MediaModelCapability cap = service.resolve("minimax-h3-regeneration", null);
+        assertEquals(0, cap.getMaxImages());
+        assertEquals(0, cap.getMaxVideos());
+        assertEquals(0, cap.getMaxAttachments());
+        assertTrue(cap.getSupportedRatios().isEmpty());
+        assertEquals(1, cap.getSupportedResolutions().size());
+        assertEquals("2k", cap.getSupportedResolutions().get(0));
+    }
+
+    @Test
+    void minimaxContextIr_sameAsGenerationInput() {
+        // Context-IR 输入组合与生成端点一致（9图/3视频/3音频/总15），沿用 minimax 默认
+        MediaModelCapability cap = service.resolve("minimax-h3-context-ir", null);
+        assertEquals(9, cap.getMaxImages());
+        assertEquals(3, cap.getMaxVideos());
+        assertEquals(15, cap.getMaxAttachments());
+        assertTrue(cap.getSupportedResolutions().contains("768p"));
+    }
+
+    @Test
+    void plainDashscopeModel_keepsLegacyI2vProfile() {
+        // 非 happyhorse 的 dashscope 系拆分后行为不变：1 图 + ALL_RATIOS（含 adaptive）
+        MediaModelCapability cap = service.resolve("dashscope-video-01", null);
+        assertEquals(1, cap.getMaxImages());
+        assertEquals(7, cap.getSupportedRatios().size());
+        assertTrue(cap.getSupportedRatios().contains("adaptive"));
+    }
 }
