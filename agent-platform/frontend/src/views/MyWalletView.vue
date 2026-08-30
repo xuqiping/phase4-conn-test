@@ -1,6 +1,8 @@
 <template>
   <div class="my-wallet">
-    <n-card title="我的钱包" class="my-wallet__balance">
+    <!-- 雾中浮岛场景层（ART-DIR-0002R 方向二，仅 ink 主题渲染） -->
+    <ModuleScene scene="wallet" />
+    <n-card title="我的钱包" class="my-wallet__balance u-ink-card">
       <template #header-extra>
         <!-- 7x#3：有可用渠道才显充值入口（渠道全未开通=商户接入中） -->
         <n-button v-if="payChannels.length > 0" type="primary" size="small" @click="showRecharge = true">
@@ -11,7 +13,8 @@
         <template #suffix>积分</template>
       </n-statistic>
       <n-space style="margin-top: 12px">
-        <n-tag :type="balanceTagType">{{ balanceHint }}</n-tag>
+        <!-- 高山流水 Q6：ink 主题下余额提示为 warning 染色底警示条（见 <style> 门控块），旧主题仍是原 tag -->
+        <n-tag :type="balanceTagType" class="my-wallet__balance-banner">{{ balanceHint }}</n-tag>
         <!-- B5（Q10=A）：欠款警示——充值自动冲抵，还清前消费全拦 -->
         <n-tag v-if="(wallet?.debtPoints ?? 0) > 0" type="error">
           未偿还欠款 {{ fmtNum(wallet?.debtPoints) }} 积分：充值将自动偿还，还清前暂停消费
@@ -20,7 +23,7 @@
     </n-card>
 
     <!-- 7x#3：充值记录（六字段 + 累计条） -->
-    <n-card title="充值记录" style="margin-top: 16px">
+    <n-card title="充值记录" class="u-ink-card" style="margin-top: 16px">
       <div class="my-wallet__recharge-summary">
         累计充值 <b>{{ fmtNum(rechargeSummary?.totalPaidAmount) }}</b> 元，
         共 <b>{{ fmtNum(rechargeSummary?.totalPaidPoints) }}</b> 积分
@@ -44,7 +47,7 @@
       @settled="onSettled"
     />
 
-    <n-card title="最近流水" style="margin-top: 16px">
+    <n-card title="最近流水" class="u-ink-card" style="margin-top: 16px">
       <n-data-table
         :columns="ledgerColumns"
         :data="wallet?.recentLedger ?? []"
@@ -54,7 +57,7 @@
       />
     </n-card>
 
-    <n-card title="积分消耗明细" style="margin-top: 16px">
+    <n-card title="积分消耗明细" class="u-ink-card" style="margin-top: 16px">
       <!-- 计划5 Step8：组筛选（我的组下拉，空=全部含个人行；行加组名列） -->
       <div class="my-wallet__usage-filter">
         <n-select
@@ -93,6 +96,7 @@ import type {
 import { projectGroupApi } from '@/api/projectGroup'
 import { useProjectGroupStore } from '@/stores/projectGroup'
 import RechargeDialog from '@/components/billing/RechargeDialog.vue'
+import ModuleScene from '@/components/ModuleScene.vue'
 
 const message = useMessage()
 
@@ -282,6 +286,35 @@ onMounted(() => {
     margin-bottom: var(--spacing-2);
     font-size: var(--font-size-sm);
     color: var(--color-text-secondary);
+  }
+}
+
+// 高山流水·清泉（ART-DIR-0002；仅 ink 主题，旧三主题零变化）
+[data-theme="ye-mo"],
+[data-theme="xuan-zhi"] {
+  // 余额大数字：文楷 40px（naive 主题变量是内联样式，需 !important 覆盖）
+  .my-wallet__balance {
+    :deep(.n-statistic-value__content) {
+      font-family: var(--font-display);
+      font-weight: 400;
+      letter-spacing: 0.04em;
+      font-size: 40px !important;
+    }
+    :deep(.n-statistic-value__suffix) {
+      font-family: var(--font-display);
+      font-size: var(--font-size-md) !important;
+    }
+  }
+
+  // Q6 修复：余额警示改 warning 染色底块 + 高对比正文 + 左侧 2px 赭黄竖条
+  // （--n-color/--n-text-color/--n-border 为 naive 内联变量，!important 压过内联）
+  .my-wallet__balance-banner {
+    --n-color: rgba(217, 164, 91, 0.12) !important;
+    --n-text-color: var(--color-text-primary) !important;
+    --n-border: 1px solid transparent !important;
+    border-left: 2px solid var(--color-warning);
+    border-radius: 4px;
+    padding: 6px 12px;
   }
 }
 </style>

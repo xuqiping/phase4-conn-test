@@ -1,5 +1,7 @@
 <template>
   <div class="chat-view" :class="{ 'chat-view--mobile': isMobile, 'chat-view--drawer-open': isMobile && sessionDrawerOpen }">
+    <!-- 雾中浮岛场景层（ART-DIR-0002R 方向二，仅 ink 主题渲染） -->
+    <ModuleScene scene="chat" />
     <!-- Left: Session List（桌面：固定侧栏；移动：抽屉） -->
     <div class="chat-view__sidebar" :class="{ 'chat-view__sidebar--open': sessionDrawerOpen }">
       <div class="chat-view__sidebar-header">
@@ -215,11 +217,14 @@
         </ChatInput>
       </template>
 
-      <!-- Empty State -->
+      <!-- Empty State（ART-DIR-0002 P7：意境空态，诗句+插画+引导） -->
       <div v-else class="chat-view__empty">
-        <n-icon size="48" :component="ChatbubbleEllipsesOutline" color="var(--color-text-tertiary)" />
-        <p>选择已有会话或创建新会话开始对话</p>
-        <n-button type="primary" @click="newSession">开始对话</n-button>
+        <InkEmptyState
+          type="data"
+          description="选择已有会话或创建新会话开始对话"
+          action-text="开始对话"
+          @action="newSession"
+        />
       </div>
     </div>
 
@@ -242,12 +247,13 @@ import { NButton, NIcon, NSpin, NDrawer, NDrawerContent, NBadge, NSelect, NTag, 
 import {
   AddOutline,
   TrashOutline,
-  ChatbubbleEllipsesOutline,
   SparklesOutline,
   MenuOutline,
   FolderOpenOutline,
   BookmarksOutline
 } from '@vicons/ionicons5'
+import InkEmptyState from '@/components/InkEmptyState.vue'
+import ModuleScene from '@/components/ModuleScene.vue'
 import { useChatStore } from '@/stores/chat'
 import type { ChatAttachmentRef } from '@/api/chat'
 import { getStorage, setStorage, removeStorage, STORAGE_KEYS } from '@/utils/storage'

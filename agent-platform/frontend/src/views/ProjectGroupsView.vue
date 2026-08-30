@@ -1,10 +1,12 @@
 <template>
   <div class="pg-view">
+    <!-- 雾中浮岛场景层（ART-DIR-0002R 方向二，仅 ink 主题渲染） -->
+    <ModuleScene scene="project-groups" />
     <!-- 列表模式：我的组卡片 -->
     <div v-if="!selected" class="pg-view__list">
-      <div class="pg-view__header">
-        <h2 class="pg-view__title">项目组</h2>
-        <div class="pg-view__header-actions">
+      <!-- 高山流水 P3：统一页头（公共池切换/新建按钮进 actions） -->
+      <PageHeader title="项目组">
+        <template #actions>
           <NButton :tertiary="!poolMode" :type="poolMode ? 'primary' : 'default'" @click="togglePoolMode">
             {{ poolMode ? '返回我的组' : '公共池' }}
           </NButton>
@@ -12,8 +14,8 @@
             <template #icon><NIcon :component="AddOutline" /></template>
             新建项目组
           </NButton>
-        </div>
-      </div>
+        </template>
+      </PageHeader>
 
       <!-- 17x#3：我的待处理邀请 -->
       <div v-if="!poolMode && myInvites.length" class="pg-notice">
@@ -46,9 +48,9 @@
       <!-- 17x#4：公共池浏览 -->
       <template v-if="poolMode">
         <NSpin :show="loadingPool">
-          <NEmpty v-if="!poolItems.length" description="公共池暂无招募中的项目组" />
+          <InkEmptyState v-if="!poolItems.length" type="data" description="公共池暂无招募中的项目组" />
           <div v-else class="pg-view__grid">
-            <div v-for="g in poolItems" :key="g.id" class="pg-card pg-card--pool">
+            <div v-for="g in poolItems" :key="g.id" class="pg-card pg-card--pool u-ink-card">
               <div class="pg-card__head">
                 <span class="pg-card__name" :title="g.name">{{ g.name }}</span>
                 <NTag size="small" type="success" :bordered="false">招募中</NTag>
@@ -68,9 +70,9 @@
       </template>
 
       <NSpin v-else :show="loading">
-        <NEmpty v-if="!groups.length" description="还没有项目组。组长可建组、划拨积分，成员消耗入组池。" />
+        <InkEmptyState v-if="!groups.length" type="data" description="还没有项目组。组长可建组、划拨积分，成员消耗入组池。" />
         <div v-else class="pg-view__grid">
-          <div v-for="g in groups" :key="g.id" class="pg-card" @click="openGroup(g)">
+          <div v-for="g in groups" :key="g.id" class="pg-card u-ink-card" @click="openGroup(g)">
             <div class="pg-card__head">
               <span class="pg-card__name" :title="g.name">{{ g.name }}</span>
               <NTag size="small" :type="g.myRole === 'OWNER' ? 'primary' : 'default'" :bordered="false">
@@ -566,6 +568,9 @@ import {
 } from '@/utils/groupPerms'
 import { useAuthStore } from '@/stores/auth'
 import { useProjectGroupStore } from '@/stores/projectGroup'
+import InkEmptyState from '@/components/InkEmptyState.vue'
+import PageHeader from '@/components/PageHeader.vue'
+import ModuleScene from '@/components/ModuleScene.vue'
 
 /**
  * 计划5 Step7：项目组推进页。
@@ -1608,19 +1613,6 @@ onMounted(() => {
   gap: var(--spacing-3);
 }
 
-.pg-view__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.pg-view__title {
-  font-size: var(--font-size-xl);
-  font-weight: var(--font-weight-bold);
-  color: var(--color-text-primary);
-  margin: 0;
-}
-
 .pg-view__grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
@@ -1738,11 +1730,6 @@ onMounted(() => {
 .pg-ledger__kw { width: 200px; }
 
 /* 17x#3/#4：列表页通知条（我的邀请/我的申请） */
-.pg-view__header-actions {
-  display: flex;
-  gap: var(--spacing-2);
-}
-
 .pg-notice {
   background: var(--color-surface);
   border: 1px solid var(--color-border-light);
@@ -1942,5 +1929,17 @@ onMounted(() => {
   word-break: break-word;
   font-size: var(--font-size-xs);
   line-height: 1.5;
+}
+
+// 高山流水·雅集（ART-DIR-0002；仅 ink 主题，旧三主题零变化）
+[data-theme="ye-mo"],
+[data-theme="xuan-zhi"] {
+  // 「组池 X 分」数字文楷化（列表卡 + 详情头 chip 同规）
+  .pg-card__balance,
+  .pg-view__balance-chip {
+    font-family: var(--font-display);
+    font-weight: 400;
+    letter-spacing: 0.04em;
+  }
 }
 </style>

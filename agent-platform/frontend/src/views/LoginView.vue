@@ -7,7 +7,7 @@
       <!-- Logo + 标题 -->
       <div class="login-card__header">
         <div class="login-card__logo">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="40" height="40">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="40" height="40" class="login-card__logo-svg">
             <defs>
               <linearGradient id="login-logo-g" x1="0%" y1="0%" x2="100%" y2="100%">
                 <stop offset="0%" style="stop-color:var(--color-gradient-start)" />
@@ -17,8 +17,11 @@
             <rect width="32" height="32" rx="6" fill="url(#login-logo-g)" />
             <text x="16" y="22" text-anchor="middle" fill="white" font-size="18" font-weight="bold" font-family="sans-serif">A</text>
           </svg>
+          <!-- 高山流水 · 知音印章（仅夜墨/宣纸主题显示，ART-ASSET-0006 透明版） -->
+          <img class="login-card__seal" :src="sealLogo" alt="知音印章" />
         </div>
         <h1 class="login-card__title">多Agent智能体平台</h1>
+        <p class="login-card__poem">高山流水，静候知音</p>
         <p class="login-card__subtitle">登录您的账号以继续</p>
       </div>
 
@@ -111,6 +114,7 @@ import { authApi, type AuthChannels } from '@/api/auth'
 import { isDingTalkEnabled } from '@/utils/dingtalk'
 import { parseWechatCallback, clearWechatCallbackParams } from '@/utils/wechat'
 import AuthLayout from '@/layouts/AuthLayout.vue'
+import sealLogo from '@/assets/art/brand/seal-logo.webp'
 import PasswordLoginTab from './login/PasswordLoginTab.vue'
 import SmsLoginTab from './login/SmsLoginTab.vue'
 import QrcodeLoginTab from './login/QrcodeLoginTab.vue'
@@ -327,5 +331,88 @@ onMounted(() => {
   width: 100%;
   height: 100%;
   border-radius: 50%;
+}
+</style>
+
+<!-- 高山流水 · 登录卡片意境样式（仅 ye-mo / xuan-zhi 生效） -->
+<style lang="scss">
+// 旧主题隐藏诗句
+.login-card__poem {
+  display: none;
+}
+
+[data-theme="ye-mo"],
+[data-theme="xuan-zhi"] {
+  .login-card__title {
+    font-family: var(--font-display);
+    letter-spacing: 0.06em;
+  }
+
+  .login-card__poem {
+    display: block;
+    margin: 8px 0 0;
+    font-family: var(--font-display);
+    font-size: 15px;
+    letter-spacing: 0.12em;
+    color: var(--color-text-secondary);
+  }
+
+  .login-card__subtitle {
+    margin-top: 4px;
+  }
+
+  // 卡片：绢本微光 + 远山叠影
+  .login-card {
+    border: 1px solid var(--color-border-light);
+    box-shadow: var(--shadow-lg);
+    backdrop-filter: none;
+  }
+
+  .login-card__glow {
+    display: none; // 旧主题辉光属于科技风，山水主题不用
+  }
+}
+
+// 宣纸专属修正（2026-08-29 审核反馈：边框过重、文字不清）：
+// 卡面改为近实色绢本（压得住明亮大背景），边框降为极淡青痕，文字层级加深
+[data-theme="xuan-zhi"] {
+  .login-card {
+    background: rgba(253, 251, 244, 0.82);
+    backdrop-filter: blur(16px) saturate(1.05);
+    -webkit-backdrop-filter: blur(16px) saturate(1.05);
+    border: 1px solid rgba(53, 104, 127, 0.12);
+    box-shadow:
+      0 20px 50px rgba(38, 34, 28, 0.16),
+      0 3px 10px rgba(38, 34, 28, 0.08);
+  }
+
+  .login-card__poem {
+    color: #57503f; // 比 text-secondary 更深的墨灰，压实诗句可读性
+  }
+
+  .login-card__subtitle {
+    color: var(--color-text-secondary);
+  }
+}
+</style>
+
+<!-- 印章 Logo 显隐：旧主题用渐变 SVG，山水主题用知音印章 -->
+<style lang="scss">
+.login-card__seal {
+  display: none;
+}
+
+[data-theme="ye-mo"],
+[data-theme="xuan-zhi"] {
+  .login-card__logo-svg {
+    display: none;
+  }
+
+  .login-card__seal {
+    display: block;
+    width: 56px;
+    height: 56px;
+    object-fit: contain;
+  }
 }
 </style>

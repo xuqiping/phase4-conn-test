@@ -120,7 +120,7 @@ function mountView(permissions: string[], accessOverride: Partial<{
         'router-link': true,
         NIcon: true,
         NSpin: true,
-        NEmpty: true,
+        InkEmptyState: true,
         NButton: { template: '<button @click="$emit(\'click\')"><slot /></button>' },
         NTag: { template: '<span><slot /></span>' },
         NModal: true,

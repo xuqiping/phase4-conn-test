@@ -1,5 +1,7 @@
 <template>
   <div class="feedback-center">
+    <!-- 雾中浮岛场景层（ART-DIR-0002R 方向二，仅 ink 主题渲染） -->
+    <ModuleScene scene="feedback" />
     <n-card title="反馈与帮助">
       <n-tabs v-model:value="activeTab" type="line" animated>
         <!-- ==================== 建议台 ==================== -->
@@ -121,7 +123,7 @@
               />
             </div>
             <div class="feedback-center__help-body">
-              <n-empty v-if="!articleDetail" description="左侧选择一篇文章" />
+              <InkEmptyState v-if="!articleDetail" type="data" description="左侧选择一篇文章" />
               <template v-else>
                 <h3>{{ articleDetail.title }}</h3>
                 <!-- markdown 渲染（renderMarkdown html:false，XSS 免疫） -->
@@ -199,6 +201,8 @@ import type {
   ArticleDetailVO, ArticleListItemVO, FaqVO, FeedbackMessageVO, QuestionVO, SuggestionVO
 } from '@/api/feedback'
 import { renderMarkdown } from '@/utils/markdown'
+import InkEmptyState from '@/components/InkEmptyState.vue'
+import ModuleScene from '@/components/ModuleScene.vue'
 
 const message = useMessage()
 const route = useRoute()
@@ -559,6 +563,24 @@ onMounted(() => {
   &__msg-content {
     white-space: pre-wrap;
     line-height: 1.7;
+  }
+}
+
+// 高山流水·传音（ART-DIR-0002；仅 ink 主题，旧三主题零变化）
+[data-theme="ye-mo"],
+[data-theme="xuan-zhi"] {
+  // 说明台：文章列表选中项左侧 2px 朱砂竖痕
+  .feedback-center__help-nav {
+    :deep(.n-menu-item-content--selected) {
+      box-shadow: inset 2px 0 0 var(--ink-zhusha);
+    }
+  }
+
+  // 详情面板标题文楷化
+  .feedback-center__help-body h3 {
+    font-family: var(--font-display);
+    font-weight: 400;
+    letter-spacing: 0.04em;
   }
 }
 </style>

@@ -71,16 +71,14 @@
 
     <!-- 空状态 -->
     <div v-else class="agent-hall__empty">
-      <n-empty description="没有找到匹配的 Agent">
-        <template #extra>
-          <n-button v-if="keyword || selectedGroupId" size="small" @click="clearFilters">
-            清除筛选
-          </n-button>
-          <n-button v-if="canCreate" size="small" type="primary" @click="showCreateModal = true">
-            创建第一个 Agent
-          </n-button>
-        </template>
-      </n-empty>
+      <InkEmptyState type="data" description="没有找到匹配的 Agent">
+        <n-button v-if="keyword || selectedGroupId" size="small" @click="clearFilters">
+          清除筛选
+        </n-button>
+        <n-button v-if="canCreate" size="small" type="primary" @click="showCreateModal = true">
+          创建第一个 Agent
+        </n-button>
+      </InkEmptyState>
     </div>
 
     <!-- 创建/编辑弹窗 -->
@@ -96,12 +94,13 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { NSelect, NInput, NIcon, NSpin, NEmpty, NButton, useMessage, useDialog } from 'naive-ui'
+import { NSelect, NInput, NIcon, NSpin, NButton, useMessage, useDialog } from 'naive-ui'
 import { SearchOutline } from '@vicons/ionicons5'
 import { agentApi, type Agent, type AgentGroup } from '@/api/agent'
 import { useAuthStore } from '@/stores/auth'
 import AgentCard from '@/components/AgentCard.vue'
 import AgentFormModal from '@/components/AgentFormModal.vue'
+import InkEmptyState from '@/components/InkEmptyState.vue'
 
 const authStore = useAuthStore()
 const message = useMessage()

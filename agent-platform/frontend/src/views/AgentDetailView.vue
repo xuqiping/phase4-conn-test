@@ -121,11 +121,9 @@
 
     <!-- Agent不存在 -->
     <div v-else class="agent-detail__not-found">
-      <n-empty description="Agent不存在或已被删除">
-        <template #extra>
-          <n-button @click="$router.push('/agents')">返回Agent大厅</n-button>
-        </template>
-      </n-empty>
+      <InkEmptyState type="lost" description="Agent不存在或已被删除">
+        <n-button @click="$router.push('/agents')">返回Agent大厅</n-button>
+      </InkEmptyState>
     </div>
 
     <!-- 编辑弹窗 -->
@@ -155,7 +153,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NIcon, NSpin, NEmpty, NButton, NTag, NSwitch, useMessage, useDialog } from 'naive-ui'
+import { NIcon, NSpin, NButton, NTag, NSwitch, useMessage, useDialog } from 'naive-ui'
 import {
   ChevronForwardOutline,
   FolderOutline,
@@ -169,6 +167,7 @@ import SkillDetail from '@/components/SkillDetail.vue'
 import AgentFormModal from '@/components/AgentFormModal.vue'
 import SkillFormModal from '@/components/SkillFormModal.vue'
 import AgentPermissionModal from '@/components/AgentPermissionModal.vue'
+import InkEmptyState from '@/components/InkEmptyState.vue'
 
 const route = useRoute()
 const router = useRouter()

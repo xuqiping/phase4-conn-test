@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import { NUpload } from 'naive-ui'
 import FeedbackCenterView from './FeedbackCenterView.vue'
 import { feedbackApi, uploadFeedbackFile } from '@/api/feedback'
@@ -44,6 +45,9 @@ function apiOk<T>(data: T) {
   return { data: { code: 200, msg: 'success', data } }
 }
 const emptyPage = { records: [], total: 0, pageNum: 1, pageSize: 10 }
+
+// 页面含 ModuleScene（useThemeStore），挂载前需活动 pinia
+beforeEach(() => setActivePinia(createPinia()))
 
 describe('FeedbackCenterView（19x 反馈与帮助三合一）', () => {
   beforeEach(() => {

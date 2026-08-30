@@ -1,16 +1,16 @@
 <template>
   <div class="video-edit">
-    <div class="video-edit__header">
-      <h2>视频剪辑</h2>
-      <span class="video-edit__sub">多轨时间线 · 视频 / 音轨 / 字幕 · FFmpeg 渲染 + 剪映草稿导出</span>
-    </div>
+    <!-- 雾中浮岛场景层（ART-DIR-0002R 方向二，仅 ink 主题渲染） -->
+    <ModuleScene scene="video-edit" />
+    <!-- 高山流水批次C：统一页头（ART-DIR-0002 P3，ink 主题文楷+发丝线，旧主题零变化） -->
+    <PageHeader title="视频剪辑" sub="多轨时间线 · 视频 / 音轨 / 字幕 · FFmpeg 渲染 + 剪映草稿导出" />
 
     <!-- 无权限兜底 -->
-    <n-empty v-if="!canEdit" description="无 media:edit 权限，请联系管理员授权" class="video-edit__forbidden" />
+    <InkEmptyState v-if="!canEdit" type="forbidden" description="无 media:edit 权限，请联系管理员授权" class="video-edit__forbidden" />
 
     <div v-else class="video-edit__grid" :class="{ 'video-edit__grid--mobile': isMobile }">
       <!-- 左：剪辑台 -->
-      <n-card class="video-edit__stage" title="剪辑台" size="small">
+      <n-card class="video-edit__stage u-ink-card" title="剪辑台" size="small">
         <!-- 素材库 -->
         <div class="video-edit__section">
           <div class="video-edit__section-title">素材库</div>
@@ -95,7 +95,7 @@
 
       <!-- 右：活动任务 + 历史 -->
       <div class="video-edit__result">
-        <n-card class="video-edit__active" size="small">
+        <n-card class="video-edit__active u-ink-card" size="small">
           <template #header>
             <n-space align="center" size="small">
               <span>当前任务</span>
@@ -126,7 +126,7 @@
           </template>
         </n-card>
 
-        <n-card class="video-edit__history" title="历史任务" size="small">
+        <n-card class="video-edit__history u-ink-card" title="历史任务" size="small">
           <n-data-table :columns="historyColumns" :data="history" :loading="loadingHistory" size="small"
             :pagination="{ pageSize: 8 }" :max-height="320" striped />
         </n-card>
@@ -138,13 +138,16 @@
 <script setup lang="ts">
 import { computed, h, onMounted, reactive, ref } from 'vue'
 import {
-  NButton, NCard, NDataTable, NEmpty, NInput, NInputNumber, NSelect,
+  NButton, NCard, NDataTable, NInput, NInputNumber, NSelect,
   NSpace, NSpin, NTag, NUpload, useMessage
 } from 'naive-ui'
 import type { DataTableColumns, UploadCustomRequestOptions } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
 import { useBreakpoints } from '@/composables/useBreakpoints'
 import Timeline from '@/components/video-edit/Timeline.vue'
+import InkEmptyState from '@/components/InkEmptyState.vue'
+import PageHeader from '@/components/PageHeader.vue'
+import ModuleScene from '@/components/ModuleScene.vue'
 import {
   mediaEditApi, fetchResultBlob,
   EDIT_STATUS_LABEL, EDIT_STATUS_TYPE, isTerminalEdit,
@@ -391,8 +394,7 @@ onMounted(() => {
 
 <style lang="scss" scoped>
 .video-edit {
-  &__header { margin-bottom: 12px; h2 { margin: 0 0 4px; } }
-  &__sub { font-size: 13px; opacity: 0.6; }
+  // 页头已由 PageHeader 组件承担（批次C）
   &__forbidden { padding: 60px 0; }
   &__grid {
     display: grid; grid-template-columns: 1fr 420px; gap: 16px; align-items: start;

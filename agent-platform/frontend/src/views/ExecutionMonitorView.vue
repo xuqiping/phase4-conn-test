@@ -42,7 +42,7 @@
         </span>
       </div>
 
-      <n-empty v-if="!filteredExecutions.length" description="暂无执行任务" />
+      <InkEmptyState v-if="!filteredExecutions.length" type="data" description="暂无执行任务" />
       <div v-else class="execution-monitor__table-wrap">
         <table class="execution-monitor__table">
           <thead>
@@ -112,7 +112,7 @@
       </div>
     </section>
 
-    <n-empty v-if="!selectedExecution" description="请选择一个执行任务查看详情" />
+    <InkEmptyState v-if="!selectedExecution" type="data" description="请选择一个执行任务查看详情" />
 
     <section v-else class="execution-monitor__panel">
       <div class="execution-monitor__summary">
@@ -244,6 +244,7 @@ import { NButton, NEmpty, NInput, NInputNumber, NPagination, NSelect, NTag, useM
 import { executionApi, type ExecutionLog, type ExecutionRecoveryInfo } from '@/api/execution'
 import { useAuthStore } from '@/stores/auth'
 import { parseExecutionTimeline, type TimelineItem } from '@/utils/executionTimeline'
+import InkEmptyState from '@/components/InkEmptyState.vue'
 import { filterExecutions, paginateExecutions } from '@/utils/executionFilters'
 import {
   loadExecutionMonitorPrefs,

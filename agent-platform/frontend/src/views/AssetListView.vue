@@ -1,17 +1,20 @@
 <template>
   <div class="asset-list">
-    <div class="asset-list__header">
-      <div class="asset-list__title-row">
-        <h2 class="asset-list__title">资产库</h2>
-        <span class="asset-list__count">{{ projects.length }} 个项目</span>
-        <div class="asset-list__spacer" />
+    <!-- 雾中浮岛场景层（ART-DIR-0002R 方向二，仅 ink 主题渲染） -->
+    <ModuleScene scene="assets" />
+    <!-- 高山流水 P3：统一页头（ART-DIR-0002；计数并进副题） -->
+    <PageHeader
+      title="资产库"
+      :sub="`项目级资产中枢 · 五类资产 × 叙事角色双轴矩阵 · ${projects.length} 个项目`"
+    >
+      <template #actions>
         <n-button v-if="canEdit" type="primary" @click="openCreate">+ 新建项目</n-button>
-      </div>
-      <span class="asset-list__sub">项目级资产中枢 · 五类资产 × 叙事角色双轴矩阵</span>
-    </div>
+      </template>
+    </PageHeader>
 
-    <n-empty
+    <InkEmptyState
       v-if="!canEdit"
+      type="forbidden"
       description="无 asset:write 权限，请联系管理员授权"
       class="asset-list__forbidden"
     />
@@ -111,7 +114,6 @@
 import { ref, computed, onMounted, h } from 'vue'
 import {
   NButton,
-  NEmpty,
   NForm,
   NFormItem,
   NInput,
@@ -130,6 +132,9 @@ import { useAuthStore } from '@/stores/auth'
 import ShareDialog from '@/components/asset/ShareDialog.vue'
 import PublicPublishDialog from '@/components/asset/PublicPublishDialog.vue'
 import PublicAccessDialog from '@/components/asset/PublicAccessDialog.vue'
+import InkEmptyState from '@/components/InkEmptyState.vue'
+import PageHeader from '@/components/PageHeader.vue'
+import ModuleScene from '@/components/ModuleScene.vue'
 import type { AssetProjectVO, ProjectRole, PublicProjectSummaryVO } from '@/types/asset'
 
 type ProjectGridEvent = 'open' | 'share' | 'delete' | 'publish' | 'unpublish' | 'access'
@@ -145,9 +150,10 @@ const ProjectGrid = (
   { emit }: { emit: (e: ProjectGridEvent, p: AssetProjectVO) => void }
 ) => {
   if (props.loading) return h('div', { class: 'asset-list__loading' }, [h(NSpin, { size: 'large' })])
-  if (props.projects.length === 0) return h(NEmpty, { description: '暂无项目', class: 'asset-list__empty' })
+  if (props.projects.length === 0) return h(InkEmptyState, { type: 'data', description: '暂无项目', class: 'asset-list__empty' })
   return h('div', { class: 'asset-list__grid' }, props.projects.map((p) =>
-    h('div', { class: 'project-card', key: p.id, onClick: () => emit('open', p) }, [
+    // 高山流水 Q4 修复：u-ink-card 绢本卡（仅 ink 主题生效）
+    h('div', { class: 'project-card u-ink-card', key: p.id, onClick: () => emit('open', p) }, [
       h('div', { class: 'project-card__cover' }, p.name.slice(0, 1) || '项'),
       h('div', { class: 'project-card__body' }, [
         h('div', { class: 'project-card__name-row' }, [
@@ -197,14 +203,14 @@ const PublicProjectGrid = (
   { emit }: { emit: (e: 'open' | 'request', p: PublicProjectSummaryVO) => void }
 ) => {
   if (props.loading) return h('div', { class: 'asset-list__loading' }, [h(NSpin, { size: 'large' })])
-  if (props.projects.length === 0) return h(NEmpty, { description: '公共池暂无项目', class: 'asset-list__empty' })
+  if (props.projects.length === 0) return h(InkEmptyState, { type: 'data', description: '公共池暂无项目', class: 'asset-list__empty' })
   return h('div', { class: 'asset-list__grid' }, props.projects.map((p) => {
     const pending = p.myRequestStatus === 'PENDING'
     const requesting = props.requestingProjectIds.has(p.id)
     const disabled = pending || requesting || (!p.usable && p.publicAccessMode === 'OPEN')
     const title = pending ? '申请正在等待审批' : requesting ? '正在提交申请' : disabled ? '当前项目暂不可用' : undefined
     return h('div', {
-      class: ['project-card', 'public-project-card', { 'public-project-card--locked': !p.usable }],
+      class: ['project-card', 'public-project-card', 'u-ink-card', { 'public-project-card--locked': !p.usable }],
       key: p.id,
       role: p.usable ? 'link' : undefined,
       tabindex: p.usable ? 0 : undefined,
@@ -426,14 +432,7 @@ onMounted(loadData)
   padding: var(--spacing-5);
   min-height: 100%;
 
-  &__header { margin-bottom: var(--spacing-4); }
-  &__title-row { display: flex; align-items: center; gap: var(--spacing-2); }
-  &__title { margin: 0; font-size: var(--font-size-xl); font-weight: var(--font-weight-bold); color: var(--color-text-primary); }
-  &__count { font-size: var(--font-size-sm); color: var(--color-text-tertiary); }
-  &__spacer { flex: 1; }
-  &__sub { color: var(--color-text-secondary); font-size: var(--font-size-sm); }
   &__tabs { margin-top: var(--spacing-3); }
-  &__loading, &__empty { display: flex; align-items: center; justify-content: center; min-height: 280px; }
   &__forbidden { margin-top: var(--spacing-8); }
   &__local-error,
   &__public-error {
@@ -447,6 +446,17 @@ onMounted(loadData)
   }
 }
 
+@media (max-width: 768px) {
+  .asset-list { padding: var(--spacing-3); }
+}
+</style>
+
+<!--
+  非 scoped 块：ProjectGrid/PublicProjectGrid 是 script 内 h() 渲染的内联函数组件，
+  生成的 DOM 不带本组件 scoped data-v 属性 —— 此前网格/卡片样式写在 scoped 块里全部落空，
+  项目卡退化成裸文本堆叠（ART-DIR-0002 Q4）。凡 render 函数用到的类一律放这里。
+-->
+<style lang="scss">
 .asset-list__grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -455,6 +465,14 @@ onMounted(loadData)
   @media (max-width: 1200px) { grid-template-columns: repeat(3, 1fr); }
   @media (max-width: 900px) { grid-template-columns: repeat(2, 1fr); }
   @media (max-width: 600px) { grid-template-columns: 1fr; }
+}
+
+.asset-list__loading,
+.asset-list__empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 280px;
 }
 
 .project-card {
@@ -479,7 +497,7 @@ onMounted(loadData)
   &__name { font-size: var(--font-size-md); font-weight: var(--font-weight-bold); color: var(--color-text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   &__desc { font-size: var(--font-size-sm); color: var(--color-text-secondary); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   &__meta { display: flex; flex-wrap: wrap; gap: var(--spacing-2); font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
-  &__actions { position: absolute; top: var(--spacing-2); right: var(--spacing-2); display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 2px; max-width: calc(100% - var(--spacing-4)); opacity: 0; transition: opacity var(--duration-fast); z-index: 2; }
+  &__actions { position: absolute; top: var(--spacing-2); right: var(--spacing-2); display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--spacing-1); max-width: calc(100% - var(--spacing-4)); opacity: 0; transition: opacity var(--duration-fast); z-index: 2; }
   &:hover &__actions { opacity: 1; }
 }
 
@@ -491,8 +509,15 @@ onMounted(loadData)
 }
 
 @media (hover: none) { .project-card__actions { opacity: 1; } }
-@media (max-width: 768px) {
-  .asset-list { padding: var(--spacing-3); }
-  .asset-list__title-row { flex-wrap: wrap; }
+
+// 高山流水·藏珍阁：项目名文楷化（仅 ink 主题；旧三主题零变化）
+[data-theme="ye-mo"],
+[data-theme="xuan-zhi"] {
+  .project-card__name {
+    font-family: var(--font-display);
+    font-weight: 400;
+    letter-spacing: 0.04em;
+    font-size: 16px;
+  }
 }
 </style>

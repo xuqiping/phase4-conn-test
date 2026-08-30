@@ -1,8 +1,12 @@
 <template>
   <div class="image-gen">
+    <!-- 雾中浮岛场景层（ART-DIR-0002R 方向二，仅 ink 主题渲染） -->
+    <ModuleScene scene="image-gen" />
+    <!-- 高山流水批次C：统一页头（ART-DIR-0002 P3）；表单卡题改「生成参数」避免与页头重复 -->
+    <PageHeader title="图片生成" />
     <div class="image-gen__layout" :class="{ 'is-mobile': isMobile }">
       <!-- 左：参数表单 -->
-      <NCard class="image-gen__form" title="图片生成" size="small">
+      <NCard class="image-gen__form u-ink-card" title="生成参数" size="small">
         <NSpin :show="submitting">
           <NForm label-placement="top" :show-feedback="false">
             <!-- 模型选择 -->
@@ -190,7 +194,7 @@
       </NCard>
 
       <!-- 右：结果区 -->
-      <NCard class="image-gen__result" title="生成结果" size="small">
+      <NCard class="image-gen__result u-ink-card" title="生成结果" size="small">
         <div v-if="activeTask" class="result">
           <div class="result__status">
             <NTag :type="MEDIA_STATUS_TYPE[activeTask.status]">
@@ -217,12 +221,12 @@
               </div>
             </div>
           </div>
-          <NEmpty v-else-if="isTerminal(activeTask.status)" description="无图片产出" />
+          <InkEmptyState v-else-if="isTerminal(activeTask.status)" type="data" description="无图片产出" />
         </div>
-        <NEmpty v-else description="提交后将在此展示生成结果" />
+        <InkEmptyState v-else type="data" description="提交后将在此展示生成结果" />
 
         <NDivider v-if="history.length || hasHistoryFilters" />
-        <div v-if="history.length || hasHistoryFilters" class="history">
+        <div v-if="history.length || hasHistoryFilters" class="history u-ink-card">
           <div class="history__title">历史</div>
           <!-- 问题4：提示词 + 时间范围筛选（服务端 SQL 过滤，300ms 防抖） -->
           <div class="history__filters">
@@ -250,7 +254,7 @@
             </NButton>
           </div>
           <NSpin :show="loadingHistory" size="small">
-            <NEmpty v-if="!history.length" description="无匹配的历史任务" />
+            <InkEmptyState v-if="!history.length" type="data" description="无匹配的历史任务" />
             <div v-for="h in history" :key="h.id" class="history__row" @click="viewHistory(h)">
               <NTag size="small" :type="MEDIA_STATUS_TYPE[h.status]">{{ MEDIA_STATUS_LABEL[h.status] }}</NTag>
               <span class="history__model">{{ h.model }}</span>
@@ -309,7 +313,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import {
-  NAlert, NButton, NCard, NDatePicker, NDivider, NEmpty, NForm, NFormItem,
+  NAlert, NButton, NCard, NDatePicker, NDivider, NForm, NFormItem,
   NInput, NInputNumber, NPagination, NSelect, NSlider, NSpace, NSpin, NSwitch, NTag, NUpload, useMessage
 } from 'naive-ui'
 import {
@@ -327,6 +331,9 @@ import AssetFilePicker from '@/components/asset/AssetFilePicker.vue'
 import SaveImageToAssetDialog from '@/components/imagegen/SaveImageToAssetDialog.vue'
 import MediaTaskImageThumb from '@/components/media/MediaTaskImageThumb.vue'
 import MediaTaskRequestDetails from '@/components/media/MediaTaskRequestDetails.vue'
+import InkEmptyState from '@/components/InkEmptyState.vue'
+import PageHeader from '@/components/PageHeader.vue'
+import ModuleScene from '@/components/ModuleScene.vue'
 import { parseImageRestore } from '@/utils/imageGenParams'
 import { RATIOS, deriveWh } from '@/utils/imageSize'
 import { useAuthStore } from '@/stores/auth'
@@ -883,5 +890,27 @@ onUnmounted(() => {
 .image-gen__estimate-warn {
   font-size: 12px;
   color: var(--color-error, #d03050);
+}
+
+// 高山流水批次C · 画屏：生成结果图「画框」效果（仅 ink 主题，旧三主题零变化）
+[data-theme="ye-mo"],
+[data-theme="xuan-zhi"] {
+  .result__cell {
+    border: 1px solid var(--color-border-light);
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+
+    img {
+      border-radius: 8px 8px 0 0;
+    }
+  }
+
+  // 历史区嵌在结果卡内：补内距避免内容贴绢本卡描边
+  .history.u-ink-card {
+    padding: var(--spacing-3, 12px);
+  }
+}
+[data-theme="xuan-zhi"] .result__cell {
+  box-shadow: 0 2px 8px rgba(38, 34, 28, 0.10);
 }
 </style>

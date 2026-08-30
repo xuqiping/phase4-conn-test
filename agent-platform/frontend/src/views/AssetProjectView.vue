@@ -9,6 +9,8 @@
 -->
 <template>
   <div class="asset-project">
+    <!-- 雾中浮岛场景层（ART-DIR-0002R 方向二，仅 ink 主题渲染） -->
+    <ModuleScene scene="assets" />
     <!-- 顶栏：返回 + 项目名 + 计数 + 操作 -->
     <div class="asset-project__header">
       <div class="asset-project__title-row">
@@ -40,8 +42,9 @@
     </div>
 
     <!-- 无全局 asset:write：直访兜底 -->
-    <n-empty
+    <InkEmptyState
       v-if="!canEdit"
+      type="forbidden"
       description="无 asset:write 权限，请联系管理员授权"
       class="asset-project__forbidden"
     />
@@ -75,17 +78,15 @@
         </div>
 
         <!-- 空态：双引导 -->
-        <n-empty v-else-if="isFiltered" description="无匹配资产" class="asset-project__empty">
-          <template #extra>
-            <n-button size="small" @click="clearFilter">清除筛选</n-button>
-          </template>
-        </n-empty>
-        <n-empty v-else class="asset-project__empty" description="项目暂无资产">
-          <template v-if="canWrite" #extra>
+        <InkEmptyState v-else-if="isFiltered" type="data" description="无匹配资产" class="asset-project__empty">
+          <n-button size="small" @click="clearFilter">清除筛选</n-button>
+        </InkEmptyState>
+        <InkEmptyState v-else type="data" class="asset-project__empty" description="项目暂无资产">
+          <template v-if="canWrite">
             <n-button size="small" @click="triggerUpload">上传文件</n-button>
             <n-button size="small" type="primary" @click="openCreate">新建提示词/剧本</n-button>
           </template>
-        </n-empty>
+        </InkEmptyState>
       </AssetMatrixFilter>
 
       <!-- 分页 -->
@@ -242,6 +243,8 @@ import AssetMatrixFilter, { type AssetFilter } from '@/components/asset/AssetMat
 import AssetDetailDrawer from '@/components/asset/AssetDetailDrawer.vue'
 import ProjectSettingsDialog from '@/components/asset/ProjectSettingsDialog.vue'
 import VocabEditor from '@/components/asset/VocabEditor.vue'
+import InkEmptyState from '@/components/InkEmptyState.vue'
+import ModuleScene from '@/components/ModuleScene.vue'
 import type {
   AssetProjectVO,
   AssetVO,

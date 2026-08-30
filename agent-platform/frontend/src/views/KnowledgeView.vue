@@ -1,12 +1,16 @@
 <template>
   <div class="knowledge-view">
-    <div class="knowledge-view__header">
-      <h2>知识库</h2>
-      <n-button v-if="canWrite" type="primary" @click="openCreate">
-        <template #icon><n-icon :component="AddOutline" /></template>
-        新建知识库
-      </n-button>
-    </div>
+    <!-- 雾中浮岛场景层（ART-DIR-0002R 方向二：源头活水·层峦藏书，仅 ink 主题渲染） -->
+    <ModuleScene scene="knowledge" />
+    <!-- 高山流水批次C：统一页头（ART-DIR-0002 P3，ink 主题文楷+发丝线，旧主题零变化） -->
+    <PageHeader title="知识库">
+      <template #actions>
+        <n-button v-if="canWrite" type="primary" @click="openCreate">
+          <template #icon><n-icon :component="AddOutline" /></template>
+          新建知识库
+        </n-button>
+      </template>
+    </PageHeader>
 
     <n-tabs type="line" animated>
       <!-- Tab 1：KB 管理 -->
@@ -82,6 +86,8 @@ import RetrievalAuditPanel from '@/components/knowledge/RetrievalAuditPanel.vue'
 import RagAskPanel from '@/components/knowledge/RagAskPanel.vue'
 import IndexOperationsPanel from '@/components/knowledge/IndexOperationsPanel.vue'
 import KnowledgeEvaluationView from '@/views/KnowledgeEvaluationView.vue'
+import PageHeader from '@/components/PageHeader.vue'
+import ModuleScene from '@/components/ModuleScene.vue'
 import { useBreakpoints } from '@/composables/useBreakpoints'
 
 const authStore = useAuthStore()
@@ -196,25 +202,25 @@ onMounted(() => {
   height: 100%;
   overflow-y: auto;
 }
-.knowledge-view__header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: var(--spacing-4);
-  h2 {
-    margin: 0;
-    font-size: 20px;
-    color: var(--color-text-primary);
+// 页头已由 PageHeader 组件承担（批次C）
+
+// 高山流水批次C · 层峦藏书：各 Tab 面板标题文楷化（仅 ink 主题，旧三主题零变化）
+// 覆盖：Tab 标签、面板内 n-card 卡题（索引运维/RAG 评测等）、检索调试 h4 小节标题
+[data-theme="ye-mo"],
+[data-theme="xuan-zhi"] {
+  .knowledge-view {
+    :deep(.n-tabs-tab__label),
+    :deep(.n-card-header__main),
+    :deep(h4) {
+      font-family: var(--font-display);
+      font-weight: 400;
+    }
   }
 }
 
 @media (max-width: 768px) {
   .knowledge-view {
     padding: var(--spacing-3);
-  }
-  .knowledge-view__header {
-    flex-wrap: wrap;
-    gap: var(--spacing-2);
   }
 }
 </style>
