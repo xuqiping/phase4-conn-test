@@ -227,4 +227,97 @@ class MinimaxVideoProviderTest {
                 provider.deriveQueryBase(providerRow(9L, "https://gw.example.com/v2/video_generation/extra", null)),
                 "非标准路径兜底尾拼");
     }
+
+    // ---------- HHX-4/HHX-5：附属端点（context-ir / regeneration） ----------
+
+    @Test
+    void contextIrBody_modelSuffixStripped_noResolution() {
+        Map<String, Object> body = provider.buildCreateBody(MediaGenRequest.builder()
+                .model("minimax-h3-context-ir").prompt("赛博朋克城市夜景").duration(5).build());
+        assertEquals("minimax-h3", body.get("model"), "出站 body.model 剥后缀用基础名");
+        assertEquals(1, contentOf(body).size(), "content 照常多模态输入");
+        assertFalse(body.containsKey("resolution"), "context-ir 官方无 resolution 参数");
+        assertEquals(5, body.get("duration"));
+        assertEquals("16:9", body.get("ratio"));
+    }
+
+    @Test
+    void regenerationBody_sourceTaskId_locked2k_noContent() {
+        Map<String, Object> body = provider.buildCreateBody(MediaGenRequest.builder()
+                .model("minimax-h3-regeneration").sourceTaskId(12345L).build());
+        assertEquals("minimax-h3", body.get("model"), "出站 body.model 剥后缀用基础名");
+        assertEquals("12345", body.get("source_task_id"), "源任务 id 字符串化透传");
+        assertEquals("2K", body.get("resolution"), "再生成官方锁 2K");
+        assertFalse(body.containsKey("content"), "再生成输入只有源任务 id");
+        assertFalse(body.containsKey("duration"), "时长继承源任务，不重传");
+    }
+
+    @Test
+    void regenerationWithoutSource_failsFast() {
+        IllegalStateException ex = org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalStateException.class, () -> provider.buildCreateBody(MediaGenRequest.builder()
+                        .model("minimax-h3-regeneration").build()));
+        assertTrue(ex.getMessage().contains("sourceTaskId"), "缺源任务 fail-fast，不打无效请求: " + ex.getMessage());
+    }
+
+    @Test
+    void createTask_routesAuxEndpoints_byModelSuffix() throws Exception {
+        stubProvider(9L, server.url("/v1/video_generation").toString(), null);
+        server.enqueue(new MockResponse().setBody("{\"task_id\":\"ir-1\"}"));
+        provider.createTask(MediaGenRequest.builder()
+                .model("minimax-h3-context-ir").prompt("p").providerId(9L).build());
+        assertEquals("/v1/h3_context_ir", server.takeRequest().getPath(),
+                "context-ir 端点=生成端点剥尾段拼 /h3_context_ir（中转 /v1 同构）");
+
+        server.enqueue(new MockResponse().setBody("{\"task_id\":\"rg-1\"}"));
+        provider.createTask(MediaGenRequest.builder()
+                .model("minimax-h3-regeneration").sourceTaskId(7L).providerId(9L).build());
+        assertEquals("/v1/video_regeneration", server.takeRequest().getPath(),
+                "regeneration 端点=生成端点剥尾段拼 /video_regeneration");
+    }
+
+    @Test
+    void createTask_auxEndpoint_configOverrideWins() throws Exception {
+        stubProvider(9L, server.url("/v1/video_generation").toString(),
+                "{\"contextIrEndpoint\":\"" + server.url("/gw/ctx-ir") + "\"}");
+        server.enqueue(new MockResponse().setBody("{\"task_id\":\"ir-2\"}"));
+        provider.createTask(MediaGenRequest.builder()
+                .model("minimax-h3-context-ir").prompt("p").providerId(9L).build());
+        assertEquals("/gw/ctx-ir", server.takeRequest().getPath(),
+                "provider config contextIrEndpoint 精确覆盖 URL 推导");
+    }
+
+    @Test
+    void parseQueryResult_contextIrText_byTaskType() {
+        MediaGenResult r = provider.parseQueryResult(
+                "{\"task\":{\"status\":\"succeeded\",\"task_type\":\"h3_context_ir\","
+                        + "\"content\":{\"prompt\":\"增强后的提示词……\"},"
+                        + "\"usage\":{\"total_tokens\":5800,\"prompt_tokens\":1800,\"completion_tokens\":4000}}}");
+        assertEquals(MediaGenResult.STATUS_SUCCEEDED, r.getStatus());
+        assertEquals("增强后的提示词……", r.getResultText());
+        assertNull(r.getResultUrl(), "文本结果无 resultUrl（worker 按文本分支落地）");
+        assertEquals(5800L, r.getUsageTokens());
+        assertEquals(1800L, r.getUsageInputTokens(), "CHAT 计费 in 拆分");
+        assertEquals(4000L, r.getUsageOutputTokens(), "CHAT 计费 out 拆分");
+    }
+
+    @Test
+    void parseQueryResult_contextIrText_heuristicWhenTaskTypeMissing() {
+        // 网关裁掉 task_type：有 content.prompt 无 content.url → 仍判文本结果
+        MediaGenResult r = provider.parseQueryResult(
+                "{\"task\":{\"status\":\"succeeded\",\"content\":{\"prompt\":\"enhanced\"}}}");
+        assertEquals("enhanced", r.getResultText());
+        assertNull(r.getResultUrl());
+    }
+
+    @Test
+    void parseQueryResult_videoResult_taskTypePresent_stillUrlPath() {
+        // 正常视频结果即使带 task_type（video_generation）也不误判文本分支
+        MediaGenResult r = provider.parseQueryResult(
+                "{\"task\":{\"status\":\"succeeded\",\"task_type\":\"video_generation\","
+                        + "\"content\":{\"url\":\"https://cdn/x.mp4\"},\"usage\":{\"total_seconds\":5}}}");
+        assertEquals("https://cdn/x.mp4", r.getResultUrl());
+        assertNull(r.getResultText());
+        assertEquals(5L, r.getUsageTokens(), "视频口径 total_seconds");
+    }
 }

@@ -41,6 +41,14 @@ import java.util.Map;
  *       {@code succeeded/success→SUCCEEDED}，{@code failed/fail/cancelled/expired→FAILED}（大小写容忍）。</li>
  * </ul>
  *
+ * <p>HHX-4 附属端点（H3 三件）：平台模型 id 后缀 {@code -context-ir}（提示词增强，文本出参）/
+ * {@code -regeneration}（2K 再生成，输入仅源任务 id）走独立建任务 URL——由生成端点剥
+ * {@code /video_generation} 尾段拼 {@code /h3_context_ir} / {@code /video_regeneration}，
+ * provider config JSON {@code contextIrEndpoint} / {@code regenerationEndpoint} 可精确覆盖；
+ * 出站 body.model 一律剥后缀传基础名（官方/中转三端点同名）。查询复用生成端点 query 通道。
+ * HHX-5：查询侧 Context-IR 文本结果按 {@code task.task_type}（h3_context_ir）+ 字段启发
+ * （有 content.prompt 无 content.url）判型，结果落 resultText，token 用量带 in/out 拆分。</p>
+ *
  * <p>content[] 与 Ark 同构（text / image_url / video_url / audio_url + role：
  * first_frame/last_frame/reference_image/reference_video/reference_audio），参考上限官方：
  * 首尾帧图各≤1、参考图≤9、参考视频≤3、参考音频≤3（capability 默认同口径）。
@@ -63,6 +71,33 @@ public class MinimaxVideoProvider implements MediaGenProvider {
     private static final String PROBE_TASK_ID = "probe-connectivity-nonexistent";
 
     private static final String CREATE_PATH_SUFFIX = "/video_generation";
+
+    // HHX-4：MiniMax H3 附属端点模型后缀（平台侧模型 id；发请求的 body.model 一律剥后缀用基础名——
+    // 中转/官方对三个端点都传 MiniMax-H3 同名，后缀仅用于平台能力/价表/端点路由区分）
+    private static final String SUFFIX_CONTEXT_IR = "-context-ir";
+    private static final String SUFFIX_REGENERATION = "-regeneration";
+
+    static boolean isContextIrModel(String model) {
+        return model != null && model.trim().toLowerCase().endsWith(SUFFIX_CONTEXT_IR);
+    }
+
+    static boolean isRegenerationModel(String model) {
+        return model != null && model.trim().toLowerCase().endsWith(SUFFIX_REGENERATION);
+    }
+
+    /** 剥附属端点后缀（-context-ir / -regeneration → 基础模型名；非附属模型原样返回）。 */
+    static String stripAuxSuffix(String model) {
+        if (model == null) return null;
+        String m = model.trim();
+        String lower = m.toLowerCase();
+        if (lower.endsWith(SUFFIX_CONTEXT_IR)) {
+            return m.substring(0, m.length() - SUFFIX_CONTEXT_IR.length());
+        }
+        if (lower.endsWith(SUFFIX_REGENERATION)) {
+            return m.substring(0, m.length() - SUFFIX_REGENERATION.length());
+        }
+        return m;
+    }
 
     /** 连接/响应超时（与 ArkSeedanceProvider 一致，杜绝无超时 .block() 钉死线程）。 */
     private static final int CONNECT_TIMEOUT_MS = 10_000;
@@ -102,9 +137,12 @@ public class MinimaxVideoProvider implements MediaGenProvider {
     @Override
     public String createPreparedTask(MediaGenRequest request, PreparedMediaRequest prepared) {
         ResolvedMiniMax mm = resolveMiniMax(request.getProviderId());
+        // HHX-4：附属端点按模型后缀路由（config 覆盖优先，resolveMiniMax 已算好）；生成端点原样
+        String createUrl = isContextIrModel(request.getModel()) ? mm.contextIrEndpoint
+                : isRegenerationModel(request.getModel()) ? mm.regenerationEndpoint : mm.endpoint;
         try {
             String resp = mm.client.post()
-                    .uri(mm.endpoint)
+                    .uri(createUrl)
                     .contentType(MediaType.APPLICATION_JSON)
                     .bodyValue(prepared.getBody())
                     .retrieve()
@@ -155,6 +193,48 @@ public class MinimaxVideoProvider implements MediaGenProvider {
 
     /** package-private：单测直接验证 content 结构 + resolution/duration 映射。 */
     Map<String, Object> buildCreateBody(MediaGenRequest request) {
+        // HHX-5：Context-IR——content[] 多模态同生成端点，但顶层无 resolution（官方参数表）；
+        // duration 4-15 / ratio 同生成口径；model 发基础名。
+        if (isContextIrModel(request.getModel())) {
+            List<Map<String, Object>> content = buildContentItems(request);
+            Map<String, Object> body = new java.util.LinkedHashMap<>();
+            body.put("model", stripAuxSuffix(request.getModel()));
+            body.put("content", content);
+            int duration = request.getDuration() == null ? 5 : request.getDuration();
+            body.put("duration", Math.max(4, Math.min(15, duration)));
+            body.put("ratio", request.getRatio() == null || request.getRatio().isBlank()
+                    ? "16:9" : request.getRatio());
+            return body;
+        }
+        // HHX-6：再生成——无 content/duration/ratio，只有 source_task_id + 固定 2K。
+        if (isRegenerationModel(request.getModel())) {
+            if (request.getSourceTaskId() == null) {
+                throw new IllegalStateException("再生成任务缺少 sourceTaskId（提交侧应校验，provider 兜底）");
+            }
+            Map<String, Object> body = new java.util.LinkedHashMap<>();
+            body.put("model", stripAuxSuffix(request.getModel()));
+            body.put("source_task_id", String.valueOf(request.getSourceTaskId()));
+            body.put("resolution", "2K");
+            return body;
+        }
+        List<Map<String, Object>> content = buildContentItems(request);
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("model", request.getModel());
+        body.put("content", content);
+        // resolution 官方必填（768P/2K）：空或未列举值回落 768P（capability 默认只放行 768p/2k，此处兜底）
+        String resIn = request.getResolution() == null ? "" : request.getResolution().trim().toLowerCase();
+        body.put("resolution", RESOLUTION_OUT.getOrDefault(resIn, "768P"));
+        // duration 官方必填整数 4-15：空补 5，越界夹取（capability 已限 4-15，此处兜底）
+        int duration = request.getDuration() == null ? 5 : request.getDuration();
+        body.put("duration", Math.max(4, Math.min(15, duration)));
+        // ratio：空默认 16:9（t2v 必填非 adaptive；i2v 官方忽略直传值按首帧自适应）
+        body.put("ratio", request.getRatio() == null || request.getRatio().isBlank() ? "16:9" : request.getRatio());
+        // v2 官方无 watermark / generate_audio 顶层参数，不传
+        return body;
+    }
+
+    /** content[] 组装（text + 附件，生成与 Context-IR 共用）。 */
+    private List<Map<String, Object>> buildContentItems(MediaGenRequest request) {
         List<Map<String, Object>> content = new ArrayList<>();
         content.add(Map.of("type", "text", "text", request.getPrompt() == null ? "" : request.getPrompt()));
         if (request.getAttachments() != null && !request.getAttachments().isEmpty()) {
@@ -182,19 +262,7 @@ public class MinimaxVideoProvider implements MediaGenProvider {
                 content.add(Map.of("type", "image_url", "image_url", Map.of("url", request.getRefImageUrl())));
             }
         }
-        Map<String, Object> body = new java.util.LinkedHashMap<>();
-        body.put("model", request.getModel());
-        body.put("content", content);
-        // resolution 官方必填（768P/2K）：空或未列举值回落 768P（capability 默认只放行 768p/2k，此处兜底）
-        String resIn = request.getResolution() == null ? "" : request.getResolution().trim().toLowerCase();
-        body.put("resolution", RESOLUTION_OUT.getOrDefault(resIn, "768P"));
-        // duration 官方必填整数 4-15：空补 5，越界夹取（capability 已限 4-15，此处兜底）
-        int duration = request.getDuration() == null ? 5 : request.getDuration();
-        body.put("duration", Math.max(4, Math.min(15, duration)));
-        // ratio：空默认 16:9（t2v 必填非 adaptive；i2v 官方忽略直传值按首帧自适应）
-        body.put("ratio", request.getRatio() == null || request.getRatio().isBlank() ? "16:9" : request.getRatio());
-        // v2 官方无 watermark / generate_audio 顶层参数，不传
-        return body;
+        return content;
     }
 
     private JsonNode buildRedactedSnapshot(Map<String, Object> body, MediaGenRequest request) {
@@ -263,11 +331,32 @@ public class MinimaxVideoProvider implements MediaGenProvider {
             String status = mapStatus(rawStatus);
             MediaGenResult.MediaGenResultBuilder b = MediaGenResult.builder().status(status);
             if (MediaGenResult.STATUS_SUCCEEDED.equals(status)) {
-                b.resultUrl(task.path("content").path("url").asText(null));
-                // usage 兼容：官方返 total_seconds（秒计费口径）；缺失不设
-                JsonNode seconds = task.path("usage").path("total_seconds");
-                if (seconds.isNumber()) {
-                    b.usageTokens(seconds.asLong());
+                // HHX-5：Context-IR 结果判型——官方/中转查询返 task_type（h3_context_ir），缺失时按
+                // 字段启发（有 content.prompt 无 content.url = 文本结果）兼容网关裁剪 task_type 的情形。
+                String taskType = task.path("task_type").asText("");
+                String url = task.path("content").path("url").asText(null);
+                String promptText = task.path("content").path("prompt").asText(null);
+                boolean textResult = taskType.toLowerCase().contains("context_ir")
+                        || ((url == null || url.isBlank()) && promptText != null && !promptText.isBlank());
+                if (textResult) {
+                    b.resultText(promptText);
+                    JsonNode usage = task.path("usage");
+                    if (usage.path("total_tokens").isNumber()) {
+                        b.usageTokens(usage.path("total_tokens").asLong());
+                    }
+                    if (usage.path("prompt_tokens").isNumber()) {
+                        b.usageInputTokens(usage.path("prompt_tokens").asLong());
+                    }
+                    if (usage.path("completion_tokens").isNumber()) {
+                        b.usageOutputTokens(usage.path("completion_tokens").asLong());
+                    }
+                } else {
+                    b.resultUrl(url);
+                    // usage 兼容：官方返 total_seconds（秒计费口径）；缺失不设
+                    JsonNode seconds = task.path("usage").path("total_seconds");
+                    if (seconds.isNumber()) {
+                        b.usageTokens(seconds.asLong());
+                    }
                 }
             } else if (MediaGenResult.STATUS_FAILED.equals(status)) {
                 String msg = task.path("error").path("message").asText("");
@@ -394,7 +483,32 @@ public class MinimaxVideoProvider implements MediaGenProvider {
         String fingerprint = provider.getId() + "|" + provider.getApiEndpoint() + "|" + provider.getApiKeyEnc();
         WebClient client = clientCache.computeIfAbsent(fingerprint, k -> buildClient(apiKey));
         String endpoint = provider.getApiEndpoint().replaceAll("/+$", "");
-        return new ResolvedMiniMax(client, endpoint, deriveQueryBase(provider));
+        return new ResolvedMiniMax(client, endpoint, deriveQueryBase(provider),
+                deriveAuxEndpoint(provider, endpoint, "contextIrEndpoint", "/h3_context_ir"),
+                deriveAuxEndpoint(provider, endpoint, "regenerationEndpoint", "/video_regeneration"));
+    }
+
+    /**
+     * HHX-4 附属端点推导：provider config JSON 指定键（contextIrEndpoint / regenerationEndpoint）覆盖优先；
+     * 否则由生成端点剥 {@code /video_generation} 尾段后拼附属路径（官方 /v2/* 与中转 /v1/* 同构，
+     * base 一致）。生成端点非标准尾段时直接尾拼（与 deriveQueryBase 同口径兜底）。
+     */
+    private String deriveAuxEndpoint(LlmProviderEntity provider, String endpoint, String configKey, String pathSuffix) {
+        String cfg = provider.getConfig();
+        if (cfg != null && !cfg.isBlank()) {
+            try {
+                JsonNode override = objectMapper.readTree(cfg).path(configKey);
+                if (override.isTextual() && !override.asText().isBlank()) {
+                    return override.asText().trim().replaceAll("/+$", "");
+                }
+            } catch (Exception e) {
+                log.warn("解析 provider config {} 失败（provider={}），回落 URL 推导: {}", configKey, provider.getName(), e.getMessage());
+            }
+        }
+        if (endpoint.endsWith(CREATE_PATH_SUFFIX)) {
+            return endpoint.substring(0, endpoint.length() - CREATE_PATH_SUFFIX.length()) + pathSuffix;
+        }
+        return endpoint + pathSuffix;
     }
 
     /** 查询 base 推导：config JSON queryEndpoint 覆盖 > 建任务 URL 剥尾段推导。package-private 单测直测。 */
@@ -442,6 +556,7 @@ public class MinimaxVideoProvider implements MediaGenProvider {
         return m == null ? c.getClass().getSimpleName() : truncate(m, 200);
     }
 
-    /** 解析后的调用上下文：WebClient + 建任务完整 URL + 查询 base（/{taskId} 运行时拼）。 */
-    private record ResolvedMiniMax(WebClient client, String endpoint, String queryBase) {}
+    /** 解析后的调用上下文：WebClient + 生成建任务 URL + 查询 base + 两附属端点（/{taskId} 运行时拼）。 */
+    private record ResolvedMiniMax(WebClient client, String endpoint, String queryBase,
+                                   String contextIrEndpoint, String regenerationEndpoint) {}
 }
