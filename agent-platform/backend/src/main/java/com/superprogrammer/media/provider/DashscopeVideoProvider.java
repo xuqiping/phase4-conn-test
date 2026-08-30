@@ -26,7 +26,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 阿里百炼（DashScope）视频生成 provider（HappyHorse 1.1 图生视频）。视频模型接入扩展 RF/MVR-6。
+ * 阿里百炼（DashScope）视频生成 provider（HappyHorse 1.1 三形态：t2v 文生 / i2v 首帧图生 /
+ * r2v 多图参考）。视频模型接入扩展 RF/MVR-6 + HHX-3（中转接入二期）。
  *
  * <p>协议（官方 help.aliyun.com 图生视频 API 参考，2026-04 版）：异步任务型——建任务→轮询→取 {@code video_url}。
  * <ul>
@@ -78,6 +79,11 @@ public class DashscopeVideoProvider implements MediaGenProvider {
     /** 官方 resolution 枚举（入参字典档小写 → 出参官方大写；未列举值回落 720P）。 */
     private static final Map<String, String> RESOLUTION_OUT = Map.of(
             "480p", "480P", "720p", "720P", "1080p", "1080P",
+            "768p", "720P", "2k", "720P", "4k", "1080P");
+
+    /** HHX-3：t2v/r2v 官方仅 720P/1080P（无 480P 档）——480p 入参落 720P（capability 已挡，双保险）。 */
+    private static final Map<String, String> RESOLUTION_OUT_NO_480 = Map.of(
+            "480p", "720P", "720p", "720P", "1080p", "1080P",
             "768p", "720P", "2k", "720P", "4k", "1080P");
 
     private final LlmProviderService llmProviderService;
@@ -158,11 +164,90 @@ public class DashscopeVideoProvider implements MediaGenProvider {
     // ---------- 请求体构建 ----------
 
     /**
-     * 选首帧图：附件里 image 类恰好 1 张直接用；多张时认唯一 first_frame 标注者；
-     * 无图附件回落 legacy refImageUrl；仍无 → fail-fast。视频/音频参考 → fail-fast。
+     * HHX-3：按模型 id 后缀分三形态（官方参数表）——{@code -t2v} 纯文生视频 / {@code -r2v}
+     * 多图参考 / 其余（含 {@code -i2v} 与无后缀旧 id）= 首帧图生视频（MVR-6 原状）。
      * package-private：单测直测媒体选择与参数映射。
      */
     Map<String, Object> buildCreateBody(MediaGenRequest request) {
+        String model = request.getModel() == null ? "" : request.getModel().trim().toLowerCase();
+        if (model.endsWith("-t2v")) {
+            return buildT2vBody(request);
+        }
+        if (model.endsWith("-r2v")) {
+            return buildR2vBody(request);
+        }
+        return buildI2vBody(request);
+    }
+
+    /** t2v 文生视频：无 media（带任何参考附件 fail-fast）；ratio 官方 9 值默认 16:9；仅 720P/1080P。 */
+    private Map<String, Object> buildT2vBody(MediaGenRequest request) {
+        List<MediaGenRequest.ResolvedAttachment> attachments =
+                request.getAttachments() == null ? List.of() : request.getAttachments();
+        if (!attachments.isEmpty()) {
+            throw new IllegalStateException("t2v 为文生视频模型，不支持任何参考媒体（当前 "
+                    + attachments.size() + " 个附件）");
+        }
+        if (request.getRefImageUrl() != null && !request.getRefImageUrl().isBlank()) {
+            throw new IllegalStateException("t2v 为文生视频模型，不支持首帧参考图");
+        }
+        Map<String, Object> input = new java.util.LinkedHashMap<>();
+        // prompt 官方必填（提交侧已校验非空；此处兜底防直调漏网）
+        if (request.getPrompt() == null || request.getPrompt().isBlank()) {
+            throw new IllegalStateException("t2v 必须提供提示词");
+        }
+        input.put("prompt", request.getPrompt());
+
+        Map<String, Object> parameters = commonParameters(request, true);
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("model", request.getModel());
+        body.put("input", input);
+        body.put("parameters", parameters);
+        return body;
+    }
+
+    /** r2v 多图参考生视频：全部 image 附件转 reference_image 1-9 张（无首尾帧语义）；ratio 同 t2v。 */
+    private Map<String, Object> buildR2vBody(MediaGenRequest request) {
+        List<MediaGenRequest.ResolvedAttachment> attachments =
+                request.getAttachments() == null ? List.of() : request.getAttachments();
+        attachments.stream()
+                .filter(a -> "video".equals(a.getKind()) || "audio".equals(a.getKind()))
+                .findAny()
+                .ifPresent(a -> {
+                    throw new IllegalStateException("HappyHorse r2v 不支持"
+                            + ("video".equals(a.getKind()) ? "视频" : "音频") + "参考（仅支持 1-9 张参考图）");
+                });
+        List<MediaGenRequest.ResolvedAttachment> images = attachments.stream()
+                .filter(a -> "image".equals(a.getKind())).toList();
+        if (images.isEmpty()) {
+            throw new IllegalStateException("HappyHorse r2v 需提供 1-9 张参考图（type=reference_image）");
+        }
+        if (images.size() > 9) {
+            throw new IllegalStateException("HappyHorse r2v 参考图超限（≤9 张，当前 " + images.size() + " 张）");
+        }
+        // 官方 r2v 用 reference_image 类型；frameRole 忽略（r2v 无首尾帧概念）
+        List<Map<String, String>> media = images.stream()
+                .map(a -> Map.of("type", "reference_image", "url", a.getUrl()))
+                .toList();
+
+        Map<String, Object> input = new java.util.LinkedHashMap<>();
+        if (request.getPrompt() != null && !request.getPrompt().isBlank()) {
+            input.put("prompt", request.getPrompt());
+        }
+        input.put("media", media);
+
+        Map<String, Object> parameters = commonParameters(request, true);
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("model", request.getModel());
+        body.put("input", input);
+        body.put("parameters", parameters);
+        return body;
+    }
+
+    /**
+     * i2v 图生视频（原 buildCreateBody 主体，MVR-6 原状）：首帧图有且仅有 1 张；
+     * 官方无 ratio 参数（宽高跟随首帧），parameters 不带 ratio。
+     */
+    private Map<String, Object> buildI2vBody(MediaGenRequest request) {
         List<MediaGenRequest.ResolvedAttachment> attachments =
                 request.getAttachments() == null ? List.of() : request.getAttachments();
         List<MediaGenRequest.ResolvedAttachment> images = attachments.stream()
@@ -175,10 +260,8 @@ public class DashscopeVideoProvider implements MediaGenProvider {
                             + ("video".equals(a.getKind()) ? "视频" : "音频") + "参考（仅支持 1 张首帧图）");
                 });
         String firstFrameUrl = null;
-        String firstFrameFileId = null;
         if (images.size() == 1) {
             firstFrameUrl = images.get(0).getUrl();
-            firstFrameFileId = images.get(0).getFileId();
         } else if (images.size() > 1) {
             List<MediaGenRequest.ResolvedAttachment> tagged = images.stream()
                     .filter(a -> MediaGenRequest.FRAME_FIRST.equals(a.getFrameRole())).toList();
@@ -186,10 +269,8 @@ public class DashscopeVideoProvider implements MediaGenProvider {
                 throw new IllegalStateException("HappyHorse 仅支持 1 张首帧图（当前 " + images.size() + " 张）");
             }
             firstFrameUrl = tagged.get(0).getUrl();
-            firstFrameFileId = tagged.get(0).getFileId();
         } else if (request.getRefImageUrl() != null && !request.getRefImageUrl().isBlank()) {
             firstFrameUrl = request.getRefImageUrl();
-            firstFrameFileId = request.getRefFileId();
         }
         if (firstFrameUrl == null || firstFrameUrl.isBlank()) {
             throw new IllegalStateException("HappyHorse 为图生视频模型，必须提供 1 张首帧图");
@@ -202,22 +283,35 @@ public class DashscopeVideoProvider implements MediaGenProvider {
         }
         input.put("media", List.of(Map.of("type", "first_frame", "url", firstFrameUrl)));
 
-        Map<String, Object> parameters = new java.util.LinkedHashMap<>();
-        // 官方枚举 480P/720P/1080P（默认 1080P）；平台口径空/未列举回落 720P（与计价字典档对齐）
-        String resIn = request.getResolution() == null ? "" : request.getResolution().trim().toLowerCase();
-        parameters.put("resolution", RESOLUTION_OUT.getOrDefault(resIn, "720P"));
-        // 官方 [3,15] 默认 5（capability 已限 3-15，此处越界夹取兜底）
-        int duration = request.getDuration() == null ? 5 : request.getDuration();
-        parameters.put("duration", Math.max(3, Math.min(15, duration)));
-        // 官方默认 true 加水印；平台口径与 Ark 一致：null/未勾选 = false 不加
-        parameters.put("watermark", Boolean.TRUE.equals(request.getWatermark()));
-        // 官方无 ratio（宽高跟随首帧）/ generate_audio（无音轨）参数，不传
-
+        Map<String, Object> parameters = commonParameters(request, false);
         Map<String, Object> body = new java.util.LinkedHashMap<>();
         body.put("model", request.getModel());
         body.put("input", input);
         body.put("parameters", parameters);
         return body;
+    }
+
+    /**
+     * 公共 parameters：resolution（官方枚举映射，未列举回落 720P——t2v/r2v 官方无 480P 档，
+     * 480p 入参落 720P，capability 已挡属双保险）、duration [3,15] 默认 5、watermark 平台口径
+     * null=false。{@code withRatio}：t2v/r2v 官方有 ratio 参数（9 值默认 16:9）；
+     * i2v 官方无（宽高跟随首帧）不拼。
+     */
+    private Map<String, Object> commonParameters(MediaGenRequest request, boolean withRatio) {
+        Map<String, Object> parameters = new java.util.LinkedHashMap<>();
+        String resIn = request.getResolution() == null ? "" : request.getResolution().trim().toLowerCase();
+        parameters.put("resolution", (withRatio ? RESOLUTION_OUT_NO_480 : RESOLUTION_OUT)
+                .getOrDefault(resIn, "720P"));
+        int duration = request.getDuration() == null ? 5 : request.getDuration();
+        parameters.put("duration", Math.max(3, Math.min(15, duration)));
+        // 官方默认 true 加水印；平台口径与 Ark 一致：null/未勾选 = false 不加
+        parameters.put("watermark", Boolean.TRUE.equals(request.getWatermark()));
+        if (withRatio) {
+            String ratio = request.getRatio() == null || request.getRatio().isBlank()
+                    ? "16:9" : request.getRatio().trim();
+            parameters.put("ratio", ratio);
+        }
+        return parameters;
     }
 
     private JsonNode buildRedactedSnapshot(Map<String, Object> body, MediaGenRequest request) {

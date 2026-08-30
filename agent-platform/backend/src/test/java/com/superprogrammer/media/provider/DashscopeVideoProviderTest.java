@@ -318,4 +318,97 @@ class DashscopeVideoProviderTest {
                 provider.deriveQueryBase(providerRow(9L, "https://gw.example.com/custom/video", null)),
                 "无 /api/v1/ 的自定义网关：取 scheme://host 按 Dashscope 约定拼");
     }
+
+    // ---------- HHX-3：t2v / r2v 三形态分支 ----------
+
+    @Test
+    void t2v_noMedia_ratioDefaultAndPassthrough() {
+        Map<String, Object> body = provider.buildCreateBody(MediaGenRequest.builder()
+                .model("happyhorse-1.1-t2v").prompt("太空歌剧院预告").build());
+        Map<String, Object> input = (Map<String, Object>) body.get("input");
+        assertEquals("太空歌剧院预告", input.get("prompt"));
+        assertFalse(input.containsKey("media"), "t2v 纯文生，无 media 键");
+        Map<String, Object> parameters = parametersOf(body);
+        assertEquals("16:9", parameters.get("ratio"), "ratio 默认 16:9");
+        assertEquals("720P", parameters.get("resolution"), "空回落 720P");
+
+        Map<String, Object> body2 = provider.buildCreateBody(MediaGenRequest.builder()
+                .model("happyhorse-1.1-t2v").prompt("p").ratio("9:21").resolution("1080p").build());
+        assertEquals("9:21", parametersOf(body2).get("ratio"), "ratio 透传");
+        assertEquals("1080P", parametersOf(body2).get("resolution"));
+    }
+
+    @Test
+    void t2v_480pFallsTo720p_officialNo480pTier() {
+        Map<String, Object> body = provider.buildCreateBody(MediaGenRequest.builder()
+                .model("happyhorse-1.1-t2v").prompt("p").resolution("480p").build());
+        assertEquals("720P", parametersOf(body).get("resolution"), "t2v 官方无 480P（capability 已挡，双保险回落 720P）");
+    }
+
+    @Test
+    void t2v_rejectsAttachments_refImage_andBlankPrompt() {
+        IllegalStateException exA = assertThrows(IllegalStateException.class,
+                () -> provider.buildCreateBody(MediaGenRequest.builder().model("happyhorse-1.1-t2v").prompt("p")
+                        .attachments(oneImage()).build()));
+        assertTrue(exA.getMessage().contains("不支持任何参考媒体"), exA.getMessage());
+        IllegalStateException exR = assertThrows(IllegalStateException.class,
+                () -> provider.buildCreateBody(MediaGenRequest.builder().model("happyhorse-1.1-t2v").prompt("p")
+                        .refImageUrl("https://a/x.png").build()));
+        assertTrue(exR.getMessage().contains("不支持首帧"), exR.getMessage());
+        IllegalStateException exP = assertThrows(IllegalStateException.class,
+                () -> provider.buildCreateBody(MediaGenRequest.builder().model("happyhorse-1.1-t2v").build()));
+        assertTrue(exP.getMessage().contains("提示词"), exP.getMessage());
+    }
+
+    @Test
+    void r2v_referenceImageMedia_oneToNine() {
+        Map<String, Object> body = provider.buildCreateBody(MediaGenRequest.builder()
+                .model("happyhorse-1.1-r2v").prompt("一只猫在草地上奔跑")
+                .attachments(List.of(
+                        MediaGenRequest.ResolvedAttachment.builder().kind("image").url("https://a/1.png").build(),
+                        MediaGenRequest.ResolvedAttachment.builder().kind("image").url("https://a/2.png")
+                                .frameRole(MediaGenRequest.FRAME_FIRST).build()))
+                .build());
+        List<Map<String, Object>> media = (List<Map<String, Object>>)
+                ((Map<String, Object>) body.get("input")).get("media");
+        assertEquals(2, media.size());
+        assertEquals("reference_image", media.get(0).get("type"), "官方 r2v 用 reference_image（非 first_frame）");
+        assertEquals("reference_image", media.get(1).get("type"), "frameRole 在 r2v 无语义，一律 reference_image");
+        assertEquals("https://a/2.png", media.get(1).get("url"));
+        Map<String, Object> parameters = parametersOf(body);
+        assertEquals("16:9", parameters.get("ratio"), "r2v ratio 默认 16:9");
+        assertEquals("720P", parameters.get("resolution"));
+
+        // 9 张（官方上限）可过
+        List<MediaGenRequest.ResolvedAttachment> nine = java.util.stream.IntStream.rangeClosed(1, 9)
+                .mapToObj(i -> MediaGenRequest.ResolvedAttachment.builder()
+                        .kind("image").url("https://a/" + i + ".png").build())
+                .toList();
+        Map<String, Object> body9 = provider.buildCreateBody(MediaGenRequest.builder()
+                .model("happyhorse-1.1-r2v").attachments(nine).build());
+        assertEquals(9, ((List<?>) ((Map<String, Object>) body9.get("input")).get("media")).size());
+    }
+
+    @Test
+    void r2v_rejectsZeroTen_andVideoAudio() {
+        IllegalStateException ex0 = assertThrows(IllegalStateException.class,
+                () -> provider.buildCreateBody(MediaGenRequest.builder()
+                        .model("happyhorse-1.1-r2v").prompt("p").build()));
+        assertTrue(ex0.getMessage().contains("1-9 张参考图"), ex0.getMessage());
+        List<MediaGenRequest.ResolvedAttachment> ten = java.util.stream.IntStream.rangeClosed(1, 10)
+                .mapToObj(i -> MediaGenRequest.ResolvedAttachment.builder()
+                        .kind("image").url("https://a/" + i + ".png").build())
+                .toList();
+        IllegalStateException ex10 = assertThrows(IllegalStateException.class,
+                () -> provider.buildCreateBody(MediaGenRequest.builder()
+                        .model("happyhorse-1.1-r2v").attachments(ten).build()));
+        assertTrue(ex10.getMessage().contains("超限"), ex10.getMessage());
+        IllegalStateException exV = assertThrows(IllegalStateException.class,
+                () -> provider.buildCreateBody(MediaGenRequest.builder().model("happyhorse-1.1-r2v")
+                        .attachments(List.of(
+                                MediaGenRequest.ResolvedAttachment.builder().kind("image").url("https://a/1.png").build(),
+                                MediaGenRequest.ResolvedAttachment.builder().kind("video").url("https://a/v.mp4").build()))
+                        .build()));
+        assertTrue(exV.getMessage().contains("不支持视频"), exV.getMessage());
+    }
 }
