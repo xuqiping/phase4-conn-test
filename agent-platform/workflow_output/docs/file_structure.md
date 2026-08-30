@@ -136,3 +136,11 @@ Phase 3 实现导航新增：
 4. `无限画布四轮增强.plan.md`（Step 1 background 标记是反推计划前置）
 5. `项目组与积分划拨.plan.md`（迁移+账务，建议独立分支）
 6. `视频反推与转绘.plan.md`（依赖 1 的组件与 4 的 background 标记）
+
+## 视频模型接入扩展 II：MiniMax H3 + HappyHorse 1.1 中转接入（2026-08-30）
+
+`workflow_output/docs/specs/` 新增 `视频模型接入扩展II-H3与HappyHorse中转接入.md`（单文件规格，HHX-1~11）：
+
+- **来源**：`人工测试问题/3x. 模型接入问题.md` 未解决项——经 ai.ctaigw.cn 中转接入 MiniMax H3（视频生成 + H3-Context-IR 提示词增强 + 2K 再生成）与 HappyHorse 1.1 三模型（t2v/i2v/r2v），种子迁移 V166 落 provider 两行 + 价表六行（apiKeyEnc 留空由管理员填 key）。
+- **上游规格**：`视频模型接入扩展.md`（MVR-1~8 适配器/协议/SECOND 分档秒价槽）——本文件是其二期，零新适配器、零 schema 变更，全部为现有 Minimax/Dashscope 适配器的能力补齐 + Flyway 种子。
+- 涉及落点清单见规格 §9（V166 迁移 / 两 provider / 能力层三形态分档 / DTO 加 sourceTaskId 与 resultText·双 token / 提交结算分流 / 前端再生成与 Context-IR 表单）。
