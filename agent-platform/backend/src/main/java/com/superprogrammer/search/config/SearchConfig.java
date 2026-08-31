@@ -22,7 +22,8 @@ public class SearchConfig {
         return settingService.getSearchEnabled();
     }
 
-    /** 当前生效 provider（已做白名单校验，非法→builtin）。 */
+    /** 当前生效 provider（派生逻辑在 {@link SystemSettingService#getActiveSearchProvider}：
+     *  Tavily 开关开 → tavily；否则 builtin 自建 SearXNG。key 错误/未配的兜底在 WebSearchService 降级链）。 */
     public String activeProvider() {
         return settingService.getActiveSearchProvider();
     }

@@ -8,7 +8,8 @@ import lombok.Data;
  * 联网搜索运维配置写入（PUT /api/system/settings/web-search）。所有字段可选（null=不改）。
  *
  * - enabled：全局总开关。
- * - activeProvider：tavily/serper/bing/builtin（白名单校验，非法→builtin）。
+ * - tavilyEnabled：Tavily 启用开关（修复IX+ 取代旧 activeProvider 手选——路由派生为
+ *   tavily 开 / builtin 自建 SearXNG 两态；key 错误/未配的兜底走 WebSearchService 运行时降级链）。
  * - maxResults：1~10。
  * - timeoutMs：≥1000。
  * - tavilyKey/serperKey/bingKey：明文写入，后端 AES 加密存 system_settings；null=不改，空串=清除。
@@ -20,7 +21,7 @@ import lombok.Data;
 public class WebSearchSettingsUpdateRequest {
 
     private Boolean enabled;
-    private String activeProvider;
+    private Boolean tavilyEnabled;
 
     @Min(1)
     @Max(10)

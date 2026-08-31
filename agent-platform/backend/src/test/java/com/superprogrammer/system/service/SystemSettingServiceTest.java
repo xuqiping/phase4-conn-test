@@ -46,6 +46,43 @@ class SystemSettingServiceTest {
         assertEquals(300000L, service.getAccessTokenExpirationMs());
     }
 
+    // ============================ 联网搜索路由派生（修复IX+：Tavily 开关 → tavily / builtin） ============================
+
+    @Test
+    void activeSearchProvider_tavilyEnabled_routesTavily() {
+        SystemSetting setting = new SystemSetting();
+        setting.setSettingKey(SystemSettingService.SEARCH_TAVILY_ENABLED);
+        setting.setSettingValue("true");
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(setting);
+
+        assertEquals("tavily", service.getActiveSearchProvider());
+    }
+
+    @Test
+    void activeSearchProvider_tavilyDisabledOrMissing_routesBuiltin() {
+        // 开关行缺失 → getTavilyEnabled 默认 false → builtin（自建 SearXNG）
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+        assertEquals("builtin", service.getActiveSearchProvider());
+
+        SystemSetting off = new SystemSetting();
+        off.setSettingKey(SystemSettingService.SEARCH_TAVILY_ENABLED);
+        off.setSettingValue("false");
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(off);
+        assertEquals("builtin", service.getActiveSearchProvider());
+    }
+
+    @Test
+    void updateTavilyEnabled_shouldUpsertBoolean() {
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+        when(mapper.insert(any(SystemSetting.class))).thenReturn(1);
+
+        service.updateTavilyEnabled(true);
+
+        verify(mapper).insert(argThat(s ->
+                SystemSettingService.SEARCH_TAVILY_ENABLED.equals(s.getSettingKey())
+                        && "true".equals(s.getSettingValue())));
+    }
+
     @Test
     void getAccessTokenExpirationMs_shouldFallbackToDefaultWhenMissing() {
         when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);

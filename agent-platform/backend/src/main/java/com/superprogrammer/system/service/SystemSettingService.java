@@ -113,8 +113,9 @@ public class SystemSettingService {
     // ============================ 联网搜索 search.* ============================
     /** 联网搜索全局总开关（false=禁用，开关前端也读不到结果）。默认 false。 */
     public static final String SEARCH_ENABLED = "search.enabled";
-    /** 当前生效 provider：tavily/serper/bing/builtin。非法值 → builtin（兜底）。 */
-    public static final String SEARCH_ACTIVE_PROVIDER = "search.active-provider";
+    /** Tavily 启用开关（修复IX+）：开=联网优先走 Tavily；关/未配 key/key 错 → 自建 SearXNG（builtin）。
+     *  取代旧 search.active-provider 手选 provider（路由改为派生，不再人工指定）。默认 false。 */
+    public static final String SEARCH_TAVILY_ENABLED = "search.tavily.enabled";
     /** 默认返回结果数 top-N。默认 5。 */
     public static final String SEARCH_MAX_RESULTS = "search.max-results";
     /** 单次搜索整体超时 ms。默认 10000。 */
@@ -123,8 +124,6 @@ public class SystemSettingService {
     public static final String SEARCH_TAVILY_KEY = "search.tavily.api-key";
     public static final String SEARCH_SERPER_KEY = "search.serper.api-key";
     public static final String SEARCH_BING_KEY = "search.bing.api-key";
-    /** provider 名白名单（写 active_provider 时校验，防注入非法值）。 */
-    public static final Set<String> SEARCH_PROVIDER_WHITELIST = Set.of("tavily", "serper", "bing", "builtin");
 
     private final SystemSettingMapper mapper;
     private final AesEncryptService aesEncryptService;
@@ -892,17 +891,23 @@ public class SystemSettingService {
                 "收录确认式回复开关（false=命中收录规则也直接全量回答）");
     }
 
-    /** 当前生效 provider，默认 builtin（无外部 key 兜底）。非法值 → builtin。 */
-    public String getActiveSearchProvider() {
-        String v = getValue(SEARCH_ACTIVE_PROVIDER);
-        return SEARCH_PROVIDER_WHITELIST.contains(v) ? v : "builtin";
+    /** Tavily 启用开关，默认 false（关 = 联网直接走自建 SearXNG/builtin）。 */
+    public boolean getTavilyEnabled() {
+        return getBoolean(SEARCH_TAVILY_ENABLED, false);
     }
 
-    public void updateActiveSearchProvider(String provider) {
-        if (!SEARCH_PROVIDER_WHITELIST.contains(provider)) {
-            provider = "builtin";
-        }
-        upsert(SEARCH_ACTIVE_PROVIDER, provider, "当前联网搜索 provider（tavily/serper/bing/builtin）");
+    public void updateTavilyEnabled(boolean enabled) {
+        setBoolean(SEARCH_TAVILY_ENABLED, enabled,
+                "Tavily 启用开关（开=Tavily 优先；关/无 key/key 错 → 自建 SearXNG）");
+    }
+
+    /**
+     * 当前生效 provider（修复IX+ 改**派生**，不再读旧 search.active-provider 手选行）：
+     * Tavily 开关开 → "tavily"；否则 → "builtin"（自建 SearXNG）。
+     * key 错误/未配不在此判——运行时兜底由 WebSearchService 降级链承担（tavily 不可用/空 → builtin）。
+     */
+    public String getActiveSearchProvider() {
+        return getTavilyEnabled() ? "tavily" : "builtin";
     }
 
     /** 默认 top-N，默认 5。非法/缺失 → 5。 */

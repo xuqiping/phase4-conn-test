@@ -196,7 +196,11 @@ public class ClaudeProvider implements LlmProviderInterface {
             body.put("thinking", Map.of("type", "disabled"));
         } else if (level == ThinkingLevel.STANDARD || level == ThinkingLevel.DEEP) {
             int budget = level == ThinkingLevel.DEEP ? thinkingBudgetDeep : thinkingBudgetStandard;
-            body.put("thinking", Map.of("type", "enabled", "budget_tokens", budget));
+            // LinkedHashMap 定序：Map.of 无序，序列化 key 序不稳（测试锁 type 在前的 Anthropic 文档序）
+            Map<String, Object> thinking = new LinkedHashMap<>();
+            thinking.put("type", "enabled");
+            thinking.put("budget_tokens", budget);
+            body.put("thinking", thinking);
             // Anthropic 硬约束：max_tokens 必须 > budget_tokens——只抬不降（用户/上游已设更大值不动）
             int maxTokens = request.getMaxTokens() != null ? request.getMaxTokens() : 0;
             if (maxTokens <= budget) {

@@ -244,8 +244,8 @@ public class SystemSettingController {
         if (req.getEnabled() != null) {
             service.updateSearchEnabled(req.getEnabled());
         }
-        if (req.getActiveProvider() != null) {
-            service.updateActiveSearchProvider(req.getActiveProvider());
+        if (req.getTavilyEnabled() != null) {
+            service.updateTavilyEnabled(req.getTavilyEnabled());
         }
         if (req.getMaxResults() != null) {
             service.updateSearchMaxResults(req.getMaxResults());
@@ -287,6 +287,7 @@ public class SystemSettingController {
         java.util.Map<String, Boolean> avail = webSearchService.providerAvailability();
         return WebSearchSettingsVO.builder()
                 .enabled(service.getSearchEnabled())
+                .tavilyEnabled(service.getTavilyEnabled())
                 .activeProvider(service.getActiveSearchProvider())
                 .maxResults(service.getSearchMaxResults())
                 .timeoutMs(service.getSearchTimeoutMs())
