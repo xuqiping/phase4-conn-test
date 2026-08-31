@@ -26,6 +26,12 @@ export interface CanvasClipboard {
   items: ClipboardItem[]
   /** 诱导边快照（原 id，粘贴时经 remapEdges 重映射）。 */
   innerEdges: CanvasEdge[]
+  /**
+   * 跨集边快照（修复IX-2 B1，Q4 拍板）：恰一端在选中集的边。**恒收集**——复制时点
+   * 不看开关，粘贴时点由调用方按 keepLinksOnCopy 决定走不走 remapCrossEdges
+   * （复制后切开关，按粘贴当下所见生效）。浅拷贝断响应式链（同 innerEdges Y1 口径）。
+   */
+  crossEdges: CanvasEdge[]
   /** 复制集包围盒（落点对齐用）。 */
   bbox: { left: number; top: number; width: number; height: number }
   /** 连续粘贴计数（每按一次 +32 错开）。 */
@@ -65,6 +71,12 @@ export function buildCopySet(
     .filter(e => !isGroupEndpoint(e.source) && !isGroupEndpoint(e.target))
     .filter(e => ids.has(e.source) && ids.has(e.target))
     .map(e => ({ ...e }))
+  // 跨集边（IX-2 B1）：恰一端在集内——恒收集进剪贴板；粘贴时开关开 → remapCrossEdges
+  // 单侧重映射（集内端换新 id，集外端保原 id）；关 → 不走此数组，粘贴体零跨集边。
+  const crossEdges = edges
+    .filter(e => !isGroupEndpoint(e.source) && !isGroupEndpoint(e.target))
+    .filter(e => (ids.has(e.source) !== ids.has(e.target)))
+    .map(e => ({ ...e }))
   const left = Math.min(...items.map(i => i.position.x))
   const top = Math.min(...items.map(i => i.position.y))
   const right = Math.max(...items.map(i => i.position.x + i.width))
@@ -72,6 +84,7 @@ export function buildCopySet(
   return {
     items,
     innerEdges,
+    crossEdges,
     bbox: { left, top, width: right - left, height: bottom - top },
     pasteCount: 0
   }
@@ -123,6 +136,38 @@ export function remapEdges(
       if (!source || !target) return null // 理论不可达（诱导边端点必在 items），双保险
       // 剥会话 class（P4 交叉 review Y1 双保险）：复制时刻边可能正处选中/淡化态，
       // 烤进新边=永久高亮残留（applyVisualClasses 不重算存量边 class）。
+      const { class: _sessionClass, ...rest } = e
+      return {
+        ...rest,
+        id: `edge-${source}-${target}-${Date.now()}-${remapSeq++}`,
+        source,
+        target
+      }
+    })
+    .filter((e): e is CanvasEdge => e !== null)
+}
+
+/**
+ * 跨集边 → 新边（修复IX-2 B1，Q4 拍板——开关开时粘贴补连线）：**单侧**重映射——
+ * 集内端换新节点 id、集外端保原 id（原节点连线延伸到副本，语义=「副本接入原上下文」）。
+ * 防悬挂：集外端点已不在画布存活节点集（复制后原节点被删）→ 丢该边，绝不产出
+ * 引用不存在节点的断边。组边不进 crossEdges（buildCopySet 已滤）。允许与既有边
+ * 平行重复（同 source/target 多条并存，Q4 口径——去重=丢用户结构，不做）。
+ */
+export function remapCrossEdges(
+  clip: CanvasClipboard,
+  keyToNewId: Map<string, string>,
+  aliveNodeIds: Set<string>
+): CanvasEdge[] {
+  return clip.crossEdges
+    .map(e => {
+      const sourceIn = keyToNewId.has(e.source)
+      const targetIn = keyToNewId.has(e.target)
+      // 恒收集时点保证恰一端在集内；复制后结构变化 → 两端都不在/都在的退化情形按不可重映射丢
+      if (sourceIn === targetIn) return null
+      const source = sourceIn ? keyToNewId.get(e.source)! : e.source
+      const target = targetIn ? keyToNewId.get(e.target)! : e.target
+      if (!aliveNodeIds.has(source) || !aliveNodeIds.has(target)) return null
       const { class: _sessionClass, ...rest } = e
       return {
         ...rest,

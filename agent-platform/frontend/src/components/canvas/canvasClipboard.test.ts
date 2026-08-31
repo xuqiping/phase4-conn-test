@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildCopySet, planLabels, planPastePositions, remapEdges } from './canvasClipboard'
+import { buildCopySet, planLabels, planPastePositions, remapCrossEdges, remapEdges } from './canvasClipboard'
 import type { CanvasEdge, CanvasNode } from '@/types/canvas'
 
 // 修复VII Chunk3：子图剪贴板纯函数（plan 验证 ①-⑥）。
@@ -158,3 +158,63 @@ describe('buildCopySet · 修复VIII 组边排除', () => {
     expect(clip!.innerEdges[0]).toMatchObject({ source: 'a', target: 'b' })
   })
 })
+
+// 修复IX-2 B1（Q4 拍板）：跨集边恒收集 + 单侧重映射 + 悬挂防护。
+describe('crossEdges · 修复IX-2 跨集边（Q4）', () => {
+  it('① 恒收集：恰一端在集内进 crossEdges（不看开关，粘贴时点判定）；组边排除', () => {
+    const nodes = [mkNode('a'), mkNode('b'), mkNode('ext1'), mkNode('ext2')]
+    const edges = [
+      mkEdge('a', 'b'),        // 诱导边 → innerEdges
+      mkEdge('a', 'ext1'),     // 跨集边（source 在集内）
+      mkEdge('ext2', 'b'),     // 跨集边（target 在集内）
+      mkEdge('ext1', 'ext2'),  // 两端都在集外 → 不收
+      mkEdge('group:g', 'a')   // 组边 → 不收
+    ]
+    const clip = buildCopySet(nodes, edges, ['a', 'b'])!
+    expect(clip.crossEdges).toHaveLength(2)
+    expect(clip.crossEdges.map(e => `${e.source}>${e.target}`).sort()).toEqual(['a>ext1', 'ext2>b'])
+  })
+
+  it('② 单侧重映射：集内端换新 id、集外端保原 id；id 全新不撞原边', () => {
+    const nodes = [mkNode('a'), mkNode('ext')]
+    const edges = [mkEdge('a', 'ext'), mkEdge('ext', 'a')]
+    const clip = buildCopySet(nodes, edges, ['a'])!
+    const map = new Map([['a', 'new-a']])
+    const out = remapCrossEdges(clip, map, new Set(['new-a', 'ext']))
+    expect(out).toHaveLength(2)
+    for (const e of out) {
+      expect(e.id).toMatch(/^edge-/)
+      expect(e.id).not.toBe('e-a-ext')
+      expect(e.class).toBeUndefined()
+    }
+    expect(out[0]).toMatchObject({ source: 'new-a', target: 'ext' })
+    expect(out[1]).toMatchObject({ source: 'ext', target: 'new-a' })
+  })
+
+  it('③ 悬挂防护：集外端点已删（不在 aliveNodeIds）→ 丢边不产断边', () => {
+    const nodes = [mkNode('a'), mkNode('ext')]
+    const clip = buildCopySet(nodes, [mkEdge('a', 'ext'), mkEdge('ext', 'a')], ['a'])!
+    // ext 已删：alive 只剩 new-a
+    const out = remapCrossEdges(clip, new Map([['a', 'new-a']]), new Set(['new-a']))
+    expect(out).toHaveLength(0)
+  })
+
+  it('④ 允许平行重复边：同 source/target 与既有边并存，不去重（Q4 口径）', () => {
+    const nodes = [mkNode('a'), mkNode('ext')]
+    const clip = buildCopySet(nodes, [mkEdge('a', 'ext')], ['a'])!
+    // aliveNodeIds 含既有边端点组合（new-a>ext 已存在一条）→ 重映射仍产出（并存）
+    const out = remapCrossEdges(clip, new Map([['a', 'new-a']]), new Set(['new-a', 'ext']))
+    expect(out).toHaveLength(1)
+    expect(out[0]).toMatchObject({ source: 'new-a', target: 'ext' })
+  })
+
+  it('⑤ 退化防护：两端都在/都不在映射集（复制后结构变化）→ 按 null 丢', () => {
+    const nodes = [mkNode('a'), mkNode('b')]
+    const clip = buildCopySet(nodes, [mkEdge('a', 'b')], ['a', 'b'])!
+    // innerEdge a>b 手工塞进 crossEdges 模拟退化（恒收集时点保证恰一端，此处测双保险）
+    const degenerate: typeof clip = { ...clip, crossEdges: [mkEdge('a', 'b'), mkEdge('x', 'y')] }
+    const out = remapCrossEdges(degenerate, new Map([['a', 'n1'], ['b', 'n2']]), new Set(['n1', 'n2', 'x', 'y']))
+    expect(out).toHaveLength(0)
+  })
+})
+
