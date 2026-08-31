@@ -194,12 +194,13 @@ export interface AuthChannelSettingsUpdate {
 /** 联网搜索配置回显（key 不回显明文，仅 hasXxxKey 布尔）。 */
 export interface WebSearchSettings {
   enabled: boolean
+  /** Tavily 启用开关（路由源：开=Tavily 优先；关 → builtin）。 */
+  tavilyEnabled: boolean
+  /** 派生回显：tavily / builtin（自建 SearXNG），随 tavilyEnabled 变化。 */
   activeProvider: string
   maxResults: number
   timeoutMs: number
   hasTavilyKey: boolean
-  hasSerperKey: boolean
-  hasBingKey: boolean
   builtinConfigured: boolean
   providerAvailability: Record<string, boolean>
 }
@@ -207,12 +208,10 @@ export interface WebSearchSettings {
 /** 写入：所有字段可选（null/undefined=不改）；key 空串=清除。 */
 export interface WebSearchSettingsUpdate {
   enabled?: boolean
-  activeProvider?: string
+  tavilyEnabled?: boolean
   maxResults?: number
   timeoutMs?: number
   tavilyKey?: string
-  serperKey?: string
-  bingKey?: string
 }
 
 export interface WebSearchTestResult {

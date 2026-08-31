@@ -8,29 +8,30 @@
         </span>
       </n-form-item>
 
-      <n-form-item label="默认 Provider">
-        <n-select
-          v-model:value="activeProvider"
-          :options="providerOptions"
-          :loading="saving"
-          :disabled="!enabled"
-          style="max-width: 220px"
-          @update:value="handleSaveActiveProvider"
-        />
+      <n-form-item label="Tavily 启用">
+        <n-switch v-model:value="tavilyEnabled" :loading="saving" :disabled="!enabled" @update:value="handleSaveTavilyEnabled" />
         <span class="web-search-settings__hint">
-          外部无 key 或失败 → 自动降级自建 SearXNG → 全失败走纯聊天（不阻塞回复）
+          开 + 已配 key → 联网走 Tavily；关 / 未配 key / key 失效 → 走自建 SearXNG（Docker），
+          全失败纯模型作答不报错。智能对话与无限画布 chat 同规则
         </span>
+      </n-form-item>
+
+      <n-form-item label="当前路由">
+        <n-tag :type="activeProvider === 'tavily' ? 'success' : 'info'" size="small" round>
+          {{ activeProvider === 'tavily' ? 'Tavily（外部）' : '自建 SearXNG（builtin）' }}
+        </n-tag>
+        <span class="web-search-settings__hint">派生值，随上方 Tavily 开关变化，无需手选</span>
       </n-form-item>
 
       <n-form-item label="Provider 可用性">
         <n-space>
-          <n-tag v-for="(on, name) in providerAvailability" :key="name"
-            :type="on ? 'success' : 'default'" size="small" round>
-            {{ name }}：{{ on ? '可用' : '不可用' }}
+          <n-tag v-for="p in shownAvailability" :key="p.name"
+            :type="p.on ? 'success' : 'default'" size="small" round>
+            {{ p.name }}：{{ p.on ? '可用' : '不可用' }}
           </n-tag>
         </n-space>
         <span class="web-search-settings__hint">
-          实时自检（外部校 key 非空；自建校 SearXNG base-url 已配）
+          实时自检（tavily 校 key 非空；builtin 校 SearXNG base-url 已配）
         </span>
       </n-form-item>
 
@@ -60,7 +61,7 @@
         <span class="web-search-settings__hint">整体超时，默认 10000；外部超时 + 重试 1 次</span>
       </n-form-item>
 
-      <n-divider>外部供应商 API Key（AES 加密存，不回显明文）</n-divider>
+      <n-divider>Tavily API Key（AES 加密存，不回显明文）</n-divider>
 
       <n-form-item label="Tavily Key">
         <n-input
@@ -73,34 +74,6 @@
         />
         <n-tag :type="hasTavilyKey ? 'success' : 'default'" size="small" round>
           {{ hasTavilyKey ? '已配置' : '未配置' }}
-        </n-tag>
-      </n-form-item>
-
-      <n-form-item label="Serper Key">
-        <n-input
-          v-model:value="serperKey"
-          type="password"
-          show-password-on="click"
-          placeholder="留空不改；输入新值覆盖；填空格清除"
-          style="max-width: 360px"
-          :disabled="!enabled"
-        />
-        <n-tag :type="hasSerperKey ? 'success' : 'default'" size="small" round>
-          {{ hasSerperKey ? '已配置' : '未配置' }}
-        </n-tag>
-      </n-form-item>
-
-      <n-form-item label="Bing Key">
-        <n-input
-          v-model:value="bingKey"
-          type="password"
-          show-password-on="click"
-          placeholder="留空不改；输入新值覆盖；填空格清除"
-          style="max-width: 360px"
-          :disabled="!enabled"
-        />
-        <n-tag :type="hasBingKey ? 'success' : 'default'" size="small" round>
-          {{ hasBingKey ? '已配置' : '未配置' }}
         </n-tag>
       </n-form-item>
 
@@ -117,22 +90,22 @@
 
       <n-alert v-if="testResult" type="info" :show-icon="true" class="web-search-settings__test">
         测试结果：命中 {{ testResult.results }} 条；
-        active provider = {{ testResult.activeProvider }}；
+        当前路由 = {{ testResult.activeProvider === 'tavily' ? 'Tavily' : '自建 SearXNG' }}；
         可用性 = {{ formatAvailability(testResult.providerAvailability) }}
       </n-alert>
 
       <n-alert type="warning" :show-icon="true" class="web-search-settings__deploy">
         <strong>部署依赖（人工）：</strong>
-        自建 SearXNG 须 Docker 部署并配 <code>formats: [json]</code>，
-        base-url 写后端 <code>application.properties</code> 的 <code>search.searxng.base-url</code>（部署期配置，非本页）。
-        外部 key 申请：Tavily（免费 1000 次/月）/ Serper / Bing。
+        Tavily key 申请（app.tavily.com，免费 1000 次/月）。
+        自建 SearXNG 须 Docker 部署并配 <code>formats: [json]</code>（默认只 html 会吃 JS 挑战返回空），
+        base-url 写后端环境变量 <code>SEARCH_SEARXNG_BASE_URL</code>（部署期配置，非本页）。
       </n-alert>
     </n-form>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { useMessage } from 'naive-ui'
 import { systemApi } from '@/api/system'
 import type { WebSearchSettings, WebSearchTestResult } from '@/api/system'
@@ -140,37 +113,35 @@ import type { WebSearchSettings, WebSearchTestResult } from '@/api/system'
 const message = useMessage()
 
 const enabled = ref(false)
+const tavilyEnabled = ref(false)
 const activeProvider = ref('builtin')
 const maxResults = ref(5)
 const timeoutMs = ref(10000)
 const hasTavilyKey = ref(false)
-const hasSerperKey = ref(false)
-const hasBingKey = ref(false)
 const providerAvailability = ref<Record<string, boolean>>({})
 
 const tavilyKey = ref('')
-const serperKey = ref('')
-const bingKey = ref('')
 
 const saving = ref(false)
 const testing = ref(false)
 const testResult = ref<WebSearchTestResult | null>(null)
 
-const providerOptions = [
-  { label: 'Tavily（外部）', value: 'tavily' },
-  { label: 'Serper（外部）', value: 'serper' },
-  { label: 'Bing（外部）', value: 'bing' },
-  { label: '自建 SearXNG（兜底）', value: 'builtin' }
-]
+/** 可用性只展示路由会用到的两家（tavily / builtin）；serper/bing 已不参与路由，不再显示防误导。 */
+const shownAvailability = computed(() => {
+  const map = providerAvailability.value
+  return [
+    { name: 'tavily', on: map.tavily === true },
+    { name: 'builtin', on: map.builtin === true }
+  ]
+})
 
 function applyVO(vo: WebSearchSettings) {
   enabled.value = vo.enabled
+  tavilyEnabled.value = vo.tavilyEnabled
   activeProvider.value = vo.activeProvider
   maxResults.value = vo.maxResults
   timeoutMs.value = vo.timeoutMs
   hasTavilyKey.value = vo.hasTavilyKey
-  hasSerperKey.value = vo.hasSerperKey
-  hasBingKey.value = vo.hasBingKey
   providerAvailability.value = vo.providerAvailability || {}
 }
 
@@ -197,7 +168,7 @@ async function save(partial: Record<string, unknown>) {
 }
 
 function handleSaveEnabled(v: boolean) { save({ enabled: v }) }
-function handleSaveActiveProvider(v: string) { save({ activeProvider: v }) }
+function handleSaveTavilyEnabled(v: boolean) { save({ tavilyEnabled: v }) }
 function handleSaveMaxResults(v: number | null) { if (v != null) save({ maxResults: v }) }
 function handleSaveTimeoutMs(v: number | null) { if (v != null) save({ timeoutMs: v }) }
 
@@ -205,16 +176,12 @@ async function handleSaveKeys() {
   const partial: Record<string, unknown> = {}
   // 空串 = 清除；非空 = 覆盖；undefined（未填）= 不改
   if (tavilyKey.value !== '') partial.tavilyKey = tavilyKey.value
-  if (serperKey.value !== '') partial.serperKey = serperKey.value
-  if (bingKey.value !== '') partial.bingKey = bingKey.value
   if (!Object.keys(partial).length) {
     message.info('未填写任何 key（留空 = 不改）')
     return
   }
   await save(partial)
   tavilyKey.value = ''
-  serperKey.value = ''
-  bingKey.value = ''
 }
 
 async function handleTest() {
