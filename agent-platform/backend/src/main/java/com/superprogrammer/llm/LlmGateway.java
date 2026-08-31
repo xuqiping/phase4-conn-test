@@ -89,7 +89,8 @@ public class LlmGateway {
         // 抛 INSUFFICIENT_POINTS=开局拦截（此时闸门未 acquire、provider 未调，直接外抛，B4/SSE 上层分流）。
         String holdRef = "chat-" + java.util.UUID.randomUUID();
         java.math.BigDecimal heldPoints = billingService.holdChat(uid, gid, provider.getId(),
-                request.getModel(), estimateInputTokens(request), request.getMaxTokens(), holdRef);
+                request.getModel(), estimateInputTokens(request), request.getMaxTokens(), holdRef,
+                request.getThinkingLevel());
         // L7 低余额并行闸门：低余额用户超在途上限在此抛 42902；held=true 须 finally release
         boolean held = inflightGate.acquire(uid, balance);
         long startNanos = System.nanoTime();
@@ -201,7 +202,8 @@ public class LlmGateway {
                 // B3（Q4=B）：开局全额预扣。抛 INSUFFICIENT_POINTS → 下方 catch 释放闸门槽位后
                 // 转 Flux.error（此刻未产任何 chunk，B4 按「未开局」分流回 ERROR 事件）。
                 final java.math.BigDecimal holdPoints = billingService.holdChat(uid, gid, providerId, model,
-                        estimateInputTokens(request), request.getMaxTokens(), holdRef);
+                        estimateInputTokens(request), request.getMaxTokens(), holdRef,
+                        request.getThinkingLevel());
                 final Runnable cancelSettle = () -> {
                     if (holdPoints != null && !usageSettled.get()) {
                         billingService.settleChatCancelled(uid, providerId, providerScope, model, gid,

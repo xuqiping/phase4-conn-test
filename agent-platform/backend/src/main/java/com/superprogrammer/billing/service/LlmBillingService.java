@@ -40,6 +40,8 @@ public class LlmBillingService {
     private final AuditLogService auditLogService;
     /** 9x#7：流式线程无 MDC/SecurityContext，chat_completed 行的 username 按 userId 反查补齐。 */
     private final com.superprogrammer.auth.mapper.UserMapper userMapper;
+    /** 修复IX-1 A4：思考档位 HOLD 估算放大系数（llm.thinking.hold-factor-standard/deep）。 */
+    private final com.superprogrammer.llm.config.LlmThinkingProperties thinkingProperties;
     /** 对话审计开关（audit.chat.enabled）。非 final，Spring @Value 字段注入。 */
     @Value("${audit.chat.enabled:true}")
     private boolean chatAuditEnabled;
@@ -163,10 +165,28 @@ public class LlmBillingService {
      */
     public BigDecimal holdChat(Long userId, Long projectGroupId, Long providerId, String model,
                                int estInputTokens, Integer requestMaxTokens, String ref) {
+        return holdChat(userId, projectGroupId, providerId, model, estInputTokens, requestMaxTokens, ref, null);
+    }
+
+    /**
+     * 修复IX-1 A4（Q2 拍板）：带思考档位的预扣——深度思考产出更长，est 输出按档位放大系数抬估算
+     * （STANDARD ×hold-factor-standard / DEEP ×hold-factor-deep，默认 2/4），防思考态开局冻结不足
+     * 常态转 DEBT。null/OFF=现状口径不动。est 帽仍生效（放大后可与 maxTokens 比较，超帽截断）。
+     */
+    public BigDecimal holdChat(Long userId, Long projectGroupId, Long providerId, String model,
+                               int estInputTokens, Integer requestMaxTokens, String ref,
+                               com.superprogrammer.llm.dto.ThinkingLevel thinkingLevel) {
         if (!isChatHoldEnabled() || userId == null) {
             return null;
         }
-        int estOut = requestMaxTokens == null ? holdEstMaxTokens : Math.min(requestMaxTokens, holdEstMaxTokens);
+        int base = requestMaxTokens == null ? holdEstMaxTokens : Math.min(requestMaxTokens, holdEstMaxTokens);
+        int scaled = base;
+        if (thinkingLevel == com.superprogrammer.llm.dto.ThinkingLevel.STANDARD) {
+            scaled = base * thinkingProperties.getHoldFactorStandard();
+        } else if (thinkingLevel == com.superprogrammer.llm.dto.ThinkingLevel.DEEP) {
+            scaled = base * thinkingProperties.getHoldFactorDeep();
+        }
+        int estOut = Math.min(scaled, requestMaxTokens == null ? Integer.MAX_VALUE : Math.max(requestMaxTokens, 1));
         BigDecimal yuan = pricingService.computeCost(LlmUsageLogEntity.KIND_CHAT, providerId, model,
                 estInputTokens, estOut, 0, 0);
         BigDecimal est = ratioService.toPoints(yuan);

@@ -23,6 +23,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -314,6 +315,87 @@ class LlmBillingServiceTest {
     void holdChat_disabled_returnsNullNoPricing() {
         assertThat(billing.holdChat(1L, null, 7L, "gpt-4", 500, 100, "r1")).isNull();
         verify(pricingService, never()).computeCost(any(), any(), any(), any(), any(), anyInt(), anyInt());
+    }
+
+    // ---------- 修复IX-1 A4：思考档位 HOLD 估算放大（Q2 拍板） ----------
+
+    /** A4：思考属性非 @Mock，@InjectMocks 构造注入为 null——用例前反射补默认实例（系数 2/4）。 */
+    private void enableThinkingProps() {
+        ReflectionTestUtils.setField(billing, "thinkingProperties",
+                new com.superprogrammer.llm.config.LlmThinkingProperties());
+    }
+
+    /**
+     * null/OFF=现状口径（estOut=min(maxTokens,2048)，无放大）；STANDARD×2；DEEP×4。
+     * maxTokens=null 时 est 帽=2048 → 三档出量 2048/4096/8192。
+     */
+    @Test
+    void holdChat_thinkingLevel_scalesEstOut() {
+        enableChatHold();
+        enableThinkingProps();
+        when(walletService.isEnabled()).thenReturn(true);
+        when(ratioService.toPoints(any())).thenReturn(new BigDecimal("1"));
+        when(walletService.getBalance(1L)).thenReturn(new BigDecimal("999999"));
+        when(walletService.chargeIdempotent(any(), any(), any(), any(), any(), any()))
+                .thenReturn(new BigDecimal("1"));
+
+        // null 档（旧 7 参调用同口径）：出量=帽 2048
+        when(pricingService.computeCost(eq("CHAT"), eq(7L), eq("gpt-4"),
+                eq(500), eq(2048), eq(0), eq(0))).thenReturn(new BigDecimal("1"));
+        billing.holdChat(1L, null, 7L, "gpt-4", 500, null, "r-null");
+        verify(pricingService).computeCost(eq("CHAT"), eq(7L), eq("gpt-4"), eq(500), eq(2048), eq(0), eq(0));
+
+        // OFF：同现状，零放大
+        when(pricingService.computeCost(eq("CHAT"), eq(7L), eq("gpt-4"),
+                eq(500), eq(2048), eq(0), eq(0))).thenReturn(new BigDecimal("1"));
+        billing.holdChat(1L, null, 7L, "gpt-4", 500, null, "r-off",
+                com.superprogrammer.llm.dto.ThinkingLevel.OFF);
+        verify(pricingService, times(2)).computeCost(eq("CHAT"), eq(7L), eq("gpt-4"), eq(500), eq(2048), eq(0), eq(0));
+
+        // STANDARD：2048×2=4096
+        when(pricingService.computeCost(eq("CHAT"), eq(7L), eq("gpt-4"),
+                eq(500), eq(4096), eq(0), eq(0))).thenReturn(new BigDecimal("1"));
+        billing.holdChat(1L, null, 7L, "gpt-4", 500, null, "r-std",
+                com.superprogrammer.llm.dto.ThinkingLevel.STANDARD);
+        verify(pricingService).computeCost(eq("CHAT"), eq(7L), eq("gpt-4"), eq(500), eq(4096), eq(0), eq(0));
+
+        // DEEP：2048×4=8192
+        when(pricingService.computeCost(eq("CHAT"), eq(7L), eq("gpt-4"),
+                eq(500), eq(8192), eq(0), eq(0))).thenReturn(new BigDecimal("1"));
+        billing.holdChat(1L, null, 7L, "gpt-4", 500, null, "r-deep",
+                com.superprogrammer.llm.dto.ThinkingLevel.DEEP);
+        verify(pricingService).computeCost(eq("CHAT"), eq(7L), eq("gpt-4"), eq(500), eq(8192), eq(0), eq(0));
+    }
+
+    /** A4：系数可配（llm.thinking.hold-factor-deep=6 → 2048×6=12288）；放大后不超请求 maxTokens 帽。 */
+    @Test
+    void holdChat_thinkingLevel_factorsConfigurable_andCappedByMaxTokens() {
+        enableChatHold();
+        com.superprogrammer.llm.config.LlmThinkingProperties props =
+                new com.superprogrammer.llm.config.LlmThinkingProperties();
+        props.setHoldFactorStandard(3);
+        props.setHoldFactorDeep(6);
+        ReflectionTestUtils.setField(billing, "thinkingProperties", props);
+        when(walletService.isEnabled()).thenReturn(true);
+        when(ratioService.toPoints(any())).thenReturn(new BigDecimal("1"));
+        when(walletService.getBalance(1L)).thenReturn(new BigDecimal("999999"));
+        when(walletService.chargeIdempotent(any(), any(), any(), any(), any(), any()))
+                .thenReturn(new BigDecimal("1"));
+
+        // 深度×6：maxTokens=null → est 帽先取 2048 再放大=12288（无请求帽可截）
+        when(pricingService.computeCost(eq("CHAT"), eq(7L), eq("gpt-4"),
+                eq(500), eq(12288), eq(0), eq(0))).thenReturn(new BigDecimal("1"));
+        billing.holdChat(1L, null, 7L, "gpt-4", 500, null, "r6",
+                com.superprogrammer.llm.dto.ThinkingLevel.DEEP);
+        verify(pricingService).computeCost(eq("CHAT"), eq(7L), eq("gpt-4"), eq(500), eq(12288), eq(0), eq(0));
+
+        // 标准×3 但请求 maxTokens=1000：base=1000（低于 2048 帽）→ 放大 3000 超 1000 → 截回 1000
+        // （超帽实耗走结算多退少补+DEBT 兜底，不因思考档过度冻结）
+        when(pricingService.computeCost(eq("CHAT"), eq(7L), eq("gpt-4"),
+                eq(500), eq(1000), eq(0), eq(0))).thenReturn(new BigDecimal("1"));
+        billing.holdChat(1L, null, 7L, "gpt-4", 500, 1000, "r3",
+                com.superprogrammer.llm.dto.ThinkingLevel.STANDARD);
+        verify(pricingService).computeCost(eq("CHAT"), eq(7L), eq("gpt-4"), eq(500), eq(1000), eq(0), eq(0));
     }
 
     // ---------- B3：正常尾结算 settleChatHeld（多退少补） ----------
