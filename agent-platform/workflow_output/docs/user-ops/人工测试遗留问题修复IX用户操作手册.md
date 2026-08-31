@@ -36,14 +36,18 @@
 
 **注意**：⛓ 关做副本/粘贴后，提示词里 `@节点名` 仍指原节点——上游面板可能显「断链」灰显，重新连线即恢复。
 
-## 3. 联网搜索上线验证（管理员）
+## 3. 联网搜索上线验证（管理员，Tavily 开关制）
 
-**入口**：系统设置 → 联网搜索配置（运维配置页）。
+**入口**：系统设置 → 联网搜索配置页。**路由规则**（修复IX+ 起，无需手选 provider）：「Tavily 启用」开 + 已配 key → 走 Tavily；关 / 未配 key / key 失效 → 走自建 SearXNG；全失败纯模型作答。智能对话与无限画布 chat 同规则。
 
-1. **快路（Tavily）**：申请 Tavily key → 配置页粘贴 → 总开关开、provider 选 tavily → 点「测试连通」→ results>0。
-2. **自建路（SearXNG）**：Docker 起 SearXNG（**必须 `formats:[json]`**，否则被 JS 挑战挡）→ 后端 env `SEARCH_SEARXNG_BASE_URL` 指向它 → provider 选 builtin → 测试连通。
-3. **用户侧验证**：智能对话开「🌐 联网：开」问时效问题（「今天什么日期」）→ 回答带 `[n]` 引用 + 📎 来源外链；切「关」→ 纯模型作答。
-4. **降级**：全失败不报错，AI 正常作答只是没引用；测试按钮返回 results=0 + providerAvailability 全 false = key/地址无效。
+| 操作 | 界面变化 | 预期 |
+|---|---|---|
+| 贴 Tavily key → 保存 Key | 「已配置」绿标 | key AES 加密入库，不回显明文 |
+| 开「Tavily 启用」开关 | 「当前路由」标签变 **Tavily（外部）** | 派生显示，随开关即时变 |
+| 关「Tavily 启用」开关 | 「当前路由」变 **自建 SearXNG（builtin）** | 联网立刻改走 SearXNG |
+| 点「测试连通」 | 命中条数 + 当前路由 + 可用性 | results>0 = 通；0 = key/地址无效（自动试过降级链） |
+| 用户侧开 🌐 问时效题 | 回答带 `[n]` 引用 + 📎 来源外链 | 智能对话/画布 chat 均如此 |
+| SearXNG 部署 | Docker 起实例（**必须 `formats:[json]`**）+ 后端 env `SEARCH_SEARXNG_BASE_URL` | 部署期配置，非本页；builtin 标签变「可用」 |
 
 ## 常见异常
 
@@ -52,4 +56,5 @@
 | 🧠 下拉不显示 | 当前模型无思考声明（OpenAI 系未配 thinking 节） | 正常；管理员按运维手册声明后出现 |
 | 深度档被拒「积分不足」 | 预扣按档位放大 | 充值或降档/调小 max_tokens |
 | 粘贴后平行线多条 | ⛓ 开连按属预期 | 逐条删或关 ⛓ |
-| 联网开了没引用 | 没搜到/未配 key/总开关关 | 找管理员看配置页测试按钮 |
+| 联网开了没引用 | 总开关关 / Tavily 关且 SearXNG 未配或未起 / 真没搜到 | 配置页看「当前路由」+ 测试连通；SearXNG 路查 Docker 与 env |
+| Tavily 开着但路由仍 builtin | key 未配置（开关只管路由，key 另存） | 贴 key 保存后再测 |

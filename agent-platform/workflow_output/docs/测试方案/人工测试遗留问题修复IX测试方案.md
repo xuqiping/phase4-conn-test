@@ -38,18 +38,21 @@
 | P11 | 持久化 | ⛓ 关刷新页面 | ⛓ 仍关 |
 | P12 | 自动保存 | P1 后等防抖落库刷新 | 跨集边入库重现（快照就是普通边） |
 
-## Q 系列 · 联网搜索部署验证（管理员，dev 现状=零配置）
+## Q 系列 · 联网搜索部署验证（管理员，Tavily 开关制；dev 现状=零配置）
+
+**路由规则（修复IX+）**：「Tavily 启用」开 + 已配 key → 走 Tavily；关 / 未配 / key 错 → 走自建 SearXNG；全失败纯模型作答。智能对话与画布 chat 同链。
 
 | # | 用例 | 步骤 | 预期 |
 |---|---|---|---|
-| Q1 | 快路 Tavily | 配置页贴 key → 总开关开 → provider=tavily → 「测试连通」 | results>0、providerAvailability.tavily=true |
-| Q2 | 自建路 SearXNG | Docker 起（`formats:[json]`）→ env `SEARCH_SEARXNG_BASE_URL` → provider=builtin → 测试 | results>0、builtin=true（缺 json 格式=被 JS 挑战挡，返回空） |
-| Q3 | 端到端 | 智能对话「🌐 联网：开」问「今天什么日期」 | 回答带 [n] 引用 + 📎 来源外链可点 |
-| Q4 | 反向 | 切「🌐 联网：关」再问 | 纯模型作答，无引用，不报错 |
-| Q5 | 会话持久 | 开联网刷新页面 | 开关保持开 |
-| Q6 | 降级链 | 填错 key/停掉 SearXNG 再问 | 不炸：AI 正常作答无引用；测试按钮 results=0 |
-| Q7 | 总开关关 | 配置页总开关关，用户侧仍开 🌐 | 搜索被禁用（无引用），聊天不受影响 |
+| Q1 | Tavily 正向 | 配置页贴 key 保存 → 开「Tavily 启用」→「测试连通」 | results>0；「当前路由」=Tavily；tavily 标签可用 |
+| Q2 | 开关反向 | Q1 后关「Tavily 启用」→ 再测 | 「当前路由」变自建 SearXNG；联网不再打 Tavily |
+| Q3 | 未配 key 反向 | 清掉 key、开关保持开 → 测 | 路由显 tavily 但降级链兜底走 builtin（key 空时 available=false 不调 tavily） |
+| Q4 | key 错误运行时降级 | 填错 key、开关开 → 用户侧问时效题 | 不报错；tavily 空/失败 → 自动 builtin；两端都无结果则纯模型作答 |
+| Q5 | SearXNG 路 | Docker 起（`formats:[json]`）→ env `SEARCH_SEARXNG_BASE_URL` → Tavily 开关关 → 测 | results>0、builtin 标签可用（缺 json 格式=被 JS 挑战挡，返回空） |
+| Q6 | 端到端双面 | 智能对话 与 画布 chat 各开「🌐 联网」问「今天什么日期」 | 两处回答均带 [n] 引用 + 📎 来源外链可点 |
+| Q7 | 用户侧反向+降级+总开关 | ① 切「🌐 联网：关」再问 → 纯模型作答无引用；② 停 SearXNG+关 Tavily 再问 → 不炸纯模型；③ 配置页总开关关、用户侧仍开 🌐 → 搜索禁用聊天不受影响 | 三路均不报错 |
+| Q8 | 会话持久 | 开联网刷新页面 | 开关保持开 |
 
 ## 出口
 
-O1-O9 / P1-P12 / Q1-Q7 全过 → 问题单三项销项。
+O1-O9 / P1-P12 / Q1-Q8 全过 → 问题单三项销项。

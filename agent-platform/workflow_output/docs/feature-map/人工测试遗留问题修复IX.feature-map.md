@@ -42,6 +42,23 @@ Ctrl+C 时把「跨出选中集的边」也存进剪贴板（不管开关）→ 
 
 **踩坑批注**：① 复制后外部节点被删 → 粘贴时按存活集丢边，不产 vue-flow 渲染断裂的悬挂边；② 边快照浅拷贝+剥 class，防选中态高亮永久烤进新边（VII Y1 同款）；③ 平行边不去重（Q4 拍板：去重=丢用户结构）；④ 开关默认开=修复VI「连线克隆」现状延续，只有显式关才变。
 
+## IX-3 联网搜索 Tavily 开关制（修复IX+，2026-08-31 增补）
+
+> 用户拍板：配 key + 开开关走 Tavily；未配/key 错/关 → SearXNG Docker。开发 2026-07-19 的联网链路上改路由方式，commit `273cf10b`（后端）/`9f5e0884`（前端）。
+
+### 代码位置
+
+| 文件 | 作用 |
+|---|---|
+| `system/service/SystemSettingService.java` | 新 `search.tavily.enabled`（默认 false）；**getActiveSearchProvider 改派生**：开关开→"tavily"、否则→"builtin"；旧 active-provider 手选删除 |
+| `search/config/SearchConfig.java` → `search/service/WebSearchService.java` | 路由消费派生值；key 错/空的运行时兜底靠既有降级链（tavily 不可用/空/抛 → builtin 重试） |
+| `system/controller/SystemSettingController.java` + `WebSearchSettingsVO/UpdateRequest` | +tavilyEnabled；activeProvider 派生回显（派生收在 service，防 @WebMvcTest 切片缺 bean） |
+| `components/settings/WebSearchSettingsTab.vue` + `api/system.ts` | 「Tavily 启用」开关 + 「当前路由」派生标签；下拉/serper/bing 输入撤 |
+
+智能对话与画布 chat 都发 `req.webSearch` → 同一 ChatSessionService → **一处改两处生效**。
+
+**踩坑批注**：① controller 别直接注入 @Component 的 SearchConfig——@WebMvcTest 切片没这 bean，context 直接挂（Legacy404Test 实测）；② ClaudeProvider thinking 节 `Map.of` 无序，JSON key 序不稳，锁序断言的测试会随机挂——要定序用 LinkedHashMap。
+
 ## 测试锚点
 
-后端 mvn 2706/2706（新增：ThinkingSpecTest 5、ClaudeProviderTest +4、OpenAICompatibleProviderTest +5、LlmBillingServiceTest +2、DefaultChatStrategyTest +2）；前端 vitest 988/988（canvasClipboard +5、canvasPrefs 4 新、CanvasBoard +6）、vue-tsc 0 错。
+后端 mvn 2706→2712/2712（Chunk A/B 后：新增 ThinkingSpecTest 5、ClaudeProviderTest +4、OpenAICompatibleProviderTest +5、LlmBillingServiceTest +2、DefaultChatStrategyTest +2、SearchConfigTest 3、SystemSettingServiceTest +3）；前端 vitest 988→994/994（canvasClipboard +5、canvasPrefs 4 新、CanvasBoard +6、WebSearchSettingsTab 6 新）、vue-tsc 0 错。
