@@ -1,6 +1,7 @@
 package com.superprogrammer.llm.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.superprogrammer.llm.dto.ThinkingSpec;
 import com.superprogrammer.llm.entity.LlmProviderEntity;
 import com.superprogrammer.llm.provider.ClaudeProvider;
 import com.superprogrammer.llm.provider.LlmProviderInterface;
@@ -105,7 +106,7 @@ public class LlmConfig {
                     entity.getId(), "GLOBAL",
                     thinkingProperties.getBudgetStandard(), thinkingProperties.getBudgetDeep());
             default -> new OpenAICompatibleProvider(name, baseUrl, apiKey != null ? apiKey : "", models, objectMapper,
-                    entity.getId(), "GLOBAL");
+                    entity.getId(), "GLOBAL", ThinkingSpec.parse(objectMapper, entity.getConfig()));
         };
     }
 
@@ -125,5 +126,13 @@ public class LlmConfig {
             log.warn("解析models字段失败: {}", modelsJson);
             return Collections.emptyList();
         }
+    }
+
+    /**
+     * 修复IX-1 A3：全局 provider 思考声明解析（CHAT 域首次消费 config jsonb）。
+     * 用户级 provider override 不带 config 列，天然未声明（现状）。
+     */
+    public com.superprogrammer.llm.dto.ThinkingSpec thinkingSpecOf(com.superprogrammer.llm.entity.LlmProviderEntity entity) {
+        return com.superprogrammer.llm.dto.ThinkingSpec.parse(objectMapper, entity.getConfig());
     }
 }

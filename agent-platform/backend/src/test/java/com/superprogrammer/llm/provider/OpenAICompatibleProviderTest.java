@@ -432,4 +432,85 @@ class OpenAICompatibleProviderTest {
         assertEquals(60, captured.get().getPromptTokens());
         assertEquals(40L, captured.get().getCachedTokens());
     }
+
+    // ==================== 修复IX-1 A3：声明制思考参数 ====================
+
+    /** 档位响应体统一构造（非流式，返回原始请求 body）。 */
+    private String chatAndCaptureBody(OpenAICompatibleProvider p, LlmRequest request) throws Exception {
+        server.enqueue(new MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"ok\"}}],\"usage\":{}}"));
+        p.chat(request);
+        return server.takeRequest().getBody().readUtf8();
+    }
+
+    private LlmRequest reqWithLevel(ThinkingLevel level) {
+        return LlmRequest.builder()
+                .model("deepseek-chat")
+                .messages(List.of(LlmMessage.builder().role("user").content("Hi").build()))
+                .thinkingLevel(level)
+                .build();
+    }
+
+    @Test
+    void chat_noThinkingSpec_shouldNeverSendThinkingParams() throws Exception {
+        // 锁死「未声明=零思考参数」：带档位也不发（现状兼容基线）
+        String body = chatAndCaptureBody(provider, reqWithLevel(ThinkingLevel.DEEP));
+        assertFalse(body.contains("\"thinking\""), "未声明不得发 thinking，实际=" + body);
+        assertFalse(body.contains("reasoning_effort"), "未声明不得发 reasoning_effort，实际=" + body);
+    }
+
+    @Test
+    void chat_toggleStyle_shouldMapOffAndOn() throws Exception {
+        OpenAICompatibleProvider p = new OpenAICompatibleProvider("test",
+                server.url("/v1/chat/completions").toString(), "key", List.of("deepseek-chat"), mapper,
+                null, "GLOBAL", ThinkingSpec.parse(mapper, "{\"thinking\":{\"style\":\"toggle\"}}"));
+
+        String off = chatAndCaptureBody(p, reqWithLevel(ThinkingLevel.OFF));
+        assertTrue(off.contains("\"thinking\":{\"type\":\"disabled\"}"), "OFF→disabled，实际=" + off);
+
+        String on = chatAndCaptureBody(p, reqWithLevel(ThinkingLevel.STANDARD));
+        assertTrue(on.contains("\"thinking\":{\"type\":\"enabled\"}"), "STANDARD→enabled，实际=" + on);
+
+        // toggle 无深度态：DEEP 兜底同 enabled（防 localStorage 残留档 400）
+        String deep = chatAndCaptureBody(p, reqWithLevel(ThinkingLevel.DEEP));
+        assertTrue(deep.contains("\"thinking\":{\"type\":\"enabled\"}"), "DEEP→enabled（兜底），实际=" + deep);
+        assertFalse(deep.contains("reasoning_effort"), "toggle 风格不得混发 effort，实际=" + deep);
+    }
+
+    @Test
+    void chat_effortStyle_shouldMapThreeLevels() throws Exception {
+        OpenAICompatibleProvider p = new OpenAICompatibleProvider("test",
+                server.url("/v1/chat/completions").toString(), "key", List.of("deepseek-chat"), mapper,
+                null, "GLOBAL", ThinkingSpec.parse(mapper, "{\"thinking\":{\"style\":\"effort\"}}"));
+
+        assertEquals(true, chatAndCaptureBody(p, reqWithLevel(ThinkingLevel.OFF)).contains("\"reasoning_effort\":\"low\""));
+        assertEquals(true, chatAndCaptureBody(p, reqWithLevel(ThinkingLevel.STANDARD)).contains("\"reasoning_effort\":\"medium\""));
+        assertEquals(true, chatAndCaptureBody(p, reqWithLevel(ThinkingLevel.DEEP)).contains("\"reasoning_effort\":\"high\""));
+    }
+
+    @Test
+    void chat_specModelsWhitelist_shouldFilterOutUnlistedModel() throws Exception {
+        OpenAICompatibleProvider p = new OpenAICompatibleProvider("test",
+                server.url("/v1/chat/completions").toString(), "key",
+                List.of("deepseek-chat", "glm-5.3"), mapper,
+                null, "GLOBAL", ThinkingSpec.parse(mapper, "{\"thinking\":{\"style\":\"toggle\",\"models\":[\"glm-5.3\"]}}"));
+
+        String body = chatAndCaptureBody(p, reqWithLevel(ThinkingLevel.STANDARD));
+        assertFalse(body.contains("\"thinking\""), "白名单外模型不得发参数，实际=" + body);
+    }
+
+    @Test
+    void chat_disableThinking_withSpec_shouldMapToOff() throws Exception {
+        // 老字段兼容：内部 JSON 蒸馏调用 disableThinking=true，在已声明 provider 上也应发 disabled
+        OpenAICompatibleProvider p = new OpenAICompatibleProvider("test",
+                server.url("/v1/chat/completions").toString(), "key", List.of("deepseek-chat"), mapper,
+                null, "GLOBAL", ThinkingSpec.parse(mapper, "{\"thinking\":{\"style\":\"toggle\"}}"));
+        String body = chatAndCaptureBody(p, LlmRequest.builder()
+                .model("deepseek-chat")
+                .messages(List.of(LlmMessage.builder().role("user").content("总结").build()))
+                .disableThinking(true)
+                .build());
+        assertTrue(body.contains("\"thinking\":{\"type\":\"disabled\"}"), "disableThinking 须映射 OFF，实际=" + body);
+    }
 }

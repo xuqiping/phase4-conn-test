@@ -108,7 +108,9 @@ public class UserLlmController {
 
         // Global providers（仅 CHAT 进 chat 模型列表；EMBEDDING/VIDEO/IMAGE 均不进——
         // 顺带修掉 EMBEDDING 模型混进 chat 选择器的旧缺陷，FR-003）
+        java.util.Map<String, LlmProviderEntity> globalByName = new java.util.HashMap<>();
         for (LlmProviderEntity p : llmProviderService.listActive()) {
+            globalByName.putIfAbsent(p.getName(), p);
             if (!LlmProviderService.CATEGORY_CHAT.equalsIgnoreCase(p.getCategory())) {
                 continue;
             }
@@ -122,15 +124,17 @@ public class UserLlmController {
                                 .providerName(p.getName())
                                 .source("global")
                                 .defaultModel(m.toString().equals(defaultModel))
+                                .thinkingLevels(thinkingLevelsOf(p, m.toString()))
                                 .build());
                     }
                 } catch (Exception ignored) {}
             }
         }
 
-        // User provider overrides
+        // User provider overrides（思考声明/协议继承同名全局行——用户级无 config 列）
         for (UserLlmProviderVO up : userLlmProviderService.listByUser(userId)) {
             if (up.getModels() != null && !up.getModels().isBlank()) {
+                LlmProviderEntity global = globalByName.get(up.getProviderName());
                 try {
                     List<String> modelList = objectMapper.readValue(up.getModels(), List.class);
                     for (Object m : modelList) {
@@ -140,6 +144,7 @@ public class UserLlmController {
                                 .providerName(up.getProviderName())
                                 .source("user")
                                 .defaultModel(false)
+                                .thinkingLevels(thinkingLevelsOf(global, m.toString()))
                                 .build());
                     }
                 } catch (Exception ignored) {}
@@ -147,6 +152,27 @@ public class UserLlmController {
         }
 
         return ResponseEntity.ok(R.ok(models));
+    }
+
+    /**
+     * 修复IX-1 A3：模型思考档位集合。ANTHROPIC 协议=三档全（协议原生零声明）；
+     * 其余按 config thinking 声明（toggle→[OFF,STANDARD] / effort→三档 / models 白名单过滤）；
+     * 未声明/全局行缺失 → null（前端不显示选择器）。
+     */
+    private List<String> thinkingLevelsOf(LlmProviderEntity p, String modelId) {
+        if (p == null) {
+            return null;
+        }
+        String protocol = p.getProtocol();
+        if (protocol == null || protocol.isBlank()) {
+            protocol = "claude".equals(p.getName()) ? "ANTHROPIC" : "OPENAI_COMPATIBLE";
+        }
+        if ("ANTHROPIC".equalsIgnoreCase(protocol.trim())) {
+            return List.of("OFF", "STANDARD", "DEEP");
+        }
+        com.superprogrammer.llm.dto.ThinkingSpec spec =
+                com.superprogrammer.llm.dto.ThinkingSpec.parse(objectMapper, p.getConfig());
+        return spec == null ? null : spec.levelsFor(modelId);
     }
 
     /**

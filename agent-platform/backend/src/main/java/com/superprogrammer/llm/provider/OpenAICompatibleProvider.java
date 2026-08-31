@@ -31,6 +31,8 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
     private final Long providerId;
     /** 计费用：GLOBAL / USER。 */
     private final String providerScope;
+    /** 思考参数声明（修复IX-1 A3）：null=零思考参数（现状）；来源 llm_providers.config thinking 节。 */
+    private final ThinkingSpec thinkingSpec;
 
     /** 连接建立超时（ms）。云上 DNS/路由抖动时避免线程长期挂起。 */
     private static final int CONNECT_TIMEOUT_MS = 10_000;
@@ -42,14 +44,22 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
         this(name, endpoint, apiKey, models, objectMapper, null, "GLOBAL");
     }
 
-    /** 全参构造：含计费用 providerId + providerScope（FR-计费）。 */
+    /** 全参构造：含计费用 providerId + providerScope（FR-计费）。无思考声明（现状行为）。 */
     public OpenAICompatibleProvider(String name, String endpoint, String apiKey, List<String> models,
                                     ObjectMapper objectMapper, Long providerId, String providerScope) {
+        this(name, endpoint, apiKey, models, objectMapper, providerId, providerScope, null);
+    }
+
+    /** 全参构造（修复IX-1 A3）：含思考声明（LlmConfig 构造点解析 config jsonb 传入）。 */
+    public OpenAICompatibleProvider(String name, String endpoint, String apiKey, List<String> models,
+                                    ObjectMapper objectMapper, Long providerId, String providerScope,
+                                    ThinkingSpec thinkingSpec) {
         this.name = name;
         this.supportedModels = models != null ? new HashSet<>(models) : Collections.emptySet();
         this.objectMapper = objectMapper;
         this.providerId = providerId;
         this.providerScope = providerScope != null ? providerScope : "GLOBAL";
+        this.thinkingSpec = thinkingSpec;
         // 全 URL 直发：仅剥尾随斜杠，不做任何路径拼接/版本段剥离
         this.endpoint = endpoint == null ? "" : endpoint.replaceAll("/+$", "");
         // 底层 HttpClient 显式设 connect/response 超时，否则 WebClient 默认无超时，
@@ -336,6 +346,8 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
         if (request.getStream() != null) {
             body.put("stream", request.getStream());
         }
+        // 修复IX-1 A3：声明制思考参数（未声明/档位空/模型不在白名单=零参数，现状）。
+        applyThinkingParam(body, request);
 
         List<Map<String, Object>> messages = new ArrayList<>();
         for (LlmMessage msg : request.getMessages()) {
@@ -348,6 +360,31 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
 
         log.debug("LLM请求体 [provider={}]: {}", name, body);
         return body;
+    }
+
+    /**
+     * 修复IX-1 A3：按声明映射思考档位（优先级 thinkingLevel > disableThinking > 不发）。
+     * toggle 风格无深度态——DEEP 与 STANDARD 同发 enabled（levelsFor 已诚实只下发两档，
+     * DEEP 兜底兼容「localStorage 残留档」场景，不 400）。
+     */
+    private void applyThinkingParam(Map<String, Object> body, LlmRequest request) {
+        if (thinkingSpec == null || !thinkingSpec.appliesTo(request.getModel())) {
+            return;
+        }
+        ThinkingLevel level = request.getThinkingLevel() != null ? request.getThinkingLevel()
+                : (Boolean.TRUE.equals(request.getDisableThinking()) ? ThinkingLevel.OFF : null);
+        if (level == null) {
+            return;
+        }
+        if (thinkingSpec.style() == ThinkingSpec.Style.TOGGLE) {
+            body.put("thinking", Map.of("type", level == ThinkingLevel.OFF ? "disabled" : "enabled"));
+        } else {
+            body.put("reasoning_effort", switch (level) {
+                case OFF -> "low";
+                case STANDARD -> "medium";
+                case DEEP -> "high";
+            });
+        }
     }
 
     /**
