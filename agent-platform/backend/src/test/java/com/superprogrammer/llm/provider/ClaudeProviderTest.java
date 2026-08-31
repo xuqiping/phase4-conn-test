@@ -5,6 +5,7 @@ import com.superprogrammer.chat.dto.StreamEvent;
 import com.superprogrammer.llm.dto.LlmMessage;
 import com.superprogrammer.llm.dto.LlmRequest;
 import com.superprogrammer.llm.dto.LlmResponse;
+import com.superprogrammer.llm.dto.ThinkingLevel;
 import com.superprogrammer.llm.dto.TokenUsage;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
@@ -322,5 +323,90 @@ class ClaudeProviderTest {
         assertEquals(110, captured.get().getPromptTokens());
         assertEquals(50L, captured.get().getCachedTokens());
         assertEquals(20, captured.get().getCompletionTokens());
+    }
+
+    // ==================== 修复IX-1 A2：思考强度三档（Anthropic 协议） ====================
+
+    /** 档位响应体统一构造（非流式，返回原始请求 body）。 */
+    private String chatAndCaptureBody(LlmRequest request) throws Exception {
+        server.enqueue(new MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}],\"model\":\"k2.6\",\"usage\":{}}"));
+        provider.chat(request);
+        return server.takeRequest().getBody().readUtf8();
+    }
+
+    @Test
+    void chat_thinkingStandard_shouldSendEnabledWithBudget() throws Exception {
+        String body = chatAndCaptureBody(LlmRequest.builder()
+                .model("k2.6")
+                .messages(List.of(LlmMessage.builder().role("user").content("Hi").build()))
+                .thinkingLevel(ThinkingLevel.STANDARD)
+                .build());
+        assertTrue(body.contains("\"thinking\":{\"type\":\"enabled\",\"budget_tokens\":2048}"),
+                "STANDARD 档须发 enabled+2048，实际=" + body);
+        // max_tokens 默认 8192 > 2048 预算 → 不抬不降
+        assertTrue(body.contains("\"max_tokens\":8192"), "max_tokens 大于预算时不动，实际=" + body);
+    }
+
+    @Test
+    void chat_thinkingDeep_budgetBeyondMaxTokens_shouldClampUp() throws Exception {
+        String body = chatAndCaptureBody(LlmRequest.builder()
+                .model("k2.6")
+                .messages(List.of(LlmMessage.builder().role("user").content("Hi").build()))
+                .thinkingLevel(ThinkingLevel.DEEP)
+                .build());
+        assertTrue(body.contains("\"thinking\":{\"type\":\"enabled\",\"budget_tokens\":8192}"),
+                "DEEP 档须发 enabled+8192，实际=" + body);
+        // Anthropic 硬约束 max_tokens > budget：默认 8192 ≤ 8192 → 抬到 9216
+        assertTrue(body.contains("\"max_tokens\":9216"), "max_tokens 须 clamp 到 budget+1024，实际=" + body);
+    }
+
+    @Test
+    void chat_thinkingDeep_customBudgets_andClampToAnthropicFloor() throws Exception {
+        // 自定义预算 4096/16384：max_tokens 8192 < 16384 → 抬到 17408；低配 512 → clamp 1024
+        ClaudeProvider custom = new ClaudeProvider("claude", server.url("/v1/messages").toString(), "key",
+                List.of("k2.6"), new ObjectMapper(), null, "GLOBAL", 4096, 16384);
+        server.enqueue(new MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}],\"model\":\"k2.6\",\"usage\":{}}"));
+        custom.chat(LlmRequest.builder().model("k2.6")
+                .messages(List.of(LlmMessage.builder().role("user").content("Hi").build()))
+                .thinkingLevel(ThinkingLevel.DEEP).build());
+        String body = server.takeRequest().getBody().readUtf8();
+        assertTrue(body.contains("\"budget_tokens\":16384"), "自定义深度预算须生效，实际=" + body);
+        assertTrue(body.contains("\"max_tokens\":17408"), "max_tokens 须随预算抬到 16384+1024，实际=" + body);
+
+        ClaudeProvider low = new ClaudeProvider("claude", server.url("/v1/messages").toString(), "key",
+                List.of("k2.6"), new ObjectMapper(), null, "GLOBAL", 512, 600);
+        server.enqueue(new MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}],\"model\":\"k2.6\",\"usage\":{}}"));
+        low.chat(LlmRequest.builder().model("k2.6")
+                .messages(List.of(LlmMessage.builder().role("user").content("Hi").build()))
+                .thinkingLevel(ThinkingLevel.STANDARD).build());
+        String lowBody = server.takeRequest().getBody().readUtf8();
+        assertTrue(lowBody.contains("\"budget_tokens\":1024"),
+                "配置低于 Anthropic 下限时须 clamp 到 1024，实际=" + lowBody);
+    }
+
+    @Test
+    void chat_thinkingLevelOff_shouldBeatDisableThinkingPriorityAndSendDisabled() throws Exception {
+        // 优先级锁：thinkingLevel 显式 OFF 与老 disableThinking=true 同发 disabled；显式 STANDARD 压过 disableThinking
+        String body = chatAndCaptureBody(LlmRequest.builder()
+                .model("k2.6")
+                .messages(List.of(LlmMessage.builder().role("user").content("Hi").build()))
+                .thinkingLevel(ThinkingLevel.OFF)
+                .build());
+        assertTrue(body.contains("\"thinking\":{\"type\":\"disabled\"}"), "OFF 档须发 disabled，实际=" + body);
+
+        String body2 = chatAndCaptureBody(LlmRequest.builder()
+                .model("k2.6")
+                .messages(List.of(LlmMessage.builder().role("user").content("Hi").build()))
+                .disableThinking(true)
+                .thinkingLevel(ThinkingLevel.STANDARD)
+                .build());
+        assertTrue(body2.contains("\"thinking\":{\"type\":\"enabled\""),
+                "thinkingLevel 优先级须高于 disableThinking，实际=" + body2);
     }
 }

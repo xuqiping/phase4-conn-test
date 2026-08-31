@@ -24,6 +24,8 @@ public class LlmConfig {
 
     private final LlmProviderService providerService;
     private final ObjectMapper objectMapper;
+    /** 修复IX-1：思考预算（ClaudeProvider 构造注入）。 */
+    private final LlmThinkingProperties thinkingProperties;
     /** CHAT 行注册表——chat/chatStream 路由只在这里找（FR-002/FR-003）。 */
     private volatile List<LlmProviderInterface> staticProviders = Collections.emptyList();
     /** EMBEDDING 行注册表——embed 路由只在这里找，不进 chat 路由/模型列表。 */
@@ -100,7 +102,8 @@ public class LlmConfig {
 
         return switch (resolveProtocol(entity)) {
             case "ANTHROPIC" -> new ClaudeProvider(name, baseUrl, apiKey != null ? apiKey : "", models, objectMapper,
-                    entity.getId(), "GLOBAL");
+                    entity.getId(), "GLOBAL",
+                    thinkingProperties.getBudgetStandard(), thinkingProperties.getBudgetDeep());
             default -> new OpenAICompatibleProvider(name, baseUrl, apiKey != null ? apiKey : "", models, objectMapper,
                     entity.getId(), "GLOBAL");
         };

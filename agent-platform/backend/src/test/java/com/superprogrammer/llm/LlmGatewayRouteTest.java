@@ -88,6 +88,7 @@ class LlmGatewayRouteTest {
         when(llmConfig.getEmbedProviders()).thenReturn(List.of(embedProvider));
 
         gateway = new LlmGateway(llmConfig, userLlmProviderService, llmProviderService, objectMapper,
+                new com.superprogrammer.llm.config.LlmThinkingProperties(),
                 billingService, walletService, groupWalletService,
                 new com.superprogrammer.common.metrics.BizMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()),
                 inflightGate, systemSettingService, ragTraceService);

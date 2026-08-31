@@ -17,7 +17,8 @@ import static org.mockito.Mockito.mock;
 
 class LlmConfigTest {
 
-    private final LlmConfig config = new LlmConfig(mock(LlmProviderService.class), new ObjectMapper());
+    private final LlmConfig config = new LlmConfig(mock(LlmProviderService.class), new ObjectMapper(),
+            new com.superprogrammer.llm.config.LlmThinkingProperties());
 
     @Test
     void createProvider_shouldUseAnthropicProtocolIndependentOfProviderName() {
@@ -47,7 +48,8 @@ class LlmConfigTest {
     @Test
     void initProviders_shouldKeepRerankOutOfChatRegistry() {
         LlmProviderService service = mock(LlmProviderService.class);
-        LlmConfig isolatedConfig = new LlmConfig(service, new ObjectMapper());
+        LlmConfig isolatedConfig = new LlmConfig(service, new ObjectMapper(),
+                new com.superprogrammer.llm.config.LlmThinkingProperties());
         LlmProviderEntity rerank = new LlmProviderEntity();
         rerank.setId(9L);
         rerank.setName("rerank-provider");

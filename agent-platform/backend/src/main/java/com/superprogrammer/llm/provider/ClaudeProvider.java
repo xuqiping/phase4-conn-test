@@ -30,6 +30,9 @@ public class ClaudeProvider implements LlmProviderInterface {
     private final Long providerId;
     /** 计费用：GLOBAL / USER。 */
     private final String providerScope;
+    /** 思考预算（修复IX-1）：STANDARD/DEEP 档 budget_tokens，Anthropic 硬下限 1024。 */
+    private final int thinkingBudgetStandard;
+    private final int thinkingBudgetDeep;
 
     /** 连接建立超时（ms）。云上 DNS/路由抖动时避免线程长期挂起。 */
     private static final int CONNECT_TIMEOUT_MS = 10_000;
@@ -44,14 +47,24 @@ public class ClaudeProvider implements LlmProviderInterface {
         this(name, endpoint, apiKey, models, objectMapper, null, "GLOBAL");
     }
 
-    /** 全参构造：含计费用 providerId + providerScope（FR-计费）。 */
+    /** 全参构造：含计费用 providerId + providerScope（FR-计费）。思考预算取默认（2048/8192）。 */
     public ClaudeProvider(String name, String endpoint, String apiKey, List<String> models,
                           ObjectMapper objectMapper, Long providerId, String providerScope) {
+        this(name, endpoint, apiKey, models, objectMapper, providerId, providerScope, 2048, 8192);
+    }
+
+    /** 全参构造（修复IX-1）：思考预算由 LlmThinkingProperties 注入（LlmConfig/LlmGateway 构造点传入）。 */
+    public ClaudeProvider(String name, String endpoint, String apiKey, List<String> models,
+                          ObjectMapper objectMapper, Long providerId, String providerScope,
+                          int thinkingBudgetStandard, int thinkingBudgetDeep) {
         this.name = name;
         this.supportedModels = models != null ? new HashSet<>(models) : Collections.emptySet();
         this.objectMapper = objectMapper;
         this.providerId = providerId;
         this.providerScope = providerScope != null ? providerScope : "GLOBAL";
+        // 修复IX-1：预算 clamp 到 Anthropic 硬下限 1024（配置误设低于此值时 API 400）
+        this.thinkingBudgetStandard = Math.max(1024, thinkingBudgetStandard);
+        this.thinkingBudgetDeep = Math.max(1024, thinkingBudgetDeep);
         // 全 URL 直发：仅剥尾随斜杠，不做任何路径拼接/版本段剥离
         this.endpoint = endpoint == null ? "" : endpoint.replaceAll("/+$", "");
         // 底层 HttpClient 显式设 connect/response 超时，否则 WebClient 默认无超时，
@@ -175,9 +188,20 @@ public class ClaudeProvider implements LlmProviderInterface {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", request.getModel());
         body.put("max_tokens", request.getMaxTokens());
-        if (Boolean.TRUE.equals(request.getDisableThinking())) {
-            // 内部 JSON 蒸馏类调用：思考与正文共享 max_tokens 预算，不关会被思考吃满致 JSON 截断
+        // 修复IX-1 三档：优先级 thinkingLevel > disableThinking > 不发参数（现状）。
+        ThinkingLevel level = request.getThinkingLevel() != null ? request.getThinkingLevel()
+                : (Boolean.TRUE.equals(request.getDisableThinking()) ? ThinkingLevel.OFF : null);
+        if (level == ThinkingLevel.OFF) {
+            // 内部 JSON 蒸馏类调用同款分支：思考与正文共享 max_tokens 预算，不关会被思考吃满致 JSON 截断
             body.put("thinking", Map.of("type", "disabled"));
+        } else if (level == ThinkingLevel.STANDARD || level == ThinkingLevel.DEEP) {
+            int budget = level == ThinkingLevel.DEEP ? thinkingBudgetDeep : thinkingBudgetStandard;
+            body.put("thinking", Map.of("type", "enabled", "budget_tokens", budget));
+            // Anthropic 硬约束：max_tokens 必须 > budget_tokens——只抬不降（用户/上游已设更大值不动）
+            int maxTokens = request.getMaxTokens() != null ? request.getMaxTokens() : 0;
+            if (maxTokens <= budget) {
+                body.put("max_tokens", budget + 1024);
+            }
         }
 
         String systemPrompt = null;

@@ -46,6 +46,8 @@ public class LlmGateway {
     private final UserLlmProviderService userLlmProviderService;
     private final LlmProviderService llmProviderService;
     private final ObjectMapper objectMapper;
+    /** 修复IX-1：思考预算（用户级 ClaudeProvider 构造注入）。 */
+    private final com.superprogrammer.llm.config.LlmThinkingProperties thinkingProperties;
     /** 计费编排（算价→折算→扣→采，全链吞异常不回归出口）。 */
     private final LlmBillingService billingService;
     /** 钱包：入口预检 requireAffordable（≤0 抛 INSUFFICIENT_POINTS）。 */
@@ -678,7 +680,8 @@ public class LlmGateway {
         // 用户级 override：scope=USER，id=user_llm_providers.id（独立命名空间，靠 scope 区分于全局 llm_providers.id）
         return switch (resolveProtocol(name, protocol)) {
             case "ANTHROPIC" -> new ClaudeProvider(name, baseUrl, apiKey != null ? apiKey : "", models, objectMapper,
-                    userProviderId, "USER");
+                    userProviderId, "USER",
+                    thinkingProperties.getBudgetStandard(), thinkingProperties.getBudgetDeep());
             default -> new OpenAICompatibleProvider(name, baseUrl, apiKey != null ? apiKey : "", models, objectMapper,
                     userProviderId, "USER");
         };

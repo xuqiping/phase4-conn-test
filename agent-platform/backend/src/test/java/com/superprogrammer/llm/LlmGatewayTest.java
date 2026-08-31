@@ -95,6 +95,7 @@ class LlmGatewayTest {
         when(llmConfig.getRerankProviders()).thenReturn(List.of(rerankProvider));
         meterRegistry = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
         gateway = new LlmGateway(llmConfig, userLlmProviderService, llmProviderService, objectMapper,
+                new com.superprogrammer.llm.config.LlmThinkingProperties(),
                 billingService, walletService, groupWalletService, new BizMetrics(meterRegistry), inflightGate, systemSettingService, ragTraceService);
         lenient().when(ragTraceService.beginModelCall(anyString(), anyString(), anyString(), anyString()))
                 .thenReturn(modelCallScope);
@@ -177,6 +178,7 @@ class LlmGatewayTest {
     void chat_withNoMatchingProvider_shouldThrow() {
         when(llmConfig.getProviders()).thenReturn(List.of());
         LlmGateway emptyGateway = new LlmGateway(llmConfig, userLlmProviderService, llmProviderService, objectMapper,
+                new com.superprogrammer.llm.config.LlmThinkingProperties(),
                 billingService, walletService, groupWalletService, new BizMetrics(meterRegistry), inflightGate, systemSettingService, ragTraceService);
         LlmRequest request = LlmRequest.builder().model("unknown").build();
         assertThrows(RuntimeException.class, () -> emptyGateway.chat(request));
