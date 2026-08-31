@@ -15,6 +15,8 @@ export const STORAGE_KEYS = {
   CHAT_SELECTED_TARGET: 'chat_selected_target',
   CHAT_RAG_ENABLED: 'chat_rag_enabled',
   CHAT_WEB_SEARCH_ENABLED: 'chat_web_search_enabled',
+  /** 修复IX-1：思考强度档位（OFF/STANDARD/DEEP；模型未声明 thinkingLevels 时选择器不显示）。 */
+  CHAT_THINKING_LEVEL: 'chat_thinking_level',
   /** 14x-2：智能对话引用知识库（KB 多选，会话级持久化到后端 ChatSession.kbIds）。 */
   CHAT_KB_IDS: 'chat_kb_ids',
   /** 计划5 Step6：五入口「参与项目」选择（null=个人钱包计费；随消息/任务提交传 gid）。 */

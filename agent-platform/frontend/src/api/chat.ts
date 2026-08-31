@@ -41,6 +41,8 @@ export interface ChatSendRequest {
   ragEnabled?: boolean
   /** 联网搜索开关（CHAT 模式，非 null 持久化到会话；ON→生成前联网检索注入）。 */
   webSearchEnabled?: boolean
+  /** 修复IX-1：思考强度档位（后端 @Pattern OFF/STANDARD/DEEP；模型无声明时不传=零参数现状）。 */
+  thinkingLevel?: 'OFF' | 'STANDARD' | 'DEEP'
   /** 二期 P3（FR-201）：聊天附件 fileId 集（≤5，后端归属校验；消息 metadata 记录供文件卡片回显）。 */
   attachmentFileIds?: string[]
   /** 14x-2：本次消息引用的知识库 id 集（后端 ChatRequest.kbIds，持久化到会话；与用户可读权限求交）。 */
@@ -131,7 +133,7 @@ export const chatApi = {
     return request.get<ApiResponse<ChatMessage[]>>(`/chat/sessions/${sessionId}/messages`)
   },
 
-  sendMessage(sessionId: number, data: { message: string; model?: string; ragEnabled?: boolean; webSearchEnabled?: boolean; attachmentFileIds?: string[]; kbIds?: number[]; projectGroupId?: number }) {
+  sendMessage(sessionId: number, data: { message: string; model?: string; ragEnabled?: boolean; webSearchEnabled?: boolean; thinkingLevel?: ChatSendRequest['thinkingLevel']; attachmentFileIds?: string[]; kbIds?: number[]; projectGroupId?: number }) {
     return request.post<ApiResponse<ChatResponse>>(`/chat/sessions/${sessionId}/messages`, data)
   },
 
@@ -140,7 +142,7 @@ export const chatApi = {
   },
 
   // Streaming (SSE)。signal（可选）：停止生成时 abort——fetch/reader 随即抛 AbortError，服务端 send 失败取消上游。
-  streamMessage(sessionId: number, data: { message: string; model?: string; ragEnabled?: boolean; webSearchEnabled?: boolean; attachmentFileIds?: string[]; kbIds?: number[]; projectGroupId?: number }, signal?: AbortSignal) {
+  streamMessage(sessionId: number, data: { message: string; model?: string; ragEnabled?: boolean; webSearchEnabled?: boolean; thinkingLevel?: ChatSendRequest['thinkingLevel']; attachmentFileIds?: string[]; kbIds?: number[]; projectGroupId?: number }, signal?: AbortSignal) {
     const token = getStorage<string>(STORAGE_KEYS.ACCESS_TOKEN) || ''
     return fetch(`/api/chat/sessions/${sessionId}/messages/stream`, {
       method: 'POST',

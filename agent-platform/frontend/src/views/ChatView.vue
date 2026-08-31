@@ -171,6 +171,23 @@
                 @update:value="onSelectWebSearch"
               />
             </div>
+            <!-- 修复IX-1：思考强度选择器（仅模型声明了档位集合才显示——ANTHROPIC 三档全 / OpenAI 系按 provider 声明） -->
+            <div
+              v-if="selectedModelLevels"
+              class="chat-view__rag-toggle"
+              title="思考强度：模型生成前的推理深度。关=零思考直出（快）；标准/深度=先思考再答（更准更慢，深度思考耗时长、积分消耗更高）"
+            >
+              <n-select
+                :value="effectiveThinking ?? undefined"
+                :options="thinkingOptions"
+                :disabled="chatStore.sending"
+                size="small"
+                style="width: 120px"
+                :consistent-menu-width="false"
+                aria-label="思考强度"
+                @update:value="onSelectThinking"
+              />
+            </div>
             <!-- 14x-2：知识库引用多选（CHAT 模式）：选中后每条消息走 RAG 检索注入 + 📎 引用回显 -->
             <div class="chat-view__rag-toggle" title="引用知识库：选中后消息生成前做 RAG 检索注入，回答带 📎 引用来源；多选时与你的可读权限求交">
               <span class="chat-view__rag-label">知识库</span>
@@ -269,6 +286,8 @@ import MemoryRecallScopePopover from '@/components/memory/MemoryRecallScopePopov
 import { useProjectGroupStore } from '@/stores/projectGroup'
 import { useBreakpoints } from '@/composables/useBreakpoints'
 import { knowledgeApi } from '@/api/knowledge'
+import { llmApi } from '@/api/llm'
+import type { AvailableModel } from '@/api/llm'
 
 const route = useRoute()
 const chatStore = useChatStore()
@@ -347,6 +366,50 @@ function onSelectWebSearch(v: 'on' | 'off') {
 }
 
 /**
+ * 修复IX-1：思考强度选择器。档位集合来自所选模型的能力声明
+ * （/llm/user/models/available 的 thinkingLevels：ANTHROPIC=三档全；OpenAI 系按
+ * provider config thinking 声明，未声明=null → 选择器不渲染，请求不带字段=后端零参数现状）。
+ * localStorage 持久化偏好；切换模型后已存档位不在新集合 → 自动回落到集合首档（OFF 优先）。
+ */
+type ThinkingLevelPref = 'OFF' | 'STANDARD' | 'DEEP'
+const thinkingOptions = [
+  { label: '🧠 思考：关', value: 'OFF' },
+  { label: '🧠 思考：标准', value: 'STANDARD' },
+  { label: '🧠 思考：深度', value: 'DEEP' }
+]
+const thinkingPref = ref<ThinkingLevelPref>(getStorage<ThinkingLevelPref>(STORAGE_KEYS.CHAT_THINKING_LEVEL) ?? 'STANDARD')
+const availableModels = ref<AvailableModel[]>([])
+
+/** 当前所选模型的思考档位集合（null/空数组 → null=未声明，选择器不显示）。 */
+const selectedModelLevels = computed<string[] | null>(() => {
+  if (!chatStore.selectedModel) return null
+  const m = availableModels.value.find(x => x.modelId === chatStore.selectedModel)
+  const levels = m?.thinkingLevels
+  return levels && levels.length ? levels : null
+})
+
+/** 实际下发档位：已存偏好不在当前模型档位集合 → 回落集合首档。 */
+const effectiveThinking = computed<ThinkingLevelPref | null>(() => {
+  const levels = selectedModelLevels.value
+  if (!levels) return null
+  return levels.includes(thinkingPref.value) ? thinkingPref.value : (levels[0] as ThinkingLevelPref)
+})
+
+function onSelectThinking(v: 'OFF' | 'STANDARD' | 'DEEP') {
+  thinkingPref.value = v
+  setStorage(STORAGE_KEYS.CHAT_THINKING_LEVEL, v)
+}
+
+async function loadAvailableModels() {
+  try {
+    const res = await llmApi.listAvailableModels()
+    availableModels.value = res.data.data ?? []
+  } catch {
+    /* 拉取失败 → thinkingLevels 未知 → 选择器隐藏，按现状零参数发送 */
+  }
+}
+
+/**
  * 14x-2：知识库引用（CHAT 模式会话级）。后端链路早已就绪（ChatRequest.kbIds → 会话持久化 →
  * RAG 检索证据注入 → CITATION 帧 → MessageBubble 📎 引用渲染），本下拉只补「用户选择」入口。
  * 多选与用户可读权限在后端求交（RagScopeResolver P4 不变式），混排 embedding 模型时取首个模型组。
@@ -402,6 +465,7 @@ onMounted(async () => {
   chatStore.connectWS()
   chatStore.startConflictPoll()
   void loadKbOptions()
+  void loadAvailableModels()
   const sessionId = route.params.sessionId
   if (sessionId) {
     await chatStore.selectSession(Number(sessionId))
@@ -449,13 +513,15 @@ function handleSend(message: string, attachments?: ChatAttachmentRef[]) {
   // webSearchPref：显式传 true/false（null=false 默认关），写 session.web_search_enabled。
   // kbPref（14x-2）：非空时随消息传 kbIds，后端持久化到会话并做 RAG 引用。
   // 二期 P3（FR-201）：附件 fileId 集随消息走，后端归属校验 + metadata 记录（文件卡片回显）。
+  // 修复IX-1：思考档位随消息传（模型未声明 → effective null → undefined 省略=后端零参数现状）。
   chatStore.sendStreamingMessage(
     message,
     ragPref.value ?? undefined,
     webSearchPref.value,
     attachments,
     kbPref.value.length ? kbPref.value : undefined,
-    projectGroupPref.value ?? undefined
+    projectGroupPref.value ?? undefined,
+    effectiveThinking.value ?? undefined
   )
 }
 

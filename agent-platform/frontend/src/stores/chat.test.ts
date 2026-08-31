@@ -213,6 +213,33 @@ describe('chat store', () => {
     })
   })
 
+  // 修复IX-1 A5：思考档位随消息透传（undefined=模型未声明，字段省略走后端零参数现状）
+  it('threads thinking level into the stream request and omits it when undeclared', async () => {
+    vi.mocked(chatApi.streamNewMessage).mockResolvedValue(streamResponse([
+      'data: {"type":"DONE","sessionId":1}',
+      ''
+    ]))
+    const store = useChatStore()
+
+    await store.sendStreamingMessage('深想一步', undefined, undefined, undefined, undefined, undefined, 'DEEP')
+    expect(chatApi.streamNewMessage).toHaveBeenCalledWith(expect.objectContaining({
+      message: '深想一步',
+      thinkingLevel: 'DEEP'
+    }), expect.anything())
+  })
+
+  it('omits thinkingLevel field when not provided', async () => {
+    vi.mocked(chatApi.streamNewMessage).mockResolvedValue(streamResponse([
+      'data: {"type":"DONE","sessionId":1}',
+      ''
+    ]))
+    const store = useChatStore()
+
+    await store.sendStreamingMessage('默认')
+    const payload = vi.mocked(chatApi.streamNewMessage).mock.calls[0][0] as unknown as Record<string, unknown>
+    expect(payload.thinkingLevel).toBeUndefined()
+  })
+
   // 二期 P3（FR-203）：FILE_CARDS 帧（DONE 前到达）→ 并入助手消息 metadata.fileCards
   it('merges FILE_CARDS frames into the assistant message metadata', async () => {
     const card = {

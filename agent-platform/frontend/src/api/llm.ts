@@ -93,6 +93,8 @@ export interface AvailableModel {
   providerName: string
   source: 'global' | 'user'
   defaultModel?: boolean
+  /** 修复IX-1：思考档位集合（ANTHROPIC=三档全；OpenAI 系按 provider config 声明）。null/空=不支持，不显示选择器。 */
+  thinkingLevels?: string[] | null
 }
 
 export const llmApi = {

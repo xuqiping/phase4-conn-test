@@ -58,6 +58,7 @@ export const useChatStore = defineStore('chat', () => {
     attachments?: ChatAttachmentRef[]
     kbIds?: number[]
     projectGroupId?: number
+    thinkingLevel?: 'OFF' | 'STANDARD' | 'DEEP'
   }
   const messageQueue = ref<QueuedChatMessage[]>([])
 
@@ -70,7 +71,7 @@ export const useChatStore = defineStore('chat', () => {
     window.setTimeout(() => {
       if (sending.value || !messageQueue.value.length) return
       const next = messageQueue.value.shift()!
-      void sendStreamingMessage(next.content, next.ragEnabled, next.webSearchEnabled, next.attachments, next.kbIds, next.projectGroupId)
+      void sendStreamingMessage(next.content, next.ragEnabled, next.webSearchEnabled, next.attachments, next.kbIds, next.projectGroupId, next.thinkingLevel)
     }, 300)
   }
 
@@ -193,7 +194,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   // REST send (non-streaming fallback)
-  async function sendMessage(content: string, agentId?: number, workflowId?: number, ragEnabled?: boolean, webSearchEnabled?: boolean, attachments?: ChatAttachmentRef[], kbIds?: number[], projectGroupId?: number) {
+  async function sendMessage(content: string, agentId?: number, workflowId?: number, ragEnabled?: boolean, webSearchEnabled?: boolean, attachments?: ChatAttachmentRef[], kbIds?: number[], projectGroupId?: number, thinkingLevel?: 'OFF' | 'STANDARD' | 'DEEP') {
     const attachmentFileIds = attachments?.map(a => a.fileId)
     sending.value = true
     try {
@@ -209,7 +210,7 @@ export const useChatStore = defineStore('chat', () => {
       let res: { data: { data: ChatResponse } }
 
       if (currentSessionId.value) {
-        res = await chatApi.sendMessage(currentSessionId.value, { message: content, model: selectedModel.value ?? undefined, ragEnabled, webSearchEnabled, attachmentFileIds, kbIds, projectGroupId })
+        res = await chatApi.sendMessage(currentSessionId.value, { message: content, model: selectedModel.value ?? undefined, ragEnabled, webSearchEnabled, thinkingLevel, attachmentFileIds, kbIds, projectGroupId })
       } else {
         const targetPayload = agentId || workflowId
           ? { agentId, workflowId }
@@ -220,6 +221,7 @@ export const useChatStore = defineStore('chat', () => {
           model: selectedModel.value ?? undefined,
           ragEnabled,
           webSearchEnabled,
+          thinkingLevel,
           attachmentFileIds,
           kbIds,
           projectGroupId
@@ -250,10 +252,10 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   // SSE streaming
-  async function sendStreamingMessage(content: string, ragEnabled?: boolean, webSearchEnabled?: boolean, attachments?: ChatAttachmentRef[], kbIds?: number[], projectGroupId?: number) {
+  async function sendStreamingMessage(content: string, ragEnabled?: boolean, webSearchEnabled?: boolean, attachments?: ChatAttachmentRef[], kbIds?: number[], projectGroupId?: number, thinkingLevel?: 'OFF' | 'STANDARD' | 'DEEP') {
     // 9x#11：生成中 → 入队尾，本轮 DONE/ERROR/停止后自动续发（原无闸门：互踩 streamAbortController/缓冲）
     if (sending.value) {
-      messageQueue.value.push({ content, ragEnabled, webSearchEnabled, attachments, kbIds, projectGroupId })
+      messageQueue.value.push({ content, ragEnabled, webSearchEnabled, attachments, kbIds, projectGroupId, thinkingLevel })
       return
     }
     const attachmentFileIds = attachments?.map(a => a.fileId)
@@ -282,6 +284,7 @@ export const useChatStore = defineStore('chat', () => {
             model: selectedModel.value ?? undefined,
             ragEnabled,
             webSearchEnabled,
+            thinkingLevel,
             attachmentFileIds,
             kbIds,
             projectGroupId
@@ -292,6 +295,7 @@ export const useChatStore = defineStore('chat', () => {
             model: selectedModel.value ?? undefined,
             ragEnabled,
             webSearchEnabled,
+            thinkingLevel,
             attachmentFileIds,
             kbIds,
             projectGroupId
@@ -308,7 +312,7 @@ export const useChatStore = defineStore('chat', () => {
       if (!response.ok || !response.body) {
         sending.value = false
         messages.value.pop()
-        return sendMessage(content, undefined, undefined, ragEnabled, webSearchEnabled, attachments, kbIds, projectGroupId)
+        return sendMessage(content, undefined, undefined, ragEnabled, webSearchEnabled, attachments, kbIds, projectGroupId, thinkingLevel)
       }
 
       const reader = response.body.getReader()
@@ -411,7 +415,7 @@ export const useChatStore = defineStore('chat', () => {
                   // 9x#11：后端并发闸拒答（上一轮收尾未完成的竞态）→ 队首重排等续发，不当错误展示
                   if (typeof evt.content === 'string' && evt.content.includes('生成中，请稍候')) {
                     messages.value.pop()
-                    messageQueue.value.unshift({ content, ragEnabled, webSearchEnabled, attachments, kbIds, projectGroupId })
+                    messageQueue.value.unshift({ content, ragEnabled, webSearchEnabled, attachments, kbIds, projectGroupId, thinkingLevel })
                   } else {
                     appendAssistantError(evt.content)
                   }
@@ -433,7 +437,7 @@ export const useChatStore = defineStore('chat', () => {
         streamingFileCards.value = null
         messages.value.pop()
         streamAbortController?.abort()
-        return sendMessage(content, undefined, undefined, ragEnabled, webSearchEnabled, attachments)
+        return sendMessage(content, undefined, undefined, ragEnabled, webSearchEnabled, attachments, kbIds, projectGroupId, thinkingLevel)
       }
     } catch (e) {
       // U6：用户停止（abort 使 read 抛 AbortError）→ 保留部分内容收尾，严禁走 REST 回退（双倍计费）
@@ -448,7 +452,7 @@ export const useChatStore = defineStore('chat', () => {
       streamingFileCards.value = null
       messages.value.pop()
       streamAbortController?.abort()
-      return sendMessage(content, undefined, undefined, ragEnabled, webSearchEnabled, attachments)
+      return sendMessage(content, undefined, undefined, ragEnabled, webSearchEnabled, attachments, kbIds, projectGroupId, thinkingLevel)
     } finally {
       streamAbortController = null
       stoppingStream.value = false
