@@ -422,6 +422,7 @@ import { ancestors, interpolate, findBrokenMentions, uniqueLabel, type MentionRe
 import { mergeSnapshotEdges, resolveEdgesForFlow } from '@/utils/groupEdges'
 import { collectUpstream } from '@/components/canvas/upstream'
 import { cloneEdgesForDuplicate, cloneNodeForDuplicate } from '@/components/canvas/nodeClone'
+import { keepLinksOnCopy } from '@/utils/canvasPrefs'
 import { kindFromMime, sizeLimitError } from '@/utils/mediaLimits'
 import Lightbox from '@/components/canvas/Lightbox.vue'
 import { buildProposals, applyProposals, textLikeFieldOf, type AssociationProposal, type SkippedNode } from '@/utils/autoAssociate'
@@ -2632,13 +2633,17 @@ function onNodesCopied(count: number) {
  * **连线克隆**：原节点入边/出边各克隆一条指向/发自副本（原边不动、handles/样式保留、
  * 自环成副本自环，nodeClone.cloneEdgesForDuplicate）；组员关系仍不带（平节点口径）。
  * appendEdges 内部 emit structure-changed，此处再 scheduleSave 兜底（无边的副本也立即落库）。
+ * 修复IX-2 B2（Q4 拍板）：连线保留开关关 → 副本零边（与 Ctrl+C/V 粘贴同一开关治理，
+ * canvasPrefs singleton——工具条 ⛓ 即时切换两处同生效）。
  */
 function onCloneNode(node: CanvasNode) {
   const partial = cloneNodeForDuplicate(node)
   const newId = boardRef.value?.addNode(partial)
   if (newId) {
-    const cloned = cloneEdgesForDuplicate(node.id, newId, boardRef.value?.getEdges() ?? [])
-    if (cloned.length) boardRef.value?.appendEdges(cloned)
+    if (keepLinksOnCopy.value) {
+      const cloned = cloneEdgesForDuplicate(node.id, newId, boardRef.value?.getEdges() ?? [])
+      if (cloned.length) boardRef.value?.appendEdges(cloned)
+    }
     scheduleSave()
   }
 }

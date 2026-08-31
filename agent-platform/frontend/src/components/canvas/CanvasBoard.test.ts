@@ -1,8 +1,9 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { nextTick } from 'vue'
 import { flushPromises } from '@vue/test-utils'
 import { mount } from '@vue/test-utils'
 import CanvasBoard from './CanvasBoard.vue'
+import { keepLinksOnCopy, setKeepLinksOnCopy } from '@/utils/canvasPrefs'
 
 // vue-flow 真实渲染依赖 DOM 布局（jsdom 缺 ResizeObserver/DOMRect），mock 掉只测 prop wiring。
 // vi.mock 会被提升到文件顶部，stub 定义须放 vi.hoisted 里才在 mock 工厂执行时已初始化。
@@ -72,9 +73,9 @@ describe('CanvasBoard 交互模式（拖拽画布 vs 框选节点）', () => {
 
   it('select 切回 pan：prop 翻转回来；aria-pressed 跟随激活态', async () => {
     const wrapper = mount(CanvasBoard)
-    // aria-pressed 按钮=模式×2 + S5「只看关联」×1（无选中时 disabled）
+    // aria-pressed 按钮=模式×2 + S5「只看关联」×1 + IX-2「连线保留」×1（修复IX-2 新增 ⛓）
     const btns = wrapper.findAll('button[aria-pressed]')
-    expect(btns).toHaveLength(3)
+    expect(btns).toHaveLength(4)
     expect(btns[2].attributes('disabled')).toBeDefined() // 只看关联：无节点选中禁用
     await btns[1].trigger('click')
     await wrapper.find('button[title^="拖拽画布模式"]').trigger('click')
@@ -82,7 +83,7 @@ describe('CanvasBoard 交互模式（拖拽画布 vs 框选节点）', () => {
     expect(flowProps(wrapper).panOnDrag).toBe(true)
     expect(flowProps(wrapper).selectionKeyCode).toBe('Shift')
     const pressed = btns.map(b => b.attributes('aria-pressed'))
-    expect(pressed).toEqual(['true', 'false', 'false'])
+    expect(pressed).toEqual(['true', 'false', 'false', 'true']) // ⛓ 默认开
   })
 })
 
@@ -429,7 +430,8 @@ describe('CanvasBoard · 节点复制粘贴（修复VII VII-1）', () => {
     expect(wrapper.emitted('nodes-copied')?.[0]).toEqual([2])
   })
 
-  it('② Ctrl+V → 节点+2、内边+1 端点重映射到新 id、外边不带；structure-changed 恰 1 次', async () => {
+  it('② Ctrl+V → 节点+2、内边+1 端点重映射到新 id；structure-changed 恰 1 次', async () => {
+    setKeepLinksOnCopy(false) // 修复IX-2：本用例锁「诱导边」口径（跨集边另测）
     const wrapper = mount(CanvasBoard)
     vm(wrapper).loadSnapshot(graph())
     await select(wrapper, ['a', 'b'])
@@ -525,6 +527,126 @@ describe('CanvasBoard · 节点复制粘贴（修复VII VII-1）', () => {
     expect(pasted.data.taskId).toBeUndefined()
     expect(pasted.data.assetId).toBeUndefined()
     expect(pasted.data.status).toBe('success')
+  })
+})
+
+// 修复IX-2（2x 增补④，Q4 拍板）：连线保留总开关——一个开关治理「复制粘贴跨集边」与
+// 「创建副本连线克隆」两处；开关=toolbar ⛓（canvasPrefs singleton，localStorage 持久化，默认开）。
+describe('CanvasBoard · 连线保留开关（修复IX-2 Q4）', () => {
+  type BoardVm10 = ReturnType<typeof boardVm> & {
+    loadSnapshot: (s: { nodes: unknown[]; edges: unknown[] }) => void
+    getSnapshot: () => {
+      nodes: { id: string; position: { x: number; y: number }; data: Record<string, unknown> }[]
+      edges: { id: string; source: string; target: string }[]
+    }
+    undo: () => void
+    canUndo: boolean
+    clipboard: { items: unknown[]; crossEdges: unknown[]; pasteCount: number } | null
+  }
+  const vm = (w: ReturnType<typeof mount>) => boardVm(w) as unknown as BoardVm10
+  const key = (k: string, ctrl = true) =>
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: k, ctrlKey: ctrl, bubbles: true }))
+  const graph = () => ({
+    nodes: [
+      { id: 'a', type: 'text', position: { x: 100, y: 100 }, data: { label: 'A' } },
+      { id: 'b', type: 'text', position: { x: 500, y: 100 }, data: { label: 'B' } },
+      { id: 'out', type: 'text', position: { x: 900, y: 100 }, data: { label: 'OUT' } }
+    ],
+    edges: [
+      { id: 'e1', source: 'a', target: 'b' },
+      { id: 'e2', source: 'b', target: 'out' }
+    ]
+  })
+  const select = async (w: ReturnType<typeof mount>, ids: string[]) => {
+    selState.nodes = ids.map(id => ({ id }))
+    w.getComponent(VueFlowStub).vm.$emit('selection-end')
+    await flushPromises()
+  }
+  const copyAB = async (w: ReturnType<typeof mount>) => {
+    await select(w, ['a', 'b'])
+    key('c')
+  }
+
+  // 每用例显式定开关初值（singleton 跨用例存活，别靠默认）
+  beforeEach(() => setKeepLinksOnCopy(true))
+
+  it('① 开关开（默认）→ 粘贴带跨集边：集内端换新 id、集外端保原 id（b→out 克隆成 newB→out）', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(graph())
+    await copyAB(wrapper)
+    key('v')
+    const snap = vm(wrapper).getSnapshot()
+    expect(snap.edges).toHaveLength(4) // e1+e2 原有 + 内边克隆 + 跨集边克隆
+    const newB = snap.nodes.filter(n => !['a', 'b', 'out'].includes(n.id))
+      .find(n => String(n.data.label).startsWith('B'))!.id
+    const cross = snap.edges.filter(e => e.id !== 'e1' && e.id !== 'e2')
+      .find(e => e.target === 'out' || e.source === 'out')!
+    expect(cross.source).toBe(newB)
+    expect(cross.target).toBe('out')
+  })
+
+  it('② 平行重复边允许并存：跨集克隆 newB→out 与原 e2(b→out) 同存不去重', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(graph())
+    await copyAB(wrapper)
+    key('v')
+    const snap = vm(wrapper).getSnapshot()
+    expect(snap.edges.filter(e => e.target === 'out').length).toBe(2)
+  })
+
+  it('③ 开关关 → 粘贴零跨集边（仅诱导边）；复制时点恒收集（剪贴板 crossEdges 仍在）', async () => {
+    setKeepLinksOnCopy(false)
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(graph())
+    await copyAB(wrapper)
+    expect(vm(wrapper).clipboard!.crossEdges).toHaveLength(1)
+    key('v')
+    const snap = vm(wrapper).getSnapshot()
+    expect(snap.edges).toHaveLength(3) // e1+e2 + 仅内边克隆
+    expect(snap.edges.filter(e => e.id !== 'e1' && e.id !== 'e2').every(
+      e => e.source !== 'out' && e.target !== 'out')).toBe(true)
+  })
+
+  it('④ 粘贴时点判定：复制（开）→ 切关 → 粘贴不带跨集边；再切开再粘贴带', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(graph())
+    await copyAB(wrapper)
+    setKeepLinksOnCopy(false)
+    key('v')
+    expect(vm(wrapper).getSnapshot().edges).toHaveLength(3)
+    setKeepLinksOnCopy(true)
+    key('v')
+    // 第二贴：内边再 +1、跨集边再 +1（out 端共 3 条：e2 + 两贴各一）
+    expect(vm(wrapper).getSnapshot().edges).toHaveLength(5)
+  })
+
+  it('⑤ 悬挂防护：复制后删掉集外节点 out → 开关开粘贴也丢跨集边（不产断边）', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(graph())
+    await copyAB(wrapper)
+    // 复制后 out 被删（连同其边 e2）——loadSnapshot 换成无 out 的图
+    const g2 = graph()
+    g2.nodes = g2.nodes.filter(n => n.id !== 'out')
+    g2.edges = g2.edges.filter(e => e.source !== 'out' && e.target !== 'out')
+    vm(wrapper).loadSnapshot(g2)
+    key('v')
+    const snap = vm(wrapper).getSnapshot()
+    expect(snap.edges).toHaveLength(2) // 原有 e1 + 仅内边克隆（跨集边被悬挂防护丢弃）
+    expect(snap.edges.every(e => e.source !== 'out' && e.target !== 'out')).toBe(true)
+  })
+
+  it('⑥ 工具条 ⛓ 按钮：aria-pressed 跟随开关、点击切换并持久化 localStorage', async () => {
+    setKeepLinksOnCopy(true)
+    const wrapper = mount(CanvasBoard)
+    const btn = wrapper.findAll('button').find(b =>
+      (b.attributes('aria-label') ?? '').includes('连线保留开关'))!
+    expect(btn.attributes('aria-pressed')).toBe('true')
+    await btn.trigger('click')
+    expect(keepLinksOnCopy.value).toBe(false)
+    expect(btn.attributes('aria-pressed')).toBe('false')
+    expect(localStorage.getItem('canvas.keepLinksOnCopy')).toBe('false')
+    await btn.trigger('click')
+    expect(btn.attributes('aria-pressed')).toBe('true')
   })
 })
 

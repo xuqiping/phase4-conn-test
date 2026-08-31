@@ -172,6 +172,18 @@
       >
         🔗
       </button>
+      <!-- 修复IX-2（Q4 拍板）：连线保留总开关——一个开关治理两处（复制粘贴跨集边 / 创建副本连线克隆）。
+           开=副本带连线（允许平行重复边）；关=两处都不保留原节点连线。粘贴按粘贴当下开关态生效。 -->
+      <button
+        class="canvas-board__btn"
+        :class="{ 'canvas-board__btn--active': keepLinksOnCopy }"
+        title="连线保留（复制粘贴/创建副本）：开=副本保留原节点连线（跨集边接入原上下文，允许平行重复边）；关=副本不带原节点连线（全新独立）。粘贴时按当下开关态生效"
+        aria-label="连线保留开关（复制粘贴与创建副本是否保留原节点连线）"
+        :aria-pressed="keepLinksOnCopy"
+        @click="toggleKeepLinksOnCopy()"
+      >
+        ⛓
+      </button>
       <!-- 修复VII（2x 增补②）：一键整理布局——dagre LR 分层；选中时只排选中子图（组整组拉入） -->
       <button
         class="canvas-board__btn"
@@ -211,7 +223,8 @@ import {
   splitSnapshotEdges,
   type GroupRectLike
 } from '@/utils/groupEdges'
-import { buildCopySet, planLabels, planPastePositions, remapEdges, type CanvasClipboard } from './canvasClipboard'
+import { buildCopySet, planLabels, planPastePositions, remapCrossEdges, remapEdges, type CanvasClipboard } from './canvasClipboard'
+import { keepLinksOnCopy, toggleKeepLinksOnCopy } from '@/utils/canvasPrefs'
 import TextNode from './nodes/TextNode.vue'
 import ImageNode from './nodes/ImageNode.vue'
 import VideoNode from './nodes/VideoNode.vue'
@@ -974,6 +987,13 @@ function pasteSubgraph() {
     })
   })
   for (const e of remapEdges(clip, keyToNewId)) edges.value.push(e)
+  // 修复IX-2 B2（Q4 拍板）：粘贴时点判定——开关开 → 跨集边单侧重映射补连线（集内端→新节点，
+  // 集外端保原 id=副本接入原上下文）；关 → 零跨集边。alive 集含刚 push 的新节点（悬挂防护
+  // 只滤「集外端点已删」）。平行重复边允许并存（Q4 口径，不 dedup）。
+  if (keepLinksOnCopy.value && clip.crossEdges.length) {
+    const alive = new Set(nodes.value.map(n => n.id))
+    for (const e of remapCrossEdges(clip, keyToNewId, alive)) edges.value.push(e)
+  }
   scheduleStoreReconcile()
   emit('structure-changed')
   clip.pasteCount++
