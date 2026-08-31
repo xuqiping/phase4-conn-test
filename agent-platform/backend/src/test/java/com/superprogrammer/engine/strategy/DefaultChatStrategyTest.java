@@ -43,4 +43,38 @@ class DefaultChatStrategyTest {
                 req.getMessages().stream().anyMatch(m -> "user".equals(m.getRole()) && "你好".equals(m.getContent()))
         ), any());
     }
+
+    /** 修复IX-1 A1：思考档位 ExecutionContext→LlmRequest 透传（三档值）。 */
+    @Test
+    void execute_shouldPassThinkingLevelThrough() {
+        when(llmGateway.chat(any(), any())).thenReturn(LlmResponse.builder()
+                .content("ok").model("m")
+                .usage(TokenUsage.builder().promptTokens(1).completionTokens(1).totalTokens(2).build())
+                .build());
+
+        ExecutionContext ctx = new ExecutionContext(1L, "CHAT", null, null);
+        ctx.setModel("m");
+        ctx.setThinkingLevel(ThinkingLevel.STANDARD);
+        ctx.addMessage("user", "hi");
+
+        strategy.execute(ctx, "hi");
+
+        verify(llmGateway).chat(argThat(req -> ThinkingLevel.STANDARD == req.getThinkingLevel()), any());
+    }
+
+    /** 修复IX-1 A1：未选档（null）透传 null——锁「不发思考参数」现状基线（坑1）。 */
+    @Test
+    void execute_shouldKeepNullThinkingLevelAsNull() {
+        when(llmGateway.chat(any(), any())).thenReturn(LlmResponse.builder()
+                .content("ok").model("m")
+                .usage(TokenUsage.builder().promptTokens(1).completionTokens(1).totalTokens(2).build())
+                .build());
+
+        ExecutionContext ctx = new ExecutionContext(1L, "CHAT", null, null);
+        ctx.addMessage("user", "hi");
+
+        strategy.execute(ctx, "hi");
+
+        verify(llmGateway).chat(argThat(req -> req.getThinkingLevel() == null), any());
+    }
 }

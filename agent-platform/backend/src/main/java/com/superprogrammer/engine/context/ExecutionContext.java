@@ -24,6 +24,9 @@ public class ExecutionContext {
     /** 项目组归属（计划5 Step4）：send 请求透传；策略构建 LlmRequest 时复制→组池计费。null=个人。 */
     private Long projectGroupId;
 
+    /** 思考强度档位（修复IX-1）：send 请求透传；策略构建 LlmRequest 时复制。null=不发思考参数（现状）。 */
+    private com.superprogrammer.llm.dto.ThinkingLevel thinkingLevel;
+
     public ExecutionContext(Long sessionId, String mode, Long agentId, Long workflowId) {
         this.sessionId = sessionId;
         this.mode = mode;
@@ -51,6 +54,10 @@ public class ExecutionContext {
 
     public void setProjectGroupId(Long projectGroupId) {
         this.projectGroupId = projectGroupId;
+    }
+
+    public void setThinkingLevel(com.superprogrammer.llm.dto.ThinkingLevel thinkingLevel) {
+        this.thinkingLevel = thinkingLevel;
     }
 
     public void addMessage(String role, String content) {

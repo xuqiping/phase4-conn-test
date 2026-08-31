@@ -32,6 +32,8 @@ public class DefaultChatStrategy implements ExecutionStrategy {
                 .sessionId(context.getSessionId() == null ? null : String.valueOf(context.getSessionId()))
                 // 计划5 Step4：组池计费透传（null=个人）
                 .projectGroupId(context.getProjectGroupId())
+                // 修复IX-1：思考强度档位透传（null=不发思考参数，现状）
+                .thinkingLevel(context.getThinkingLevel())
                 .build();
 
         var response = llmGateway.chat(request, context.getUserId());
@@ -56,6 +58,8 @@ public class DefaultChatStrategy implements ExecutionStrategy {
                 .sessionId(context.getSessionId() == null ? null : String.valueOf(context.getSessionId()))
                 // 计划5 Step4：组池计费透传（null=个人）
                 .projectGroupId(context.getProjectGroupId())
+                // 修复IX-1：思考强度档位透传（null=不发思考参数，现状）
+                .thinkingLevel(context.getThinkingLevel())
                 .build();
 
         return llmGateway.chatStream(request, context.getUserId());

@@ -252,6 +252,8 @@ public class ChatSessionService {
         context.setUserId(userId);
         // 计划5 Step4：组池计费归属（消息级，null=个人；账单事实源在 llm_usage_logs.project_group_id）
         context.setProjectGroupId(request.getProjectGroupId());
+        // 修复IX-1：思考强度档位透传（null=不发思考参数，现状）
+        context.setThinkingLevel(resolveThinkingLevel(request.getThinkingLevel()));
         enforceSessionTokenCap(session.getId(), userId);
 
         // 记忆模式开关（V26）：持久化会话级覆盖 + 解析 effective + 线程化给策略
@@ -553,6 +555,21 @@ public class ChatSessionService {
     }
 
     /**
+     * 修复IX-1：请求思考档位字符串→枚举。@Pattern 已挡非法值，此处 try-catch 兜底防御
+     * （绕过 Bean Validation 的内部调用点传坏值时按 null 处理，不炸会话）。
+     */
+    private static com.superprogrammer.llm.dto.ThinkingLevel resolveThinkingLevel(String level) {
+        if (level == null || level.isBlank()) {
+            return null;
+        }
+        try {
+            return com.superprogrammer.llm.dto.ThinkingLevel.valueOf(level);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    /**
      * 全量回复生成（流式）：5x #7 拆出——正常发送与确认点选 ANSWER 共用。
      * 确认 ANSWER 路径直调本方法（天然跳过快检，防确认回复再触发确认死循环），
      * 且不再重插 USER 消息（首轮已落库）。WORKFLOW 人机输入拦截分支保持原位。
@@ -565,6 +582,8 @@ public class ChatSessionService {
         context.setUserId(userId);
         // 计划5 Step4：组池计费归属（消息级，null=个人；账单事实源在 llm_usage_logs.project_group_id）
         context.setProjectGroupId(request.getProjectGroupId());
+        // 修复IX-1：思考强度档位透传（null=不发思考参数，现状）
+        context.setThinkingLevel(resolveThinkingLevel(request.getThinkingLevel()));
         enforceSessionTokenCap(session.getId(), userId);
 
         // 记忆模式开关（V26）：持久化会话级覆盖 + 解析 effective + 线程化给策略

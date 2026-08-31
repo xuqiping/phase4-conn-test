@@ -28,6 +28,11 @@ public class LlmRequest {
      */
     @Builder.Default
     private Boolean disableThinking = false;
+    /**
+     * 思考强度档位（修复IX-1，Q1 三档）。可空且无默认值——null=不发思考参数（现状），
+     * 优先级高于 {@link #disableThinking}（后者保留给记忆内部 JSON 蒸馏调用，零改动）。
+     */
+    private ThinkingLevel thinkingLevel;
     @Builder.Default
     private Boolean stream = false;
     /** 单次非流式请求的局部超时；null 表示使用 Provider 默认值。 */

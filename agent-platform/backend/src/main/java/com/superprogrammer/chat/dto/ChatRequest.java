@@ -1,5 +1,6 @@
 package com.superprogrammer.chat.dto;
 
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
@@ -39,6 +40,13 @@ public class ChatRequest {
 
     /** 联网搜索开关（CHAT 模式，非 null 时持久化到会话；null=不改继承）。ON→LLM 生成前联网检索注入。 */
     private Boolean webSearchEnabled;
+
+    /**
+     * 思考强度档位（修复IX-1，Q1 三档）：OFF=关 / STANDARD=标准 / DEEP=深度。
+     * null=不发思考参数（现状，模型默认）；白名单防任意串透传。
+     */
+    @Pattern(regexp = "OFF|STANDARD|DEEP", message = "思考强度仅支持 OFF/STANDARD/DEEP")
+    private String thinkingLevel;
 
     /** 聊天附件 file_id 集（V69 二期 P3，须为本人的 CHAT 上传）。 */
     @Size(max = 10, message = "附件数量不能超过10个")
