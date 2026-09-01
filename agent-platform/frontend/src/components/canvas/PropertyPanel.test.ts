@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
-import { NInput, NInputNumber, NSelect, NSwitch } from 'naive-ui'
+import { NInput, NInputNumber, NSelect, NSwitch, NUpload } from 'naive-ui'
 import PropertyPanel from './PropertyPanel.vue'
 import type { CanvasNode } from '@/types/canvas'
 
@@ -708,6 +708,78 @@ describe('PropertyPanel · 默认视频模型', () => {
     const wrapper = mount(PropertyPanel, { props: { node } })
     await flushPromises()
     expect(node.data.model).toBe('seedance-2.0')
+    wrapper.unmount()
+  })
+})
+
+// 修复X A1（2x 未解决①）：视频节点上传口 + 三 kind 统一大小预检（mediaLimits 单源）
+describe('PropertyPanel · 修复X A1 视频上传与预检', () => {
+  function mkTyped(type: string, data: Record<string, unknown> = {}): CanvasNode {
+    const node = mkNode({ prompt: 'p', ...data })
+    node.type = type
+    return node
+  }
+
+  /** 经 NUpload change 事件喂 File（绕真实文件选择器）。 */
+  async function pickFile(wrapper: ReturnType<typeof mountPanel>, file: File) {
+    const upload = wrapper.findComponent(NUpload)
+    expect(upload.exists()).toBe(true)
+    await upload.vm.$emit('change', { file: { file } })
+    await wrapper.vm.$nextTick()
+  }
+
+  it('视频节点渲染「上传视频」按钮（accept=video/*）+ 上限提示引常量单源', async () => {
+    const wrapper = mount(PropertyPanel, { props: { node: mkTyped('video') } })
+    await flushPromises()
+    const upload = wrapper.findComponent(NUpload)
+    expect(upload.exists()).toBe(true)
+    expect(upload.props('accept')).toBe('video/*')
+    expect(wrapper.text()).toContain('上传视频')
+    expect(wrapper.text()).toContain('≤50MB')
+    wrapper.unmount()
+  })
+
+  it('合法大小视频 → emit upload 带 node+file（复用既有事件链，零新增）', async () => {
+    const node = mkTyped('video')
+    const wrapper = mount(PropertyPanel, { props: { node } })
+    await flushPromises()
+    const small = new File([new ArrayBuffer(1024)], 'clip.mp4', { type: 'video/mp4' })
+    await pickFile(wrapper, small)
+    const events = wrapper.emitted('upload')
+    expect(events).toHaveLength(1)
+    expect(events![0][0]).toMatchObject({ node, file: small })
+    wrapper.unmount()
+  })
+
+  it('60MB 视频 → 前端 toast 拒：不 emit upload 不发请求', async () => {
+    const wrapper = mount(PropertyPanel, { props: { node: mkTyped('video') } })
+    await flushPromises()
+    const big = new File([new ArrayBuffer(51 * 1024 * 1024)], 'big.mp4', { type: 'video/mp4' })
+    await pickFile(wrapper, big)
+    expect(wrapper.emitted('upload')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('预检三 kind 统一：31MB 图片 / 16MB 音频同样前端拒（原先后端 400）', async () => {
+    const imgPanel = mount(PropertyPanel, { props: { node: mkTyped('image') } })
+    await flushPromises()
+    await pickFile(imgPanel, new File([new ArrayBuffer(31 * 1024 * 1024)], 'big.png', { type: 'image/png' }))
+    expect(imgPanel.emitted('upload')).toBeUndefined()
+    imgPanel.unmount()
+
+    const audioPanel = mount(PropertyPanel, { props: { node: mkTyped('audio', { audioMode: 'upload' }) } })
+    await flushPromises()
+    await pickFile(audioPanel, new File([new ArrayBuffer(16 * 1024 * 1024)], 'big.mp3', { type: 'audio/mpeg' }))
+    expect(audioPanel.emitted('upload')).toBeUndefined()
+    audioPanel.unmount()
+  })
+
+  it('file.type 空串（拖入绕过 accept/罕见浏览器）→ 跳过预检照常 emit（细化2：不误拦）', async () => {
+    const wrapper = mount(PropertyPanel, { props: { node: mkTyped('video') } })
+    await flushPromises()
+    const weird = new File([new ArrayBuffer(60 * 1024 * 1024)], 'noext', { type: '' })
+    await pickFile(wrapper, weird)
+    expect(wrapper.emitted('upload')).toHaveLength(1)
     wrapper.unmount()
   })
 })

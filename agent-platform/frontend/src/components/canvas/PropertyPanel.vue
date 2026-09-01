@@ -366,8 +366,20 @@
         <div v-if="(node.data.errorMsg as string)" class="prop-panel__error">{{ node.data.errorMsg }}</div>
       </template>
 
-      <!-- 视频节点：prompt/比例/时长/分辨率（S13 prompt 支持 @引用） -->
+      <!-- 视频节点：上传（修复X A1，2x 未解决①，产物口径 Q1）/ prompt/比例/时长/分辨率（S13 prompt 支持 @引用） -->
       <template v-else-if="node.type === 'video'">
+        <n-upload
+          :show-file-list="false"
+          accept="video/*"
+          @change="(opts) => onPickFile(opts)"
+        >
+          <n-button size="small" block :loading="running">
+            <template #icon><n-icon :component="CloudUploadOutline" /></template>
+            上传视频
+          </n-button>
+        </n-upload>
+        <!-- 上限引常量单源（KIND_LIMIT_LABEL），防 VD 式「文案说 8MB 实拦 30MB」漂移 -->
+        <div class="prop-panel__hint">本地视频 ≤{{ KIND_LIMIT_LABEL.video }}，上传后作为节点素材（可 @引用 / 抽帧 / 截取）</div>
         <div class="prop-panel__field">
           <label>提示词</label>
           <MentionTextarea
@@ -870,7 +882,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
-  NButton, NCheckbox, NCheckboxGroup, NIcon, NInput, NInputNumber, NModal, NSelect, NSpace, NSwitch, NTag, NUpload
+  NButton, NCheckbox, NCheckboxGroup, NIcon, NInput, NInputNumber, NModal, NSelect, NSpace, NSwitch, NTag, NUpload,
+  useMessage
 } from 'naive-ui'
 import {
   BrushOutline, CloudUploadOutline, CropOutline, PlayOutline, SparklesOutline
@@ -894,6 +907,8 @@ import ReferencePreview from './ReferencePreview.vue'
 import type { CanvasReferenceItem } from '@/utils/canvasVideoAttachments'
 import { uniqueLabel } from '@/utils/interpolate'
 import { RATIOS, deriveWh } from '@/utils/imageSize'
+// 修复X A1（2x 未解决①）：上传预检单源（kindFromMime/sizeLimitError 与拖入链同源）
+import { KIND_LIMIT_LABEL, kindFromMime, sizeLimitError } from '@/utils/mediaLimits'
 
 /** 2x 四轮 S6：五种确定性变换按钮（label/title 面板展示，op 直传后端白名单枚举）。 */
 const IMAGE_TRANSFORMS: ReadonlyArray<{ op: ImageTransformOp; label: string; title: string }> = [
@@ -1247,12 +1262,33 @@ function onRefOpen(payload: { item: CanvasReferenceItem; url: string | null }) {
   }
 }
 
-/** n-upload 文件选中回调：取真实 File 抛给父组件上传（不走 n-upload 默认 XHR）。 */
+/**
+ * n-upload 文件选中回调：取真实 File 抛给父组件上传（不走 n-upload 默认 XHR）。
+ * 修复X A1（2x 未解决①）：统一三 kind 大小预检（image 30MB / audio 15MB / video 50MB，
+ * 与拖入链同源 mediaLimits）——超限 toast 拒不发请求（50MB 传完才被后端 400 体验最差）；
+ * MIME 判不出（file.type 空/拖入绕过 accept）→ 跳过预检直接上抛，交后端闸（细化2，
+ * 不误拦合法文件）。toast 用可选链：单测无 NMessageProvider 时静默降级不炸。
+ */
+// useMessage 在无 NMessageProvider 的环境（单测裸挂载）会直接 throw——try 拿取，
+// 拿不到降级 undefined、toast 走可选链静默（真实页面恒在 provider 内，toast 正常）。
+let message: ReturnType<typeof useMessage> | undefined
+try {
+  message = useMessage()
+} catch {
+  message = undefined
+}
 function onPickFile(opts: { file?: { file?: File | null } } | undefined) {
   const file = opts?.file?.file
-  if (file && props.node) {
-    emit('upload', { node: props.node, file })
+  if (!file || !props.node) return
+  const kind = kindFromMime(file.type)
+  if (kind) {
+    const limitErr = sizeLimitError(kind, file.size, file.name)
+    if (limitErr) {
+      message?.warning(limitErr)
+      return
+    }
   }
+  emit('upload', { node: props.node, file })
 }
 
 /**
