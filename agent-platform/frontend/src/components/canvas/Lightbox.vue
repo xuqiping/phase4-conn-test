@@ -128,8 +128,15 @@ function onPointerUp(e: PointerEvent) {
 }
 
 // ---- Esc 关闭 + 开层聚焦容器（Tab 圈在工具条/关闭钮内） ----
+// 修复X P4 实测（R7）：Esc 事件此前不拦截——window 监听与 n-modal 的 document 监听
+// 依序都收到，一次 Esc 灯箱+选择弹窗连关。改捕获阶段监听+stopPropagation：灯箱开着
+// 时 Esc 只关灯箱（上层弹窗由用户再按一次 Esc 关，符合「逐层退」直觉）。
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') emit('close')
+  if (e.key === 'Escape') {
+    e.stopPropagation()
+    e.preventDefault()
+    emit('close')
+  }
 }
 
 /** 轻量 focus-trap：Tab 在层内可聚焦元素间循环（工具条 4 钮 + 关闭钮）。 */
@@ -147,10 +154,10 @@ function onTab(e: KeyboardEvent) {
 watch(
   () => props.open && props.src,
   (opened) => {
-    window.removeEventListener('keydown', onKeydown)
+    window.removeEventListener('keydown', onKeydown, true)
     if (opened) {
       reset() // 重新打开复位缩放/平移（上次会话态不残留）
-      window.addEventListener('keydown', onKeydown)
+      window.addEventListener('keydown', onKeydown, true) // 捕获阶段：先于 n-modal 的 document 监听（R7 连关修复）
       nextTick(() => boxRef.value?.focus())
     }
   },

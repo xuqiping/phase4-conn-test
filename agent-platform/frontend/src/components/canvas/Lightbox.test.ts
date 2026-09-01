@@ -56,6 +56,21 @@ describe('Lightbox · D1 统一预览（2x-8）', () => {
     expect(wrapper.emitted('close')).toBeTruthy()
   })
 
+  it('修复X P4(R7)：Esc 拦截传播——外层（n-modal 等 document 监听）不连关', () => {
+    const wrapper = mountLb()
+    let outerGot = false
+    const outer = () => { outerGot = true }
+    document.addEventListener('keydown', outer)
+    try {
+      // 捕获阶段 stopPropagation：document 冒泡监听不应再收到（灯箱只关自己，上层弹窗留待再按一次 Esc）
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+      expect(wrapper.emitted('close')).toBeTruthy()
+      expect(outerGot).toBe(false)
+    } finally {
+      document.removeEventListener('keydown', outer)
+    }
+  })
+
   it('点遮罩 → close；点图本体不关（防误触）', async () => {
     const wrapper = mountLb()
     await wrapper.find('.lbx__img').trigger('click')
