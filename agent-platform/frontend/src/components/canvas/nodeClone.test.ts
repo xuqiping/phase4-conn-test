@@ -116,15 +116,18 @@ describe('cloneEdgesForDuplicate（修复VI 2x#3）', () => {
     expect(new Set(ids).size).toBe(3)
   })
 
-  it('修复VIII（VIII-1 ⑧）：组边（伪 id 端点）不带出创建副本——显式兜底过滤', () => {
+  it('修复X（X-3，Q3 拍板）：节点↔组边一并克隆——节点端换 newId、组伪 id 端保原（副本=组外部对端）', () => {
     const edges = [
-      ek({ source: 'group:g1', target: B }), // 组→原节点：伪 id source，过滤
-      ek({ source: B, target: 'group:g2' }), // 原节点→组：伪 id target，过滤
-      ek({ source: A, target: B })           // 普通边：保留克隆
+      ek({ source: 'group:g1', target: B }), // 组→原节点 → group:g1→copy-b
+      ek({ source: B, target: 'group:g2' }), // 原节点→组 → copy-b→group:g2
+      ek({ source: A, target: B }),          // 普通边 → A→copy-b
+      ek({ source: 'group:g1', target: 'group:g2' }) // 组→组：两端皆非 B → 天然不收
     ]
     const cloned = cloneEdgesForDuplicate(B, 'copy-b', edges)
-    expect(cloned).toHaveLength(1)
-    expect(cloned[0].source).toBe(A)
-    expect(cloned[0].target).toBe('copy-b')
+    expect(cloned).toHaveLength(3)
+    expect(cloned.find(e => e.source === 'group:g1')?.target).toBe('copy-b')
+    expect(cloned.find(e => e.target === 'group:g2')?.source).toBe('copy-b')
+    expect(cloned.find(e => e.source === A)?.target).toBe('copy-b')
+    expect(cloned.some(e => e.source === 'group:g1' && e.target === 'group:g2')).toBe(false)
   })
 })
