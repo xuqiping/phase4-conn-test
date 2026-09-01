@@ -2641,7 +2641,10 @@ function onCloneNode(node: CanvasNode) {
   const newId = boardRef.value?.addNode(partial)
   if (newId) {
     if (keepLinksOnCopy.value) {
-      const cloned = cloneEdgesForDuplicate(node.id, newId, boardRef.value?.getEdges() ?? [])
+      // 修复X（X-3）：普通边+组边混合传入——getEdges 只含 v-model 普通边，组边在
+      // getGroupEdges 独立池（plan 原判「getEdges 已含组边」有误，实现轮更正）。
+      const all = [...(boardRef.value?.getEdges() ?? []), ...(boardRef.value?.getGroupEdges() ?? [])]
+      const cloned = cloneEdgesForDuplicate(node.id, newId, all)
       if (cloned.length) boardRef.value?.appendEdges(cloned)
     }
     scheduleSave()

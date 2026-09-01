@@ -650,6 +650,112 @@ describe('CanvasBoard · 连线保留开关（修复IX-2 Q4）', () => {
   })
 })
 
+// 修复X（2x 未解决③，X-3，Q3 拍板）：连线保留模式下组边随 ⛓ 保留——新节点连原组
+// （组=外部对端，不入组员）；组解散丢边；appendEdges 混合批次分流。
+describe('CanvasBoard · 组边随 ⛓ 保留（修复X X-3）', () => {
+  type BoardVm11 = ReturnType<typeof boardVm> & {
+    loadSnapshot: (s: { nodes?: unknown[]; edges?: unknown[]; groups?: unknown[] }) => void
+    getSnapshot: () => {
+      nodes: { id: string; data: Record<string, unknown> }[]
+      edges: { id: string; source: string; target: string; class?: string }[]
+    }
+    getEdges: () => { id: string; source: string; target: string }[]
+    getGroupEdges: () => { id: string; source: string; target: string; class?: string }[]
+    appendEdges: (list: unknown[]) => void
+    ungroupGroup: (id: string) => void
+    undo: () => void
+    clipboard: { crossEdges: unknown[] } | null
+  }
+  const vm = (w: ReturnType<typeof mount>) => boardVm(w) as unknown as BoardVm11
+  const key = (k: string, ctrl = true) =>
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: k, ctrlKey: ctrl, bubbles: true }))
+  const node = (id: string, x = 0, y = 0) => ({ id, type: 'text', position: { x, y }, data: { label: id } })
+  /** b（组外节点）与组 g1 双向连：b→group:g1（聚合）+ group:g1→b（广播）。 */
+  const graph = () => ({
+    nodes: [node('m1'), node('m2', 50, 50), node('b', 600, 0)],
+    edges: [
+      { id: 'ge1', source: 'b', target: 'group:g1' },
+      { id: 'ge2', source: 'group:g1', target: 'b' }
+    ],
+    groups: [{ id: 'g1', name: '组1', memberIds: ['m1', 'm2'], color: '#5b8def' }]
+  })
+  const selectB = async (w: ReturnType<typeof mount>) => {
+    selState.nodes = [{ id: 'b' }]
+    w.getComponent(VueFlowStub).vm.$emit('selection-end')
+    await flushPromises()
+  }
+
+  beforeEach(() => setKeepLinksOnCopy(true))
+
+  it('① 开关开：复制连组节点 b → 粘贴组边两向落组池（新节点连原组），v-model 零伪 id', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(graph())
+    expect(vm(wrapper).getGroupEdges()).toHaveLength(2)
+    await selectB(wrapper)
+    key('c')
+    expect(vm(wrapper).clipboard!.crossEdges).toHaveLength(2)
+    key('v')
+    const ge = vm(wrapper).getGroupEdges()
+    expect(ge).toHaveLength(4) // 原 ge1/ge2 + 两向克隆
+    const newB = vm(wrapper).getSnapshot().nodes.find(n => n.data.label === String('b 2'))!.id
+    expect(ge.some(e => e.source === newB && e.target === 'group:g1')).toBe(true) // 聚合向
+    expect(ge.some(e => e.source === 'group:g1' && e.target === newB)).toBe(true) // 广播向
+    expect(vm(wrapper).getEdges()).toHaveLength(0) // 伪 id 绝不进 v-model
+    // 新节点不入组员（组=外部对端口径）
+    expect(vm(wrapper).getSnapshot().nodes).toHaveLength(4) // m1/m2/b/newB
+  })
+
+  it('② 开关关：粘贴零组边（组池维持原 2 条），复制时点恒收集不变', async () => {
+    setKeepLinksOnCopy(false)
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(graph())
+    await selectB(wrapper)
+    key('c')
+    key('v')
+    expect(vm(wrapper).getGroupEdges()).toHaveLength(2)
+    expect(vm(wrapper).getSnapshot().nodes).toHaveLength(4) // 节点照贴，边不带
+  })
+
+  it('③ 复制后解散组再粘贴 → 组边被悬挂防护丢弃（不产断边）', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(graph())
+    await selectB(wrapper)
+    key('c')
+    vm(wrapper).ungroupGroup('g1') // 解散级联清组边（VIII-1 ⑦）
+    expect(vm(wrapper).getGroupEdges()).toHaveLength(0)
+    key('v')
+    expect(vm(wrapper).getGroupEdges()).toHaveLength(0) // aliveGroups 空 → 两向全丢
+  })
+
+  it('④ Ctrl+Z 一步撤：粘贴的组边随快照齐消（组池回 2）', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(graph())
+    await selectB(wrapper)
+    key('c')
+    key('v')
+    expect(vm(wrapper).getGroupEdges()).toHaveLength(4)
+    vm(wrapper).undo()
+    expect(vm(wrapper).getGroupEdges()).toHaveLength(2)
+  })
+
+  it('⑤ appendEdges 混合批次：普通边进 v-model、组边进组池且剥会话 class（副本链）', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(graph())
+    const before = (wrapper.emitted('structure-changed') ?? []).length
+    vm(wrapper).appendEdges([
+      { id: 'x1', source: 'm1', target: 'm2', type: 'deletable' },
+      { id: 'x2', source: 'b', target: 'group:g1', type: 'deletable', class: 'canvas-edge--selected' }
+    ])
+    expect(vm(wrapper).getEdges().map(e => e.id)).toEqual(['x1'])
+    const ge = vm(wrapper).getGroupEdges()
+    expect(ge).toHaveLength(3)
+    const added = ge.find(e => e.id !== 'ge1' && e.id !== 'ge2')!
+    expect(added.target).toBe('group:g1')
+    expect(added.class).toBeUndefined() // 剥会话 class（loadSnapshot 同口径）
+    expect((wrapper.emitted('structure-changed') ?? []).length - before).toBe(1)
+  })
+})
+
 // 修复VIII（2x 增补：组整体拉线 + 本体松手直连）——组边数据层接线/级联/撤回/v-model 隔离/连接手势分派。
 describe('CanvasBoard · 组边与本体直连（修复VIII VIII-1/2）', () => {
   type BoardVm9 = ReturnType<typeof boardVm> & {

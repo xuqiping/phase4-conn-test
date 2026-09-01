@@ -170,7 +170,7 @@ describe('crossEdges · 修复IX-2 跨集边（Q4）', () => {
       mkEdge('ext2', 'b'),     // 跨集边（target 在集内）
       mkEdge('ext1', 'ext2')   // 两端都在集外 → 不收
     ]
-    const clip = buildCopySet(nodes, edges, ['a', 'b'])
+    const clip = buildCopySet(nodes, edges, ['a', 'b'])!
     expect(clip.crossEdges).toHaveLength(2)
     expect(clip.crossEdges.map(e => `${e.source}>${e.target}`).sort()).toEqual(['a>ext1', 'ext2>b'])
   })

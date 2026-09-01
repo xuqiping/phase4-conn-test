@@ -929,7 +929,8 @@ function onCopyKeydown(e: KeyboardEvent) {
     clipboard.value = null
     return
   }
-  const clip = buildCopySet(nodes.value, edges.value, selected)
+  // 修复X（X-3）：普通边+组边混合传入——组端点跨集边（节点↔组）进剪贴板（plan 细化3）。
+  const clip = buildCopySet(nodes.value, [...edges.value, ...groupEdges.value], selected)
   if (!clip) {
     clipboard.value = null
     return
@@ -990,9 +991,15 @@ function pasteSubgraph() {
   // 修复IX-2 B2（Q4 拍板）：粘贴时点判定——开关开 → 跨集边单侧重映射补连线（集内端→新节点，
   // 集外端保原 id=副本接入原上下文）；关 → 零跨集边。alive 集含刚 push 的新节点（悬挂防护
   // 只滤「集外端点已删」）。平行重复边允许并存（Q4 口径，不 dedup）。
+  // 修复X（X-3）：alive 增组集（groups 粘贴时点快照——复制后解散的组丢边不产断边）；
+  // 产物分流——组端点边进 groupEdges 池（伪 id 绝不进 v-model），普通边照旧。
   if (keepLinksOnCopy.value && clip.crossEdges.length) {
-    const alive = new Set(nodes.value.map(n => n.id))
-    for (const e of remapCrossEdges(clip, keyToNewId, alive)) edges.value.push(e)
+    const aliveNodes = new Set(nodes.value.map(n => n.id))
+    const aliveGroups = new Set(groups.value.map(g => g.id))
+    for (const e of remapCrossEdges(clip, keyToNewId, aliveNodes, aliveGroups)) {
+      if (isGroupEndpoint(e.source) || isGroupEndpoint(e.target)) groupEdges.value.push(e)
+      else edges.value.push(e)
+    }
   }
   scheduleStoreReconcile()
   emit('structure-changed')
@@ -1701,12 +1708,25 @@ function addEdge(source: string, target: string) {
  * 整批一条历史步（副本操作=用户心智一步）；结构变更上抛父落库。
  */
 function appendEdges(list: CanvasEdge[]) {
-  // 修复VIII（VIII-1 ⑧）：组边不带出「创建副本」（伪 id 端点显式兜底过滤，同 nodeClone 口径）
-  const safe = list.filter(e => !isGroupEndpoint(e.source) && !isGroupEndpoint(e.target))
-  if (!safe.length) return
+  // 修复X（X-3）：批次分流——组端点边（副本连原组）进组池（浅拷贝剥会话 class，
+  // loadSnapshot :1537 同口径，防选中态烤进新组边）；普通边照旧进 v-model。
+  // store 对账只跑普通边（组边不进 v-model）；structure-changed 无论哪池都上抛
+  // （getSnapshot 合并组边落库）。
+  const flowEdges: CanvasEdge[] = []
+  const groupBatch: CanvasEdge[] = []
+  for (const e of list) {
+    if (isGroupEndpoint(e.source) || isGroupEndpoint(e.target)) {
+      const { class: _sessionClass, ...rest } = e
+      groupBatch.push(rest as CanvasEdge)
+    } else {
+      flowEdges.push(e)
+    }
+  }
+  if (!flowEdges.length && !groupBatch.length) return
   pushHistory('edge')
-  for (const e of safe) edges.value.push({ ...e })
-  scheduleStoreReconcile()
+  for (const e of flowEdges) edges.value.push({ ...e })
+  for (const e of groupBatch) groupEdges.value.push({ ...e })
+  if (flowEdges.length) scheduleStoreReconcile()
   emit('structure-changed')
 }
 
