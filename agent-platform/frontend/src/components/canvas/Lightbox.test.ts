@@ -62,13 +62,21 @@ describe('Lightbox · D1 统一预览（2x-8）', () => {
     const outer = () => { outerGot = true }
     document.addEventListener('keydown', outer)
     try {
-      // 捕获阶段 stopPropagation：document 冒泡监听不应再收到（灯箱只关自己，上层弹窗留待再按一次 Esc）
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+      // 必须从文档内元素派发（bubbles）才走「window 捕获→document 冒泡」真实路径：
+      // 直接 dispatch 到 window 传播路径只含 window，修不修代码 document 监听都收不到（review 指出原用例空洞）
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
       expect(wrapper.emitted('close')).toBeTruthy()
       expect(outerGot).toBe(false)
     } finally {
       document.removeEventListener('keydown', outer)
     }
+  })
+
+  it('review 补：开态卸载即摘监听（路由切走不泄漏吞 Esc）', async () => {
+    const wrapper = mountLb()
+    wrapper.unmount()
+    // 卸载后派发不应抛错（监听已随 onBeforeUnmount 摘除，window 捕获里不再引用已卸组件）
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
   })
 
   it('点遮罩 → close；点图本体不关（防误触）', async () => {

@@ -232,6 +232,7 @@ A/B/C 三轮完全并行无依赖（改动文件零交集）；D 串行最后。
 | 2026-09-01 | C 轮完成（C1=85d9ffd1、C2=45723976；全量 1014/1014、tsc 0 错）。一处实现更正：C2 伪代码「CanvasView onCloneNode 零改动——getEdges() 已含组边」判断有误——`getEdges()` 实只返 v-model 普通边（CanvasBoard:1644-1646），组边在 `getGroupEdges()` 独立池；已改传 `[...getEdges(), ...getGroupEdges()]` 并同步 C1 cloneEdgesForDuplicate 注释 | plan 对既有 API 断言与源码不符；照抄则副本组边静默丢失 |
 | 2026-09-01 | D 轮完成：feature-map/user-ops「2026-09-01 增补（修复X）」节 + 速查表/help 核对（run-guide 速查表无画布资产行不动；帮助中心仅 21-assets-basics「从库选择」补一行预览说明，15-video-edit 是剪辑页另一功能不动）+ R1-R15 测试方案 + 问题单 2x 三项挂账 + IX 测试方案 P10 口径变更注 + 安全清单五项勾验 | Chunk D 收尾 |
 | 2026-09-01 | P4 冒烟 27/27（`docs/run-guide/smoke-x.mjs`，R1-R3/R5-R9/R11-R15 核心项自动化）；**冒烟修复 1 bug**：Lightbox Esc 不拦传播→一次 Esc 连关灯箱+n-modal（R7 预期不符）——键盘监听改 window 捕获+stopPropagation 逐层退，+1 回归用例，全量 1019/1019+tsc 0 | P4 Run（R7 连关不在 plan 预判坑内——层叠 Esc 语义实测才现形） |
+| 2026-09-01 | 交叉 review（第二 AI）8 不变量零违例 + 2 🟡 修复：① Lightbox 开态卸载不摘 window 捕获监听（全站吞 Esc）→ onBeforeUnmount 摘；② R7 回归用例空洞（dispatch 到 window 路径不含 document）→ 改 body 派发 bubbles:true 走真实捕获→冒泡路径，红绿双验（去捕获必红 1/11、复原绿 11/11） | P4 review |
 
 ## 术语表
 

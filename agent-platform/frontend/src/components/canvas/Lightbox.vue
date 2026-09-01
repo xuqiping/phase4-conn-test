@@ -56,7 +56,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 const props = defineProps<{
   /** 开合（true 且 src 非空才挂载层）。 */
@@ -163,6 +163,10 @@ watch(
   },
   { immediate: true }
 )
+
+// review 补：开态下被直接卸载（路由切走随父组件消亡）watch 不会再触发——
+// 捕获监听若不摘会全站吞 Esc（n-modal 关闭/画布清多选全失效）直至刷新。
+onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown, true))
 
 defineExpose({ scale, tx, ty, reset, zoomBy })
 </script>
