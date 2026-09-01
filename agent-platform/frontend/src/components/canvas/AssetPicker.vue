@@ -62,22 +62,14 @@
         {{ emptyText }}
       </div>
       <div v-else class="picker__list">
-        <div
+        <!-- 修复X B2：行改版交 AssetPickerRow（四态缩略+交互三分离）；选定链 onPick 仍在本组件 -->
+        <AssetPickerRow
           v-for="a in assets"
           :key="a.id"
-          class="picker__row"
-          :class="{ 'picker__row--archived': a.status === 'ARCHIVED' }"
-          @click="onPick(a)"
-        >
-          <div class="picker__row-main">
-            <div class="picker__row-name">{{ a.name }}</div>
-            <div class="picker__row-meta">
-              v{{ a.currentVersion }} · {{ statusLabel(a.status) }}
-              <span v-if="a.roleKeys?.length"> · {{ a.roleKeys.join('/') }}</span>
-            </div>
-          </div>
-          <n-button size="small" type="primary" tertiary :loading="pickingId === a.id">选择</n-button>
-        </div>
+          :asset="a"
+          :picking="pickingId === a.id"
+          @pick="onPick"
+        />
       </div>
     </n-spin>
   </n-modal>
@@ -87,10 +79,11 @@
 import { computed, ref, watch } from 'vue'
 import { NButton, NButtonGroup, NInput, NModal, NSelect, NSpin, useMessage } from 'naive-ui'
 import { projectApi, publicPoolApi, assetApi, assetBridgeApi } from '@/api/assets'
+import AssetPickerRow from './AssetPickerRow.vue'
 import type { PageResult } from '@/api/admin'
 import type { AxiosResponse } from 'axios'
 import type {
-  AssetMediaType, AssetProjectVO, AssetStatus, AssetVO, PublicProjectSummaryVO, ResolveVO
+  AssetMediaType, AssetProjectVO, AssetVO, PublicProjectSummaryVO, ResolveVO
 } from '@/types/asset'
 import type { CanvasNode } from '@/types/canvas'
 
@@ -129,8 +122,7 @@ const mediaType = computed<AssetMediaType | undefined>(() =>
 )
 const kindLabel = computed(() => (props.node?.type ? KIND_LABEL[props.node.type] ?? '资产' : '资产'))
 
-const STATUS_LABEL: Record<AssetStatus, string> = { DRAFT: '草稿', LOCKED: '已定稿', ARCHIVED: '已归档' }
-function statusLabel(s: AssetStatus) { return STATUS_LABEL[s] ?? s }
+// 状态/字标渲染归 AssetPickerRow（修复X B2 行改版）
 
 const source = ref<PickerSource>('local')
 const projects = ref<AssetProjectVO[]>([])
@@ -401,43 +393,5 @@ defineExpose({
   max-height: 420px;
   overflow-y: auto;
 }
-
-.picker__row {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-2);
-  padding: var(--spacing-2) var(--spacing-3);
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--radius-base);
-  cursor: pointer;
-  transition: border-color var(--duration-instant) var(--ease-in-out);
-
-  &:hover {
-    border-color: var(--color-primary);
-    background: var(--color-primary-light);
-  }
-
-  &--archived {
-    opacity: 0.55;
-  }
-}
-
-.picker__row-main {
-  flex: 1;
-  min-width: 0;
-}
-
-.picker__row-name {
-  font-size: var(--font-size-sm);
-  color: var(--color-text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.picker__row-meta {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary);
-  margin-top: 2px;
-}
+/* 行样式归 AssetPickerRow（修复X B2） */
 </style>
