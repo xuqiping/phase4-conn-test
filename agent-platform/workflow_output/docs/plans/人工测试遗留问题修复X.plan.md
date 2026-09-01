@@ -192,11 +192,11 @@ A/B/C 三轮完全并行无依赖（改动文件零交集）；D 串行最后。
 
 ## 安全检查清单（P3 逐项验）
 
-- [ ] 上传链零新增面：前端预检纯体验，后端 `canvasApi.upload` 鉴权+KIND_MAX_BYTES 双闸不动（A1）
-- [ ] `/api/files/{id}` blob 预览通道走既有 auth 头注入（axios 实例），picker 懒加载不绕鉴权（B2）
-- [ ] 无新端点/无新请求参数/无新 npm·maven 依赖（全轮）
-- [ ] picker resolve 链（选择按钮）现状不动，无越权面变化（B2）
-- [ ] 组边纳入纯前端数据流，快照后端透传不变（C 组）
+- [x] 上传链零新增面：前端预检纯体验，后端 `canvasApi.upload` 鉴权+KIND_MAX_BYTES 双闸不动（A1）
+- [x] `/api/files/{id}` blob 预览通道走既有 auth 头注入（axios 实例），picker 懒加载不绕鉴权（B2）
+- [x] 无新端点/无新请求参数/无新 npm·maven 依赖（全轮）
+- [x] picker resolve 链（选择按钮）现状不动，无越权面变化（B2）
+- [x] 组边纳入纯前端数据流，快照后端透传不变（C 组）
 
 ## 功能联动点清单（只列正向，边界含反向/半选/批量）
 
@@ -230,6 +230,7 @@ A/B/C 三轮完全并行无依赖（改动文件零交集）；D 串行最后。
 | 2026-09-01 | A 轮完成（97d6547f）：A1+A2 全绿（vitest 56/56+全量 999/999、tsc 0 错） | — |
 | 2026-09-01 | B 轮完成（B1=9c0cf4c6、B2=5c7c6625；全量 1009/1009、tsc 0 错）。三处实现偏差：① B2 行拆出独立 `AssetPickerRow.vue`（plan 原列仅 AssetPicker.vue）——useLazyFilePreview 为组合式，v-for 行内无法每行一实例，须子组件承载（plan 坑点7「每行一个实例」即此义）；② 音/文缩略渲染为静态 div 非按钮——无灯箱语义不设可点击假按钮（a11y），键盘路径走「选择」button+图/视真按钮 Enter；③ 失败/未就绪回落统一类型字标（不显「失败」二字，与「无 fileId」同口径，AssetPickerMediaPreview 范式延续） | 组合式实例边界 + a11y 诚实交互 + 回落口径统一 |
 | 2026-09-01 | C 轮完成（C1=85d9ffd1、C2=45723976；全量 1014/1014、tsc 0 错）。一处实现更正：C2 伪代码「CanvasView onCloneNode 零改动——getEdges() 已含组边」判断有误——`getEdges()` 实只返 v-model 普通边（CanvasBoard:1644-1646），组边在 `getGroupEdges()` 独立池；已改传 `[...getEdges(), ...getGroupEdges()]` 并同步 C1 cloneEdgesForDuplicate 注释 | plan 对既有 API 断言与源码不符；照抄则副本组边静默丢失 |
+| 2026-09-01 | D 轮完成：feature-map/user-ops「2026-09-01 增补（修复X）」节 + 速查表/help 核对（run-guide 速查表无画布资产行不动；帮助中心仅 21-assets-basics「从库选择」补一行预览说明，15-video-edit 是剪辑页另一功能不动）+ R1-R15 测试方案 + 问题单 2x 三项挂账 + IX 测试方案 P10 口径变更注 + 安全清单五项勾验 | Chunk D 收尾 |
 
 ## 术语表
 
