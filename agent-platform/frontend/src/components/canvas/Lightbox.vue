@@ -164,7 +164,10 @@ defineExpose({ scale, tx, ty, reset, zoomBy })
 .lbx {
   position: fixed;
   inset: 0;
-  z-index: 2000;
+  /* 修复X B1（2x 未解决②）：2000→3000——从库选择弹窗（n-modal，teleport body 默认 2000+ 栈）
+     内开灯箱需盖住弹窗；AnnotateOverlay/FocusEditOverlay 的 2000 属编辑态独占交互，
+     与灯箱不同屏共存不冲突。 */
+  z-index: 3000;
   background: rgba(0, 0, 0, 0.92);
   display: flex;
   align-items: center;

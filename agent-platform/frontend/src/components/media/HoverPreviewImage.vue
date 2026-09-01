@@ -17,22 +17,36 @@
     </template>
     <!-- previewSrc 由调用方传入「已加载的 objectURL」→ 悬浮零请求（4x#3/6x#1 拍板） -->
     <template v-if="previewSrc">
-      <img
+      <!-- 修复X B1（2x 未解决②）：kind=video → 首帧放大（preload=metadata 解 objectURL
+           出首帧，无网络请求；无尺寸行——video 无 naturalWidth 语义） -->
+      <video
+        v-if="kind === 'video'"
         :src="previewSrc"
         class="hover-preview-image__big"
-        :alt="alt"
-        @load="onImgLoad"
+        preload="metadata"
+        muted
+        playsinline
+        :aria-label="alt"
       />
-      <!-- 规格 §4.1：浮层含原图尺寸提示（img 加载后取 naturalWidth/Height） -->
-      <div v-if="dims" class="hover-preview-image__dims">{{ dims }}</div>
+      <template v-else>
+        <img
+          :src="previewSrc"
+          class="hover-preview-image__big"
+          :alt="alt"
+          @load="onImgLoad"
+        />
+        <!-- 规格 §4.1：浮层含原图尺寸提示（img 加载后取 naturalWidth/Height） -->
+        <div v-if="dims" class="hover-preview-image__dims">{{ dims }}</div>
+      </template>
     </template>
     <span v-else class="hover-preview-image__empty">预览未加载</span>
   </NPopover>
 </template>
 
 <script setup lang="ts">
-// 悬浮放大预览（共享组件）：包住任意触发元素，停留 delay(默认300ms) 弹大图浮层，移出即关。
-// 快速划过不弹（防抖）；unmount 清计时器防泄漏。画布 @参考预览、反推关键帧时间轴复用。
+// 悬浮放大预览（共享组件，图/视双态）：包住任意触发元素，停留 delay(默认300ms) 弹大图/首帧
+// 浮层，移出即关。快速划过不弹（防抖）；unmount 清计时器防泄漏。画布 @参考预览、反推关键帧
+// 时间轴、从库选择行（修复X）复用。文件名沿用 Image（历史调用 5 处，kind 默认 image 向后兼容）。
 import { onBeforeUnmount, ref } from 'vue'
 import { NPopover } from 'naive-ui'
 
@@ -42,7 +56,9 @@ const props = withDefaults(defineProps<{
   alt?: string
   /** 停留多少 ms 才弹（默认 300） */
   delay?: number
-}>(), { alt: '预览', delay: 300 })
+  /** 修复X B1：预览媒体形态——image（默认，向后兼容）弹大图+尺寸行；video 弹首帧 */
+  kind?: 'image' | 'video'
+}>(), { alt: '预览', delay: 300, kind: 'image' })
 
 /** 原图尺寸提示（如 1920×1080），img onload 后填充；换图自动清空待重测。 */
 const dims = ref('')

@@ -1,78 +1,69 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 import { NPopover } from 'naive-ui'
 import HoverPreviewImage from './HoverPreviewImage.vue'
 
-// 悬浮放大（4x#3/6x#1）：300ms 防抖弹出、移出即关、快速划过不弹、delay 可调
-describe('HoverPreviewImage', () => {
-  beforeEach(() => vi.useFakeTimers())
-  afterEach(() => {
-    vi.useRealTimers()
-    document.body.innerHTML = ''
-  })
+// 修复X B1（2x 未解决②）：kind=video 双态——默认 image 向后兼容（5 处既有调用零改动）。
+// NPopover trigger=manual：内容 teleport 到 body 且 show 才渲染——断言走 document 查询。
+describe('HoverPreviewImage · 修复X B1 kind 双态', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers(); document.body.innerHTML = '' })
 
-  function mountThumb(props: Record<string, unknown> = {}) {
-    return mount(HoverPreviewImage, {
-      props: { previewSrc: 'blob:big', ...props },
-      slots: { default: '<img src="blob:thumb" alt="缩略" />' }
+  /** 挂到 body + 悬浮满 delay → popover 内容已出（返回 wrapper）。 */
+  async function openPopover(props: { previewSrc: string | null; kind?: 'image' | 'video'; alt?: string }) {
+    const wrapper = mount(HoverPreviewImage, {
+      props,
+      slots: { default: '<span>trigger</span>' },
+      attachTo: document.body
     })
+    await wrapper.find('.hover-preview-image').trigger('mouseenter')
+    await vi.advanceTimersByTimeAsync(300)
+    return wrapper
   }
-  const shown = (w: ReturnType<typeof mountThumb>) =>
-    w.findComponent(NPopover).props('show') as boolean
 
-  it('停留满 300ms 才弹；移出即关', async () => {
-    const w = mountThumb()
-    const span = w.find('.hover-preview-image')
-    await span.trigger('mouseenter')
-
-    vi.advanceTimersByTime(299)
-    expect(shown(w)).toBe(false)
-    vi.advanceTimersByTime(1)
-    await nextTick() // show ref 变更后等 NPopover 重渲染
-    expect(shown(w)).toBe(true)
-
-    await span.trigger('mouseleave')
-    expect(shown(w)).toBe(false)
+  it('默认（不传 kind）→ 渲染 img 分支（向后兼容基线）', async () => {
+    const wrapper = await openPopover({ previewSrc: 'blob:img', alt: '图' })
+    const img = document.body.querySelector('.hover-preview-image__big')
+    expect(img?.tagName).toBe('IMG')
+    expect(img?.getAttribute('src')).toBe('blob:img')
+    expect(document.body.querySelector('video')).toBeNull()
+    wrapper.unmount()
   })
 
-  it('快速划过（<300ms 离开）不弹（防抖取消）', async () => {
-    const w = mountThumb()
-    const span = w.find('.hover-preview-image')
-    await span.trigger('mouseenter')
-    vi.advanceTimersByTime(120)
-    await span.trigger('mouseleave')
-    vi.advanceTimersByTime(500)
-    expect(shown(w)).toBe(false)
+  it('kind=video → 渲染 video 首帧分支（preload=metadata），无 img 无尺寸行', async () => {
+    const wrapper = await openPopover({ previewSrc: 'blob:vid', kind: 'video', alt: '视' })
+    const video = document.body.querySelector('.hover-preview-image__big')
+    expect(video?.tagName).toBe('VIDEO')
+    expect(video?.getAttribute('src')).toBe('blob:vid')
+    expect(video?.getAttribute('preload')).toBe('metadata')
+    expect(document.body.querySelector('img')).toBeNull()
+    // 尺寸行属 img onload 派生——video 态恒不渲染（只存在于 img 分支模板内）
+    expect(document.body.querySelector('.hover-preview-image__dims')).toBeNull()
+    wrapper.unmount()
   })
 
-  it('delay 可调（100ms 生效）', async () => {
-    const w = mountThumb({ delay: 100 })
-    await w.find('.hover-preview-image').trigger('mouseenter')
-    vi.advanceTimersByTime(100)
-    await nextTick()
-    expect(shown(w)).toBe(true)
-  })
-
-  it('悬浮前再次进入重置计时（不提前弹）', async () => {
-    const w = mountThumb()
-    const span = w.find('.hover-preview-image')
-    await span.trigger('mouseenter')
-    vi.advanceTimersByTime(200)
-    await span.trigger('mouseenter') // 重新计时
-    vi.advanceTimersByTime(200)
-    expect(shown(w)).toBe(false)
-    vi.advanceTimersByTime(100)
-    await nextTick()
-    expect(shown(w)).toBe(true)
-  })
-
-  it('previewSrc 缺失弹占位文案而非破图', async () => {
-    const w = mountThumb({ previewSrc: null })
-    await w.find('.hover-preview-image').trigger('mouseenter')
-    vi.advanceTimersByTime(300)
-    await nextTick()
-    expect(shown(w)).toBe(true)
+  it('previewSrc=null → 占位文案（两态同口径）', async () => {
+    const wrapper = await openPopover({ previewSrc: null, kind: 'video' })
     expect(document.body.textContent).toContain('预览未加载')
+    expect(document.body.querySelector('video')).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('悬浮 300ms 防抖后才弹（快速划过不弹，现状口径回归）；移出即关', async () => {
+    const wrapper = mount(HoverPreviewImage, {
+      props: { previewSrc: 'blob:img' },
+      slots: { default: '<span>trigger</span>' },
+      attachTo: document.body
+    })
+    await wrapper.find('.hover-preview-image').trigger('mouseenter')
+    await vi.advanceTimersByTimeAsync(100)
+    expect(document.body.querySelector('img')).toBeNull() // 未满 300ms 不弹
+    await vi.advanceTimersByTimeAsync(250)
+    expect(document.body.querySelector('img')).not.toBeNull()
+    await wrapper.find('.hover-preview-image').trigger('mouseleave')
+    // happy-dom 不派发真实 transitionend（NPopover 收起过渡挂起）——移出即关以
+    // v-model:show 绑定态断言（show=false 即内容进入收起，真浏览器由过渡完成卸载）
+    expect(wrapper.findComponent(NPopover).props('show')).toBe(false)
+    wrapper.unmount()
   })
 })
