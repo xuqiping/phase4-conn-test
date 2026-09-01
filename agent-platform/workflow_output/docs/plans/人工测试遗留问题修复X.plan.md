@@ -229,6 +229,7 @@ A/B/C 三轮完全并行无依赖（改动文件零交集）；D 串行最后。
 | 2026-09-01 | 建立 plan（A/B/C/D 四 chunk，A1-A2/B1-B3/C1-C3/D；critique 后三处实现期细化：音频行布局/预检 MIME 判空/buildCopySet 签名不变） | 修复X 规格过审进入 P2 |
 | 2026-09-01 | A 轮完成（97d6547f）：A1+A2 全绿（vitest 56/56+全量 999/999、tsc 0 错） | — |
 | 2026-09-01 | B 轮完成（B1=9c0cf4c6、B2=5c7c6625；全量 1009/1009、tsc 0 错）。三处实现偏差：① B2 行拆出独立 `AssetPickerRow.vue`（plan 原列仅 AssetPicker.vue）——useLazyFilePreview 为组合式，v-for 行内无法每行一实例，须子组件承载（plan 坑点7「每行一个实例」即此义）；② 音/文缩略渲染为静态 div 非按钮——无灯箱语义不设可点击假按钮（a11y），键盘路径走「选择」button+图/视真按钮 Enter；③ 失败/未就绪回落统一类型字标（不显「失败」二字，与「无 fileId」同口径，AssetPickerMediaPreview 范式延续） | 组合式实例边界 + a11y 诚实交互 + 回落口径统一 |
+| 2026-09-01 | C 轮完成（C1=85d9ffd1、C2=45723976；全量 1014/1014、tsc 0 错）。一处实现更正：C2 伪代码「CanvasView onCloneNode 零改动——getEdges() 已含组边」判断有误——`getEdges()` 实只返 v-model 普通边（CanvasBoard:1644-1646），组边在 `getGroupEdges()` 独立池；已改传 `[...getEdges(), ...getGroupEdges()]` 并同步 C1 cloneEdgesForDuplicate 注释 | plan 对既有 API 断言与源码不符；照抄则副本组边静默丢失 |
 
 ## 术语表
 
