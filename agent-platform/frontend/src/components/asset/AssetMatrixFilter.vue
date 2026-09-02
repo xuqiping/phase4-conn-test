@@ -108,7 +108,7 @@
           <button
             type="button"
             class="matrix-filter__role"
-            :class="{ 'matrix-filter__role--active': activeRole === r.key }"
+            :class="{ 'matrix-filter__role--active': activeRole === r.key || r.children.includes(activeRole) }"
             @click="selectRole(r.key)"
           >
             <span class="matrix-filter__chip-label">{{ r.key }}</span>

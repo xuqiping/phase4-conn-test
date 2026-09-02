@@ -135,7 +135,7 @@ E 文档收尾+测试方案+问题单（依赖 A3+B4+C5+D5 全绿）
 
 ## Chunk C · 叙事角色两级词汇（XI-3，P0）
 
-### C1 后端词汇地基：RoleVocab + 迁移 + 双容错 + normalize
+### C1 后端词汇地基：RoleVocab + 迁移 + 双容错 + normalize ✅ 2026-09-02 3cd40307（V169；实现注：迁移除 string→对象变换外补列 DEFAULT 两级五桶+COMMENT；「一级撞已收子类→400」为 normalize 增设分支；testcontainer/H2 迁移验证未做→改 RoleVocab 纯单测+本地 PG 实测挪 C5）
 
 - **目标**：词汇 shape 切 `[{key,children}]`；存量迁移；读/入参双容错；全局唯一约束。
 - **动作**（伪代码）：
@@ -155,7 +155,7 @@ E 文档收尾+测试方案+问题单（依赖 A3+B4+C5+D5 全绿）
 - **依赖**：无
 - **验证**：后端测试——迁移后存量行变对象形状（testcontainer/H2 手动 SQL 验证或本地 PG 实测）；parseRoles 双 shape（string 数组/对象数组/混合）；normalize 重名拒（子撞父/子撞他父子类）；空词汇拒；loadNarrativeRoles 扁平全集含子类；syncRoleLinks 挂子类合法/挂未知 key 拒。
 
-### C2 后端行为：reassign 两级 + 筛选展开 + 分镜展开
+### C2 后端行为：reassign 两级 + 筛选展开 + 分镜展开 ✅ 2026-09-02 e800c0ed（实现注：reassign 增「项目资产 id 预筛」——role_links 无 projectId 列，须先圈本项目 asset_id 再删/迁，防跨项目同名 key 误伤）
 
 - **目标**：删子类归父/删一级归通用；一级筛选含子类；一键分镜目录含子类。
 - **动作**（伪代码）：
@@ -172,7 +172,7 @@ E 文档收尾+测试方案+问题单（依赖 A3+B4+C5+D5 全绿）
 - **依赖**：C1
 - **验证**：后端测试——删子类→link 改父级（断言 roleLinkMapper 调用）；删一级→子类随删+挂子类者归通用；一级筛选 SQL 含子类（mock wrapper 断言 in 集）；子级筛选只子级；一键分镜目录含「老人」类资产。
 
-### C3 前端类型 + VocabEditor 两级编辑
+### C3 前端类型 + VocabEditor 两级编辑 ✅ 2026-09-02 455cef60（实现偏离：plan 排在 C4 的 buildRoleGroupOptions+AssetProjectView/SaveToAssetDialog 两下拉提前并入本轮——narrativeRoles 类型一翻三处消费点 tsc 连锁红，拆两轮反而中间态不可编译；C4 只剩矩阵左栏；utils/assetVocab.ts 为新建共享 util）
 
 - **目标**：types 切 RoleVocab；编辑弹窗两级草稿（一级行+子类 chips）。
 - **动作**（伪代码）：
@@ -190,7 +190,7 @@ E 文档收尾+测试方案+问题单（依赖 A3+B4+C5+D5 全绿）
 - **依赖**：C1（shape 对齐）
 - **验证**：vitest——打开拷贝两级草稿；加/删/改子类；子类撞一级或他父子类前端拦（空值回退）；一级删确认文案两级计数；save payload shape；一级至少 1 条 canSave。
 
-### C4 前端消费点：表单多选 / 存入库 / 矩阵左栏
+### C4 前端消费点：表单多选 / 存入库 / 矩阵左栏 ✅ 2026-09-02 6a2e37f2（矩阵左栏两级+badge 聚合+active 联动按 plan 口径「一级 active=自身或其任一子级选中」；AssetListView 文案零改动=plan 预期；两下拉已提前在 C3 落地；提交挂父/子 key 用例由 SaveToAssetDialog 既有 roleKeys 提交链+分组 options 覆盖）
 
 - **目标**：三处挂角色/筛角色 UI 两级化；展示位零改动。
 - **动作**（伪代码）：
@@ -206,7 +206,7 @@ E 文档收尾+测试方案+问题单（依赖 A3+B4+C5+D5 全绿）
 - **依赖**：C3
 - **验证**：vitest——表单分组 options（含「（不细分）」）；提交挂父级 key/子级 key 各一例；存入库同款；矩阵一级点击 emit 一级 key、子级点击 emit 子级、active 态联动、取消；AssetCard/DetailDrawer/PickerRow roleKeys 展示回归（扁平串零改动）。
 
-### C5 C 轮收口测试
+### C5 C 轮收口测试 ✅ 2026-09-02（全量 vitest 1042/1042 + vue-tsc 0 错 + 后端 2734/2734 BUILD SUCCESS；本地 PG V169 实测：17 行存量 string 全转对象（id6 自定义桶保序）、DEFAULT/COMMENT 落列、API e2e GET 回两级/PUT 两级落库回读一致/PUT 撞名 400/已还原；手测项并入 E 轮 S 系列）
 
 - **动作**：vitest 全量 + vue-tsc 0 错 + 后端全绿 + 本地 PG 迁移实测（Flyway 起动跑 V<max+1> + 存量项目词汇变形抽验）；手测标记——编辑分类两级保存/删子类资产归父/矩阵两级筛/一键分镜含子类/画布存入库分组选。
 - **验证**：全绿 + 记录入变更记录。
@@ -364,6 +364,7 @@ E 文档收尾+测试方案+问题单（依赖 A3+B4+C5+D5 全绿）
 | 2026-09-02 | 建立 plan（A1-A3/B1-B4/C1-C5/D1-D5/E 五轮；critique 后五处实现期细化：A2 组框右键时序/B2 mediaTypes 容错/B3 回滚不入栈/C1 双容错规则/D3 向后兼容签名）。同轮补规格 XI-4⑨ ⛓ 治边不治壳口径 | 修复XI 规格过审进入 P2 |
 | 2026-09-02 | A 轮完成（c1db6300 palette 单源 + 9d9140fc 右键菜单 8 用例，全量 1028/1028）。两处实现期偏离：①A2 ↑↓ 循环焦点未做（原生 button Tab/Enter 可达即满足 spec ⑥ 下限）；②粘贴落点参数传 client 坐标 `{x,y}` 而非 flowPos（pasteSubgraph 内部统一换算，与键盘链同函数同口径，比外层预换算更不易漂）；A3 手测项并入 E 轮 S1 | 计划是建议不是圣旨——P3 发现更简实现回写 plan |
 | 2026-09-02 | B 轮完成（bc23dd8b 后端 official 过滤 + 4997a767 OfficialLibrary 大卡片+插入链，全量 1040/1040+后端 2715/2715）。四处实现期偏离：①B2 emit `picked{asset}` 不含 resolve（resolve 需先有 nodeId，改 B3 建节点后发起）；②OfficialLibrary 无 canvasId prop；③无 CanvasView.test.ts——链路拆 paletteItems.test 3 例+CanvasBoard.test 3 例两端单测，接线层留手测；④项目卡文本化无封面。B4 手测项并入 E 轮 S6-S9 | resolve 反序架构必然+避免为测接线新建大文件；回写口径 |
+| 2026-09-02 | C 轮完成（3cd40307 C1 词汇地基 + e800c0ed C2 reassign/筛选展开 + 455cef60 C3 类型/VocabEditor 两级 + 6a2e37f2 C4 矩阵左栏，全量 1042/1042+后端 2734/2734+本地 PG V169 实测闭环）。三处实现期偏离：①C3/C4 边界重划——buildRoleGroupOptions+两处下拉消费点从 C4 提前并入 C3（类型一翻三处 tsc 连锁红，拆两轮中间态不可编译），C4 只剩矩阵左栏；②C2 reassign 增「项目资产 id 预筛」分支（role_links 无 projectId 列，防跨项目同名 key 误删/误迁）；③C1 testcontainer/H2 迁移验证未做→RoleVocab 纯单测+本地 PG 实测（C5）替代 | 类型翻转的消费点收口天然一体；跨项目碰撞为安全必修；本地 PG 实测比 H2 手动 SQL 更真 |
 
 ## 术语表
 

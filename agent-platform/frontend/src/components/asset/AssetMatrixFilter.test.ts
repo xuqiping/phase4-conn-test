@@ -107,7 +107,8 @@ describe('AssetMatrixFilter (S11)', () => {
     const child = active.findAll('.matrix-filter__role--child')[0]
     const group = active.findAll('.matrix-filter__role')[1] // 人物（一级）
     expect(child.classes()).toContain('matrix-filter__role--active')
-    expect(group.classes()).not.toContain('matrix-filter__role--active')
+    // plan 口径：一级 active = 自身或其任一子级选中（子级选中点亮所属一级）
+    expect(group.classes()).toContain('matrix-filter__role--active')
   })
 
   it('搜索输入 → emit q', async () => {
