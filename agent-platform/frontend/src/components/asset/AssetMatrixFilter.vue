@@ -1,7 +1,7 @@
 <!--
   项目资产库·矩阵筛选器  plan §S11 / 设计 §2.2
   - 顶栏：内容类型分段（全部/提示词/剧本/图片/视频/音频）+ 计数徽章
-  - 左栏：叙事角色分段（全部角色 + 项目受控词汇桶）+ 计数徽章
+  - 左栏：叙事角色两级分段（全部角色 + 一级行/子类缩进行，修复XI XI-3）+ 计数徽章（一级聚合子类）
   - 搜索框（q≤50）
   - 计数=下钻交集：选类型后角色徽标=该类型下各角色计数；选角色后类型徽标=该角色下各类型计数
   - 受控组件：v-model:modelValue={type?,role?,q?}，change 触发父拉列表
@@ -93,7 +93,7 @@
     </div>
 
     <div class="matrix-filter__body">
-      <!-- 左栏：角色分段 -->
+      <!-- 左栏：角色两级分段（修复XI XI-3：一级行 + 子类缩进行；点一级=按大类筛（后端展开含子类），点子类=精确筛） -->
       <aside class="matrix-filter__roles">
         <button
           type="button"
@@ -104,17 +104,28 @@
           <span class="matrix-filter__chip-label">全部角色</span>
           <span class="matrix-filter__badge">{{ allRoleBadge }}</span>
         </button>
-        <button
-          v-for="r in roles"
-          :key="r"
-          type="button"
-          class="matrix-filter__role"
-          :class="{ 'matrix-filter__role--active': activeRole === r }"
-          @click="selectRole(r)"
-        >
-          <span class="matrix-filter__chip-label">{{ r }}</span>
-          <span class="matrix-filter__badge">{{ roleBadge(r) }}</span>
-        </button>
+        <div v-for="r in roles" :key="r.key" class="matrix-filter__group">
+          <button
+            type="button"
+            class="matrix-filter__role"
+            :class="{ 'matrix-filter__role--active': activeRole === r.key }"
+            @click="selectRole(r.key)"
+          >
+            <span class="matrix-filter__chip-label">{{ r.key }}</span>
+            <span class="matrix-filter__badge">{{ groupBadge(r) }}</span>
+          </button>
+          <button
+            v-for="c in r.children"
+            :key="c"
+            type="button"
+            class="matrix-filter__role matrix-filter__role--child"
+            :class="{ 'matrix-filter__role--active': activeRole === c }"
+            @click="selectRole(c)"
+          >
+            <span class="matrix-filter__chip-label">{{ c }}</span>
+            <span class="matrix-filter__badge">{{ roleBadge(c) }}</span>
+          </button>
+        </div>
       </aside>
 
       <!-- 主区：卡片网格（父传入） -->
@@ -129,7 +140,7 @@
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { NInput, NInputNumber, NSelect } from 'naive-ui'
 import { projectApi } from '@/api/assets'
-import type { MatrixCountVO, MediaTypeDef } from '@/types/asset'
+import type { MatrixCountVO, MediaTypeDef, NarrativeRoleVocab } from '@/types/asset'
 import { ASSET_GRADES, ASSET_GRADE_RANGE, type AssetGrade } from '@/constants/assetGrade'
 
 /** 筛选态：type/role 空=不限，q=搜索词；C7 加上传者/分数区间/分数来源 */
@@ -147,8 +158,8 @@ const props = defineProps<{
   modelValue: AssetFilter
   /** 矩阵计数（type×role 每格 + 每类型总数） */
   counts: MatrixCountVO
-  /** 项目受控词汇桶（叙事角色） */
-  roles: string[]
+  /** 两级叙事角色词汇（修复XI：一级行徽标聚合子类，子类行独立徽标） */
+  roles: NarrativeRoleVocab[]
   /** 媒体类型受控词汇桶（V60，顶栏类型分段从中派生，不再写死五类） */
   mediaTypes: MediaTypeDef[]
   /** 项目 id（C7 上传者远程候选搜索；缺省时输入仍可手输任意用户名） */
@@ -225,6 +236,13 @@ function roleAllTypesCount(roleKey: string): number {
     if (t.key === '') continue
     sum += cellMap.value.get(`${t.key}|${roleKey}`) ?? 0
   }
+  return sum
+}
+
+/** 一级行徽标 = 一级本身 + 全部子类（修复XI 两级聚合；选类型时下钻同口径）。 */
+function groupBadge(r: NarrativeRoleVocab): number {
+  let sum = roleBadge(r.key)
+  for (const c of r.children) sum += roleBadge(c)
   return sum
 }
 
@@ -402,6 +420,19 @@ function onScoreBound(which: 'min' | 'max', v: number | null) {
     min-width: 140px;
   }
 
+  // 修复XI 两级：一组 = 一级行 + 子类缩进行
+  &__group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-2);
+  }
+
+  &__role--child {
+    margin-left: var(--spacing-3);
+    padding: 2px 10px;
+    font-size: var(--font-size-xs);
+  }
+
   &__badge {
     min-width: 20px;
     padding: 0 6px;
@@ -444,6 +475,15 @@ function onScoreBound(which: 'min' | 'max', v: number | null) {
   .matrix-filter__role {
     width: auto;
     flex-shrink: 0;
+  }
+
+  // 两级分组随栏横滑（一级行与子类行并排）
+  .matrix-filter__group {
+    flex-direction: row;
+  }
+
+  .matrix-filter__role--child {
+    margin-left: 0;
   }
 }
 </style>

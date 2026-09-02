@@ -53,7 +53,7 @@
       <AssetMatrixFilter
         v-model="filter"
         :counts="matrix"
-        :roles="(project.narrativeRoles ?? []).map((r) => r.key)"
+        :roles="project.narrativeRoles ?? []"
         :media-types="project.mediaTypes ?? []"
         :project-id="projectId"
       >

@@ -2,18 +2,19 @@ import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { NInputNumber, NSelect } from 'naive-ui'
 import AssetMatrixFilter, { type AssetFilter } from './AssetMatrixFilter.vue'
-import type { MatrixCountVO, MediaTypeDef } from '@/types/asset'
+import type { MatrixCountVO, MediaTypeDef, NarrativeRoleVocab } from '@/types/asset'
 
-/** 构造矩阵计数：图片×人物=3，图片×(无角色)=1，剧本×人物=2 */
+/** 构造矩阵计数：图片×人物=3，图片×(无角色)=1，剧本×人物=2，图片×老人(子类)=2 */
 function mkCounts(): MatrixCountVO {
   return {
     cells: [
       { mediaType: '图片', roleKey: '人物', count: 3 },
       { mediaType: '图片', roleKey: null, count: 1 },
-      { mediaType: '剧本', roleKey: '人物', count: 2 }
+      { mediaType: '剧本', roleKey: '人物', count: 2 },
+      { mediaType: '图片', roleKey: '老人', count: 2 }
     ],
     typeTotals: [
-      { mediaType: '图片', roleKey: null, count: 4 },
+      { mediaType: '图片', roleKey: null, count: 6 },
       { mediaType: '剧本', roleKey: null, count: 2 }
     ]
   }
@@ -22,7 +23,7 @@ function mkCounts(): MatrixCountVO {
 interface FilterProps {
   modelValue?: AssetFilter
   counts?: MatrixCountVO
-  roles?: string[]
+  roles?: NarrativeRoleVocab[]
   mediaTypes?: MediaTypeDef[]
 }
 
@@ -40,7 +41,10 @@ function mountFilter(props: FilterProps = {}) {
     props: {
       modelValue: {},
       counts: mkCounts(),
-      roles: ['人物', '道具'],
+      roles: [
+        { key: '人物', children: ['老人'] },
+        { key: '道具', children: [] }
+      ],
       mediaTypes: DEFAULT_MEDIA_TYPES,
       ...props
     }
@@ -48,12 +52,12 @@ function mountFilter(props: FilterProps = {}) {
 }
 
 describe('AssetMatrixFilter (S11)', () => {
-  it('未选筛选：全部徽标=总数(6)，图片=4，人物=5(3+2)', () => {
+  it('未选筛选：全部徽标=总数(8)，图片=6；一级人物徽标聚合子类=7(5+2)，老人=2（修复XI 两级）', () => {
     const wrapper = mountFilter()
     const badges = wrapper.findAll('.matrix-filter__badge')
     const texts = badges.map((b) => b.text())
-    // 顺序：[全部类型, 提示词0, 剧本2, 图片4, 视频0, 音频0, 全部角色6, 人物5, 道具0]
-    expect(texts).toEqual(['6', '0', '2', '4', '0', '0', '6', '5', '0'])
+    // 顺序：[全部类型, 提示词0, 剧本2, 图片6, 视频0, 音频0, 全部角色8, 人物(聚合)=7, 老人=2, 道具0]
+    expect(texts).toEqual(['8', '0', '2', '6', '0', '0', '8', '7', '2', '0'])
   })
 
   it('点击图片类型 → emit type=图片', async () => {
@@ -66,12 +70,12 @@ describe('AssetMatrixFilter (S11)', () => {
     expect(emitted![0][0]).toMatchObject({ type: '图片' })
   })
 
-  it('选类型 图片 后角色徽标下钻：人物=3，全部角色=4，道具=0', async () => {
+  it('选类型 图片 后角色徽标下钻：人物(聚合)=5(3+2)，老人=2，全部角色=6，道具=0', async () => {
     const wrapper = mountFilter({ modelValue: { type: '图片' } })
     const roleBadges = wrapper.findAll('.matrix-filter__role .matrix-filter__badge')
     const texts = roleBadges.map((b) => b.text())
-    // [全部角色=IMAGE总数4, 人物=cell(IMAGE,人物)=3, 道具=0]
-    expect(texts).toEqual(['4', '3', '0'])
+    // [全部角色=图片总数6, 人物(聚合)=cell(图片,人物)+cell(图片,老人)=5, 老人=2, 道具=0]
+    expect(texts).toEqual(['6', '5', '2', '0'])
   })
 
   it('选角色 人物 后类型徽标下钻：图片=3，剧本=2，全部=5', async () => {
@@ -85,12 +89,25 @@ describe('AssetMatrixFilter (S11)', () => {
   it('点击角色 → emit role；再次点击全部角色 → role=undefined', async () => {
     const wrapper = mountFilter()
     const roles = wrapper.findAll('.matrix-filter__role')
-    await roles[1].trigger('click') // 人物
+    await roles[1].trigger('click') // 人物（一级）
     const emitsRole = wrapper.emitted('update:modelValue')!
     expect(emitsRole[emitsRole.length - 1][0]).toMatchObject({ role: '人物' })
     await roles[0].trigger('click') // 全部角色
     const emitsAll = wrapper.emitted('update:modelValue')!
     expect(emitsAll[emitsAll.length - 1][0]).toMatchObject({ role: undefined })
+  })
+
+  it('XI3 点击子类行 → emit role=子类 key（精确筛，active 态落子类行不落一级）', async () => {
+    const wrapper = mountFilter()
+    await wrapper.findAll('.matrix-filter__role--child')[0].trigger('click') // 老人
+    const emits = wrapper.emitted('update:modelValue')!
+    expect(emits[emits.length - 1][0]).toMatchObject({ role: '老人' })
+    // 受控组件：active 态由 modelValue 驱动 → 回放 role=老人 断言落点
+    const active = mountFilter({ modelValue: { role: '老人' } })
+    const child = active.findAll('.matrix-filter__role--child')[0]
+    const group = active.findAll('.matrix-filter__role')[1] // 人物（一级）
+    expect(child.classes()).toContain('matrix-filter__role--active')
+    expect(group.classes()).not.toContain('matrix-filter__role--active')
   })
 
   it('搜索输入 → emit q', async () => {
