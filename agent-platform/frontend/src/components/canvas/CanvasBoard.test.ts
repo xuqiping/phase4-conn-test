@@ -23,6 +23,8 @@ const selState = vi.hoisted(() => ({ nodes: [] as { id: string }[] }))
 const vfState = vi.hoisted(() => ({
   el: null as null | { getBoundingClientRect: () => { left: number; top: number; width: number; height: number } }
 }))
+// 修复XI P4：applyHistoryState 撤销/重做清 vue-flow 内部选择集——hoisted 计数器供回归断言。
+const rmSelState = vi.hoisted(() => ({ calls: 0 }))
 vi.mock('@vue-flow/core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@vue-flow/core')>()
   return {
@@ -36,6 +38,8 @@ vi.mock('@vue-flow/core', async (importOriginal) => {
       fitView: vi.fn(),
       getViewport: vi.fn(() => ({ x: 0, y: 0, zoom: 1 })),
       getSelectedNodes: { get value() { return selState.nodes } },
+      // 修复XI P4：空参全清口径对齐库实现（elementSelectionHandler([], false)）
+      removeSelectedElements: vi.fn(() => { rmSelState.calls++ }),
       // 2x 四轮 S9：包围盒视口跟踪（真实 onMove 是 vue-flow 事件钩子；测试环境无拖拽，空实现够用）
       onMove: vi.fn(),
       vueFlowRef: {
@@ -1644,5 +1648,128 @@ describe('CanvasBoard · 粘贴重建组（修复XI D4）', () => {
     expect(vm(wrapper).getGroupEdges().some(e => e.source === newM1.id && e.target === 'group:g1')).toBe(true)
     expect(vm(wrapper).getGroupEdges()).toHaveLength(4) // 原3 + X-3 克隆
     expect(wrapper.emitted('groups-pasted')).toBeFalsy() // 无组粘贴不 toast
+  })
+})
+
+describe('CanvasBoard · 修复XI P4 冒烟修复回归（27/27 后置锁）', () => {
+  type BoardVmP4 = ReturnType<typeof boardVm> & {
+    loadSnapshot: (s: { nodes?: unknown[]; edges?: unknown[]; groups?: unknown[] }) => void
+    getSnapshot: () => {
+      nodes: { id: string; data: Record<string, unknown>; position: { x: number; y: number } }[]
+      edges: { id: string; source: string; target: string }[]
+      groups: { id: string; name: string; memberIds: string[] }[]
+    }
+    getGroupEdges: () => { id: string; source: string; target: string }[]
+  }
+  const vm = (w: ReturnType<typeof mount>) => boardVm(w) as unknown as BoardVmP4
+  const key = (k: string, shift = false) =>
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: k, ctrlKey: true, shiftKey: shift, bubbles: true }))
+  const node = (id: string, x = 0, y = 0) => ({ id, type: 'text', position: { x, y }, data: { label: id } })
+  const groupedSnap = () => ({
+    nodes: [node('m1'), node('m2', 50, 50), node('ext', 600, 0)],
+    edges: [],
+    groups: [{ id: 'g1', name: '组1', memberIds: ['m1', 'm2'], color: '#5b8def' }]
+  })
+  const rafFlush = () => new Promise<void>(r => requestAnimationFrame(() => r()))
+  const n = (w: ReturnType<typeof mount>) => vm(w).getSnapshot().nodes.length
+
+  beforeEach(() => { rmSelState.calls = 0 })
+
+  it('① Ctrl+Z/Ctrl+Shift+Z 走 window 级（焦点无关）：粘贴后直发 window keydown 可撤可重做', async () => {
+    // 冒烟实证：原元素级 @keydown 在焦点落 body/外部容器时永不触发（组框空白点击不聚焦画布内元素）
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(groupedSnap())
+    await flushPromises()
+    selState.nodes = [{ id: 'm1' }]
+    wrapper.getComponent(VueFlowStub).vm.$emit('selection-end')
+    await flushPromises()
+    key('c')
+    key('v')
+    expect(n(wrapper)).toBe(4)
+    key('z') // 撤回：不依赖 boardRoot 聚焦
+    expect(n(wrapper)).toBe(3)
+    key('z', true) // Ctrl+Shift+Z 重做
+    expect(n(wrapper)).toBe(4)
+  })
+
+  it('② 撤销/重做清 vue-flow 内部选择集 + 快照剥 selected（僵尸框选双断言）', async () => {
+    // 冒烟实证：库选择集不随 nodes 数组替换自清——撤销后旧框选视觉残留，应用层 refs 已清
+    // → Ctrl+C 空选反清剪贴板；且快照嵌 selected:true 会被 applySnapshot 扩散回来。
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(groupedSnap())
+    await flushPromises()
+    // 源头剥除：真实节点对象被库写 selected:true 后，getSnapshot 产物无该键
+    const flowNodes = wrapper.getComponent(VueFlowStub).props('nodes') as unknown as Record<string, unknown>[]
+    flowNodes[0].selected = true
+    expect('selected' in vm(wrapper).getSnapshot().nodes[0]).toBe(false)
+    // 应用侧清库选集：走一次真实 undo（键盘链）
+    selState.nodes = [{ id: 'm1' }]
+    wrapper.getComponent(VueFlowStub).vm.$emit('selection-end')
+    await flushPromises()
+    key('c')
+    key('v')
+    expect(n(wrapper)).toBe(4)
+    const before = rmSelState.calls
+    key('z')
+    expect(n(wrapper)).toBe(3)
+    expect(rmSelState.calls).toBeGreaterThan(before)
+  })
+
+  it('③ 未选中首按住内持续拖动仍零位移（selectOnly 会话即终止，非翻标志续拖）', async () => {
+    // 冒烟实证（X4b）：selectOnly 只翻标志继续会话时，后续 move 走 !moved 分支照样起拖
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(groupedSnap())
+    await flushPromises()
+    await rafFlush()
+    const pane = document.createElement('div')
+    pane.className = 'vue-flow__pane'
+    wrapper.element.appendChild(pane)
+    pane.dispatchEvent(new MouseEvent('pointerdown', { clientX: 10, clientY: 10, bubbles: true, button: 0 }))
+    // 同一按住内连续远距 move（远超起拖阈），会话已在首个 move 终止——全程零位移
+    for (const [mx, my] of [[80, 80], [140, 140], [200, 200]] as Array<[number, number]>) {
+      window.dispatchEvent(new MouseEvent('pointermove', { clientX: mx, clientY: my }))
+      await nextTick()
+      await rafFlush()
+      expect(vm(wrapper).getSnapshot().nodes.find(x => x.id === 'm1')!.position.x).toBe(0)
+    }
+    window.dispatchEvent(new MouseEvent('pointerup', { clientX: 200, clientY: 200 }))
+    pane.remove()
+    await flushPromises()
+    expect(vm(wrapper).getSnapshot().nodes.find(x => x.id === 'ext')!.position.x).toBe(600)
+  })
+
+  it('④ 整组拖动会话期 window 捕获吞 mousedown（vue-flow d3 平移伴生起手不叠加），松手恢复', async () => {
+    // 冒烟实证（X4c）：pointerdown 捕获段 stopPropagation 拦不住 d3 的伴生 mousedown 起手
+    // ——组成员双位移+旁观节点跟移。会话期 window 捕获段吞传播= d3 收不到起手。
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(groupedSnap())
+    await flushPromises()
+    await rafFlush()
+    // 先选中组（D1 链）
+    const pane = document.createElement('div')
+    pane.className = 'vue-flow__pane'
+    wrapper.element.appendChild(pane)
+    pane.dispatchEvent(new MouseEvent('pointerdown', { clientX: 10, clientY: 10, bubbles: true, button: 0 }))
+    window.dispatchEvent(new MouseEvent('pointerup'))
+    wrapper.getComponent(VueFlowStub).vm.$emit('pane-click')
+    await nextTick()
+    // 拖动会话中：子元素 mousedown 不应冒泡到外层（stopPropagation 吞掉= d3 同路径收不到）。
+    // wrapper.element 不在文档树（happy-dom 脱挂）——探针须挂 document.body 走真实传播链
+    // probe→body→document→window，window 捕获段吞掉即外层冒泡段收不到。
+    const probe = document.createElement('div')
+    document.body.appendChild(probe)
+    let outerGot = 0
+    const onOuter = () => { outerGot++ }
+    window.addEventListener('mousedown', onOuter) // 冒泡段探针（真实 d3 监听同段）
+    pane.dispatchEvent(new MouseEvent('pointerdown', { clientX: 10, clientY: 10, bubbles: true, button: 0 }))
+    probe.dispatchEvent(new MouseEvent('mousedown', { clientX: 5, clientY: 5, bubbles: true }))
+    expect(outerGot).toBe(0) // 会话中：被捕获段吞掉
+    window.dispatchEvent(new MouseEvent('pointerup', { clientX: 10, clientY: 10 }))
+    await flushPromises()
+    probe.dispatchEvent(new MouseEvent('mousedown', { clientX: 6, clientY: 6, bubbles: true }))
+    expect(outerGot).toBe(1) // 松手后：监听已摘，传播恢复
+    window.removeEventListener('mousedown', onOuter)
+    pane.remove()
+    probe.remove()
   })
 })

@@ -12,7 +12,6 @@
     @paste="onPaste"
     @keydown.delete.prevent="deleteSelected"
     @keydown.backspace.prevent="deleteSelected"
-    @keydown="onKeydownUndo"
   >
     <VueFlow
       v-model:nodes="nodes"
@@ -346,6 +345,7 @@ const {
   fitView: vfFitView,
   getViewport,
   getSelectedNodes,
+  removeSelectedElements,
   onMove,
   vueFlowRef,
   setNodes: vfSetNodes,
@@ -994,6 +994,16 @@ function onWindowKeydown(e: KeyboardEvent) {
     const k = e.key.toLowerCase()
     if (k === 'c') { onCopyKeydown(e); return }
     if (k === 'v') { onPasteKeydown(e); return }
+    // 修复XI P4 冒烟实证：Ctrl/Cmd+Z 撤回 / +Shift 重做原挂 boardRoot 元素 keydown——
+    // 焦点被 body/外部容器持有时（组框空白点击不聚焦画布内元素）Ctrl+Z 全然不触发。
+    // 并入 window 链（与 c/v 同口径），isTypingTarget 放行输入框原生文本撤回。
+    if (k === 'z') {
+      if (isTypingTarget(e.target)) return
+      e.preventDefault()
+      if (e.shiftKey) redo()
+      else undo()
+      return
+    }
   }
   if (e.key !== 'Delete' && e.key !== 'Backspace') return
   if (!selectedNodeId.value && !selectedEdgeId.value && !multiSelectedIds.value.length) return
@@ -1672,6 +1682,10 @@ interface GroupMoveDrag {
 let groupMoveDrag: GroupMoveDrag | null = null
 const GROUP_MOVE_THRESHOLD = 4 // px：点选抖动容差，超阈才算拖
 const groupMovePending = { x: 0, y: 0, raf: 0 }
+// 修复XI P4 冒烟实证：vue-flow 画布平移（d3-drag）起手走**伴生 mousedown**——pointerdown
+// 捕获段的 stopPropagation 拦不住它，组拖与画布平移叠加（组成员双位移+旁观节点跟移）。
+// 会话期在 window 捕获段吞 mousedown 传播（d3 收不到起手=不起平移）。
+let groupMoveSwallowMouseDown: ((ev: MouseEvent) => void) | null = null
 
 function startGroupMoveDrag(gid: string, e: PointerEvent) {
   if (groupMoveDrag) return
@@ -1689,6 +1703,8 @@ function startGroupMoveDrag(gid: string, e: PointerEvent) {
   } catch {
     /* capture 拿不到不影响：window 监听兜底收 pointerup/cancel（组端口拖线同款口径） */
   }
+  groupMoveSwallowMouseDown = (ev: MouseEvent) => { ev.stopPropagation() }
+  window.addEventListener('mousedown', groupMoveSwallowMouseDown, { capture: true })
   window.addEventListener('pointermove', onGroupMoveDragMove)
   window.addEventListener('pointerup', onGroupMoveDragUp)
   window.addEventListener('pointercancel', onGroupMoveDragUp)
@@ -1701,9 +1717,12 @@ function onGroupMoveDragMove(e: PointerEvent) {
   if (!st.moved) {
     if (Math.hypot(e.clientX - st.startX, e.clientY - st.startY) < GROUP_MOVE_THRESHOLD) return
     if (st.selectOnly) {
-      // 未选中拖=先选中不拖：转正组选后本会话不再位移（下一次按住才拖，plan D2 边界）
+      // 未选中拖=先选中不拖：转正组选后**本会话即终止**（下一次按住才拖，plan D2 边界）。
+      // 修复XI P4 冒烟实证：若只翻标志继续会话，后续 move 走 !moved 分支照样起拖——
+      // 「先选中」被同一按住内的持续拖动吞掉。
+      detachGroupMoveDragListeners()
+      groupMoveDrag = null
       selectGroup(st.gid)
-      st.selectOnly = false
       return
     }
     st.moved = true
@@ -1753,6 +1772,10 @@ function detachGroupMoveDragListeners() {
   window.removeEventListener('pointerup', onGroupMoveDragUp)
   window.removeEventListener('pointercancel', onGroupMoveDragUp)
   window.removeEventListener('blur', onGroupMoveDragUp)
+  if (groupMoveSwallowMouseDown) {
+    window.removeEventListener('mousedown', groupMoveSwallowMouseDown, { capture: true })
+    groupMoveSwallowMouseDown = null
+  }
 }
 
 function onGroupMoveDragUp() {
@@ -1864,13 +1887,17 @@ function loadSnapshot(snap: CanvasSnapshot) {
 function getSnapshot(): CanvasSnapshot {
   const vp = getViewport()
   return {
-    // 2x 四轮 S2/S5：剥 wrapper style 与视觉态 class（均会话态）——持久化真源只有 data
-    nodes: nodes.value.map(({ style: _style, class: _class, ...rest }) => rest),
-    // 剥离选中态 class（纯前端视觉，不入库；重载后由 watch 按 selectedEdgeId='' 重置）。
+    // 2x 四轮 S2/S5：剥 wrapper style 与视觉态 class（均会话态）——持久化真源只有 data。
+    // 修复XI P4 冒烟实证：vue-flow 会给选中节点对象写 selected:true——不剥则框选后粘贴的
+    // pushHistory 快照嵌选中态，一步撤销 applySnapshot 扩展回 selected:true → 画布复活
+    // 僵尸框选（应用层 refs 已清，Ctrl+C 空选反清剪贴板）。selected 与 style/class 同族
+    // 会话态，源头剥除。
+    nodes: nodes.value.map(({ style: _style, class: _class, selected: _selected, ...rest }) => rest),
+    // 剥离选中态 class/selected（纯前端视觉，不入库；重载后由 watch 按 selectedEdgeId='' 重置）。
     // 修复VIII（VIII-1 ②）：组边合并落库（class 同剥；快照 JSON 结构不变、老快照零迁移）
     edges: mergeSnapshotEdges(
-      edges.value.map(({ class: _class, ...rest }) => rest),
-      groupEdges.value.map(({ class: _class, ...rest }) => rest)
+      edges.value.map(({ class: _class, selected: _selected, ...rest }) => rest),
+      groupEdges.value.map(({ class: _class, selected: _selected, ...rest }) => rest)
     ),
     groups: groups.value.map(g => ({ ...g, memberIds: [...g.memberIds] })),
     viewport: { x: vp.x, y: vp.y, zoom: vp.zoom }
@@ -1917,6 +1944,10 @@ function cloneHistoryState(): CanvasSnapshot {
 /** 应用历史快照：重建三类集合 + 清选中 + 通知父组件落库（不动撤回栈）。 */
 function applyHistoryState(snap: CanvasSnapshot) {
   applySnapshot(snap)
+  // 修复XI P4 冒烟实证：vue-flow 内部选择集不随 nodes 数组替换自清——撤销/重做后旧框选
+  // 视觉残留（应用层 refs 已清）：Ctrl+C 空选反清剪贴板、单击节点不见选中变化。
+  // 空参 removeSelectedElements() = 库官方全清口径（其拖拽起手同款），幂等。
+  removeSelectedElements()
   selectedNodeId.value = ''
   selectedEdgeId.value = ''
   clearMultiSelection()
@@ -1936,16 +1967,6 @@ function redo() {
   if (!entry) return
   undoStack.push({ snap: cloneHistoryState(), tag: entry.tag, ts: Date.now() })
   applyHistoryState(entry.snap)
-}
-
-/** 键盘撤回：Ctrl/Cmd+Z 撤回、+Shift 重做。输入框内放行浏览器原生文本 undo。 */
-function onKeydownUndo(e: KeyboardEvent) {
-  const tgt = e.target as HTMLElement | null
-  if (tgt?.closest('input, textarea, [contenteditable="true"')) return
-  if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'z') return
-  e.preventDefault()
-  if (e.shiftKey) redo()
-  else undo()
 }
 
 /** 取节点真实引用（数组中的对象，reactive 即时反映画布）。 */

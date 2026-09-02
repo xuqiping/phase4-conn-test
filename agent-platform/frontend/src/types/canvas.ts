@@ -132,6 +132,11 @@ export interface CanvasNode {
   style?: Record<string, string>
   /** 运行态状态（C4+ 节点产出触发用） */
   class?: string
+  /**
+   * vue-flow 运行时写入的选中态（库在选中/框选时改写节点对象）。纯会话视觉——
+   * getSnapshot 源头剥除（修复XI P4：不剥则历史快照嵌选中态，撤销时僵尸框选复活）。
+   */
+  selected?: boolean
 }
 
 /** 画布连线 */
@@ -152,6 +157,8 @@ export interface CanvasEdge {
   style?: Record<string, string | number>
   /** 选中态 class（watch selectedEdgeId 注入，高亮可删边）。非持久化语义字段，存库无副作用。 */
   class?: string
+  /** vue-flow 运行时选中态（同 CanvasNode.selected，getSnapshot 源头剥除）。 */
+  selected?: boolean
 }
 
 /** 画布视口（缩放/平移） */
