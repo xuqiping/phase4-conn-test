@@ -2,6 +2,7 @@ package com.superprogrammer.asset.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.asset.dto.MediaTypeDef;
+import com.superprogrammer.asset.dto.RoleVocab;
 import com.superprogrammer.asset.dto.ProjectCreateRequest;
 import com.superprogrammer.asset.dto.ProjectUpdateRequest;
 import com.superprogrammer.asset.dto.ProjectVO;
@@ -28,6 +29,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.time.OffsetDateTime;
 
@@ -173,7 +175,8 @@ class AssetProjectServiceTest {
         when(roleLinkMapper.selectCount(any())).thenReturn(0L); // 尚无「通用」link
 
         ProjectUpdateRequest req = new ProjectUpdateRequest();
-        req.setNarrativeRoles(List.of("人物", "通用")); // 移除「道具」
+        req.setNarrativeRoles(List.of(new RoleVocab("人物", new ArrayList<>()),
+                new RoleVocab("通用", new ArrayList<>()))); // 移除「道具」
         service.update(PROJECT_ID, OWNER_ID, false, req);
 
         // 删除「道具」link
@@ -341,5 +344,117 @@ class AssetProjectServiceTest {
                 new com.superprogrammer.asset.dto.ProjectSettingsRequest());
         verify(projectMapper, never()).updateById(any());
         assertEquals(Boolean.FALSE, vo.getMemberScoringEnabled()); // 空值 → FALSE 归一
+    }
+
+    // ==================== 修复XI C1：两级词汇 normalize + 落库 ====================
+
+    /** 400 拒绝共用脚手架：ACL/项目 stub 齐备 → update 抛 BusinessException 且不写库。 */
+    private BusinessException updateRolesExpectReject(List<RoleVocab> roles) {
+        when(aclService.requireWrite(PROJECT_ID, OWNER_ID, false)).thenReturn(AssetRole.OWNER);
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(project(PROJECT_ID, OWNER_ID, "[\"人物\",\"通用\"]"));
+        ProjectUpdateRequest req = new ProjectUpdateRequest();
+        req.setNarrativeRoles(roles);
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.update(PROJECT_ID, OWNER_ID, false, req));
+        verify(projectMapper, never()).updateById(any());
+        return ex;
+    }
+
+    @Test
+    void update_twoLevelRoles_persistsTwoLevelJsonAndVO() {
+        when(aclService.requireWrite(PROJECT_ID, OWNER_ID, false)).thenReturn(AssetRole.OWNER);
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(project(PROJECT_ID, OWNER_ID, "[\"人物\",\"通用\"]"));
+        ProjectUpdateRequest req = new ProjectUpdateRequest();
+        req.setNarrativeRoles(List.of(new RoleVocab("人物", new ArrayList<>(List.of("老人", "孩童"))),
+                new RoleVocab("通用", new ArrayList<>())));
+        ProjectVO vo = service.update(PROJECT_ID, OWNER_ID, false, req);
+
+        // 落库 JSON 为两级 shape
+        ArgumentCaptor<AssetProject> cap = ArgumentCaptor.forClass(AssetProject.class);
+        verify(projectMapper).updateById(cap.capture());
+        String json = cap.getValue().getNarrativeRoles();
+        assertTrue(json.contains("\"key\":\"人物\""));
+        assertTrue(json.contains("\"children\":[\"老人\",\"孩童\"]"));
+        // VO 解析回两级（子类完整）
+        assertEquals(List.of("老人", "孩童"), vo.getNarrativeRoles().get(0).getChildren());
+    }
+
+    @Test
+    void update_childCollidesWithLevelOne_rejected400() {
+        // 子类「通用」撞既有一级
+        List<RoleVocab> roles = List.of(
+                new RoleVocab("人物", new ArrayList<>(List.of("通用"))),
+                new RoleVocab("通用", new ArrayList<>()));
+        BusinessException ex = updateRolesExpectReject(roles);
+        assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
+        assertTrue(ex.getMessage().contains("重名"));
+    }
+
+    @Test
+    void update_childCollidesOtherParentChild_rejected400() {
+        // 「人物→老人」与「道具→老人」子类跨父重名
+        List<RoleVocab> roles = List.of(
+                new RoleVocab("人物", new ArrayList<>(List.of("老人"))),
+                new RoleVocab("道具", new ArrayList<>(List.of("老人"))),
+                new RoleVocab("通用", new ArrayList<>()));
+        BusinessException ex = updateRolesExpectReject(roles);
+        assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
+        assertTrue(ex.getMessage().contains("重名"));
+    }
+
+    @Test
+    void update_levelOneCollidesExistingChild_rejected400() {
+        // 一级「老人」撞前桶子类（扁平全集对称拒绝）
+        List<RoleVocab> roles = List.of(
+                new RoleVocab("人物", new ArrayList<>(List.of("老人"))),
+                new RoleVocab("老人", new ArrayList<>()),
+                new RoleVocab("通用", new ArrayList<>()));
+        BusinessException ex = updateRolesExpectReject(roles);
+        assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
+        assertTrue(ex.getMessage().contains("重名"));
+    }
+
+    @Test
+    void update_duplicateChildAndLevelOne_dedupSilently() {
+        // 同父子类重复/空白 + 一级重复 → 静默去重（非 400）
+        when(aclService.requireWrite(PROJECT_ID, OWNER_ID, false)).thenReturn(AssetRole.OWNER);
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(project(PROJECT_ID, OWNER_ID, "[\"人物\",\"通用\"]"));
+        List<String> kids = new ArrayList<>(List.of("老人", " 老人 ", "  "));
+        ProjectUpdateRequest req = new ProjectUpdateRequest();
+        req.setNarrativeRoles(List.of(new RoleVocab("人物", kids),
+                new RoleVocab("人物", new ArrayList<>()),
+                new RoleVocab("通用", new ArrayList<>())));
+        ProjectVO vo = service.update(PROJECT_ID, OWNER_ID, false, req);
+
+        assertEquals(2, vo.getNarrativeRoles().size()); // 一级重复去重
+        assertEquals(List.of("老人"), vo.getNarrativeRoles().get(0).getChildren()); // 同父子类去重+trim
+    }
+
+    @Test
+    void update_childrenOverLimit_rejected400() {
+        List<String> kids = new ArrayList<>();
+        for (int i = 0; i < 21; i++) {
+            kids.add("子类" + i);
+        }
+        BusinessException ex = updateRolesExpectReject(
+                List.of(new RoleVocab("人物", kids), new RoleVocab("通用", new ArrayList<>())));
+        assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
+        assertTrue(ex.getMessage().contains("不得超过"));
+    }
+
+    @Test
+    void update_roleNameOverLength_rejected400() {
+        String longName = "超".repeat(31);
+        BusinessException ex = updateRolesExpectReject(
+                List.of(new RoleVocab(longName, new ArrayList<>()), new RoleVocab("通用", new ArrayList<>())));
+        assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
+    }
+
+    @Test
+    void update_emptyVocab_rejected400() {
+        // 全空条目 → 词汇为空拒
+        BusinessException ex = updateRolesExpectReject(
+                List.of(new RoleVocab("  ", new ArrayList<>())));
+        assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
     }
 }

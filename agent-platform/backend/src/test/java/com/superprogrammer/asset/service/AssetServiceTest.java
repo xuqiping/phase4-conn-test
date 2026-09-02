@@ -161,6 +161,31 @@ class AssetServiceTest {
         assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
     }
 
+    @Test
+    void create_childRoleInTwoLevelVocab_insertsChildLink() {
+        // 修复XI C1：loadNarrativeRoles 扁平全集（父+子）——子类 key 合法可挂载
+        when(aclService.requireWrite(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
+        when(assetMapper.insert(any(Asset.class))).thenAnswer(inv -> {
+            ((Asset) inv.getArgument(0)).setId(102L);
+            return 1;
+        });
+        AssetProject p = new AssetProject();
+        p.setId(PROJECT_ID);
+        p.setNarrativeRoles("[{\"key\":\"人物\",\"children\":[\"老人\"]},{\"key\":\"通用\",\"children\":[]}]");
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(p);
+        AssetCreateRequest req = new AssetCreateRequest();
+        req.setMediaType(Asset.MEDIA_PROMPT);
+        req.setName("x");
+        req.setContent("{}");
+        req.setRoleKeys(List.of("老人"));
+
+        service.create(PROJECT_ID, OWNER_ID, false, req);
+
+        ArgumentCaptor<AssetRoleLink> rc = ArgumentCaptor.forClass(AssetRoleLink.class);
+        verify(roleLinkMapper).insert(rc.capture());
+        assertEquals("老人", rc.getValue().getRoleKey());
+    }
+
     // ---------- F19 公众池资产复制 ----------
 
     // ---------- V100 公共池复制管控（2x 待决策项） ----------

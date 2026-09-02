@@ -13,6 +13,7 @@ import com.superprogrammer.asset.dto.AssetUpdateRequest;
 import com.superprogrammer.asset.dto.AssetVO;
 import com.superprogrammer.asset.dto.MatrixCountVO;
 import com.superprogrammer.asset.dto.MediaTypeDef;
+import com.superprogrammer.asset.dto.RoleVocab;
 import com.superprogrammer.asset.entity.Asset;
 import com.superprogrammer.asset.entity.AssetProject;
 import com.superprogrammer.asset.entity.AssetRoleLink;
@@ -284,9 +285,9 @@ public class AssetService {
             return List.of();
         }
         Map<Long, List<String>> roleMap = rolesOf(images.stream().map(Asset::getId).collect(Collectors.toList()));
-        List<String> entityRoles = List.of(AssetProjectService.DEFAULT_NARRATIVE_ROLES.get(0),
-                AssetProjectService.DEFAULT_NARRATIVE_ROLES.get(1),
-                AssetProjectService.DEFAULT_NARRATIVE_ROLES.get(2));
+        // 修复XI C1：默认五桶两级化，实体三桶取扁平前三位（人物/道具/场景）；C2 按项目词汇展开含子类
+        List<String> entityRoles = RoleVocab.flatten(AssetProjectService.DEFAULT_NARRATIVE_ROLES)
+                .subList(0, 3);
         List<ImageCatalogItem> out = new ArrayList<>();
         for (Asset a : images) {
             List<String> rks = roleMap.getOrDefault(a.getId(), Collections.emptyList());
@@ -915,18 +916,17 @@ public class AssetService {
         return trimmed;
     }
 
+    /**
+     * 加载项目叙事角色词汇 → 扁平全集（父 + 全部子类，修复XI C1）。
+     * syncRoleLinks 受控校验/复制过滤由此自动接受子类 key；坏行回落默认五桶。
+     */
     private List<String> loadNarrativeRoles(Long projectId) {
         AssetProject p = projectMapper.selectById(projectId);
         if (p == null || p.getNarrativeRoles() == null || p.getNarrativeRoles().isBlank()) {
-            return new ArrayList<>(AssetProjectService.DEFAULT_NARRATIVE_ROLES);
+            return RoleVocab.flatten(AssetProjectService.DEFAULT_NARRATIVE_ROLES);
         }
-        try {
-            List<String> roles = objectMapper.readValue(p.getNarrativeRoles(), new TypeReference<List<String>>() {});
-            return roles == null ? new ArrayList<>(AssetProjectService.DEFAULT_NARRATIVE_ROLES) : roles;
-        } catch (Exception e) {
-            log.warn("parse narrativeRoles failed projectId={}: {}", projectId, e.getMessage());
-            return new ArrayList<>(AssetProjectService.DEFAULT_NARRATIVE_ROLES);
-        }
+        return RoleVocab.flatten(
+                RoleVocab.parse(objectMapper, p.getNarrativeRoles(), AssetProjectService.DEFAULT_NARRATIVE_ROLES));
     }
 
     /** 加载项目媒体类型受控词汇 → key→def 映射（V60 §C1b，受控校验单一事实源）。 */

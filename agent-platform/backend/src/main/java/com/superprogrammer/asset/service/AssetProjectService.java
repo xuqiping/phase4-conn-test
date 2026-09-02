@@ -7,6 +7,7 @@ import com.superprogrammer.asset.dto.MediaTypeDef;
 import com.superprogrammer.asset.dto.ProjectCreateRequest;
 import com.superprogrammer.asset.dto.ProjectUpdateRequest;
 import com.superprogrammer.asset.dto.ProjectVO;
+import com.superprogrammer.asset.dto.RoleVocab;
 import com.superprogrammer.asset.entity.Asset;
 import com.superprogrammer.asset.entity.AssetBinding;
 import com.superprogrammer.asset.entity.AssetProject;
@@ -52,8 +53,13 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class AssetProjectService {
 
-    /** 默认叙事角色五桶（设计方案 §二，受控词汇防标签腐烂）。 */
-    public static final List<String> DEFAULT_NARRATIVE_ROLES = List.of("人物", "道具", "场景", "风格", "通用");
+    /** 默认叙事角色五桶（设计方案 §二，受控词汇防标签腐烂；修复XI C1 两级化——children 空）。 */
+    public static final List<RoleVocab> DEFAULT_NARRATIVE_ROLES = List.of(
+            new RoleVocab("人物", new ArrayList<>()),
+            new RoleVocab("道具", new ArrayList<>()),
+            new RoleVocab("场景", new ArrayList<>()),
+            new RoleVocab("风格", new ArrayList<>()),
+            new RoleVocab("通用", new ArrayList<>()));
     /** 兜底桶（L10 删桶时资产归入此桶）。 */
     public static final String FALLBACK_ROLE = "通用";
     /** 默认媒体类型受控词汇六项（V60 §C1b + S17 分镜，{key,category}）。 */
@@ -69,6 +75,9 @@ public class AssetProjectService {
             Asset.CATEGORY_TEXT, Asset.CATEGORY_IMAGE, Asset.CATEGORY_VIDEO, Asset.CATEGORY_AUDIO);
     private static final int NAME_MAX = 100;
     private static final int MEDIA_TYPE_KEY_MAX = 32;
+    /** 修复XI C1：叙事角色名（一级/子类同限）与单桶子类数上限。 */
+    private static final int ROLE_NAME_MAX = 30;
+    private static final int ROLE_CHILDREN_MAX = 20;
 
     private final AssetProjectMapper projectMapper;
     private final AssetProjectMemberMapper memberMapper;
@@ -154,7 +163,7 @@ public class AssetProjectService {
             p.setCoverFileId(req.getCoverFileId());
         }
         if (req.getNarrativeRoles() != null) {
-            List<String> newRoles = normalizeRoles(req.getNarrativeRoles());
+            List<RoleVocab> newRoles = normalizeRoles(req.getNarrativeRoles());
             reassignOnRemovedRoles(projectId, parseRoles(p.getNarrativeRoles()), newRoles);
             p.setNarrativeRoles(serializeRoles(newRoles));
         }
@@ -255,10 +264,16 @@ public class AssetProjectService {
     /**
      * 移除角色桶时，挂该桶的资产自动归「通用」（L10）。
      * 仅处理被移除的桶；保留桶不动。空桶直接删（无资产挂载时自然无操作）。
+     *
+     * <p>修复XI C1：签名切两级 {@link RoleVocab}；本步先按一级键集合比对（与改造前行为等价），
+     * 子类重指派（删子类归父/删一级含子类）由 C2 落地。
      */
-    private void reassignOnRemovedRoles(Long projectId, List<String> oldRoles, List<String> newRoles) {
-        Set<String> removed = new LinkedHashSet<>(oldRoles);
-        removed.removeAll(newRoles);
+    private void reassignOnRemovedRoles(Long projectId, List<RoleVocab> oldRoles, List<RoleVocab> newRoles) {
+        Set<String> removed = new LinkedHashSet<>();
+        oldRoles.forEach(r -> removed.add(r.getKey()));
+        Set<String> kept = new LinkedHashSet<>();
+        newRoles.forEach(r -> kept.add(r.getKey()));
+        removed.removeAll(kept);
         if (removed.isEmpty()) {
             return;
         }
@@ -271,7 +286,7 @@ public class AssetProjectService {
         if (assetIds.isEmpty()) {
             return;
         }
-        boolean fallbackExists = newRoles.contains(FALLBACK_ROLE);
+        boolean fallbackExists = kept.contains(FALLBACK_ROLE);
         for (String removedKey : removed) {
             // 找挂了被删桶的资产
             List<AssetRoleLink> links = roleLinkMapper.selectList(new LambdaQueryWrapper<AssetRoleLink>()
@@ -389,37 +404,70 @@ public class AssetProjectService {
         return trimmed;
     }
 
-    /** 规范化角色桶列表：去空白、去重、保序、非空。 */
-    private List<String> normalizeRoles(List<String> roles) {
+    /**
+     * 规范化两级角色词汇（修复XI C1）：trim/非空/一级去重保序/**扁平全集全局唯一**
+     * （子类撞任何一级或他父子类 → 400「重名」；一级撞已收子类同拒）/同父子类内部去重/
+     * 一级至少 1 条/每名 ≤30 字/单桶子类 ≤20。
+     */
+    private List<RoleVocab> normalizeRoles(List<RoleVocab> roles) {
         if (roles == null || roles.isEmpty()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "叙事角色桶不可为空");
         }
-        Set<String> seen = new LinkedHashSet<>();
-        for (String r : roles) {
-            if (r != null && !r.isBlank()) {
-                seen.add(r.trim());
+        List<RoleVocab> out = new ArrayList<>();
+        Set<String> levelOneSeen = new LinkedHashSet<>();
+        Set<String> childSeenGlobal = new LinkedHashSet<>();
+        for (RoleVocab r : roles) {
+            if (r == null || r.getKey() == null || r.getKey().isBlank()) {
+                continue;
             }
+            String key = r.getKey().trim();
+            if (key.length() > ROLE_NAME_MAX) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST,
+                        "叙事角色「" + key + "」不得超过 " + ROLE_NAME_MAX + " 字");
+            }
+            if (childSeenGlobal.contains(key)) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "叙事角色「" + key + "」重名");
+            }
+            if (!levelOneSeen.add(key)) {
+                continue; // 一级重复：保序去重（既有口径）
+            }
+            List<String> children = new ArrayList<>();
+            Set<String> childSeenLocal = new LinkedHashSet<>();
+            for (String c : r.getChildren() == null ? List.<String>of() : r.getChildren()) {
+                if (c == null || c.isBlank()) {
+                    continue;
+                }
+                String ck = c.trim();
+                if (ck.length() > ROLE_NAME_MAX) {
+                    throw new BusinessException(ErrorCode.BAD_REQUEST,
+                            "叙事角色「" + ck + "」不得超过 " + ROLE_NAME_MAX + " 字");
+                }
+                if (!childSeenLocal.add(ck)) {
+                    continue; // 同父子类重复：内部去重
+                }
+                if (levelOneSeen.contains(ck) || !childSeenGlobal.add(ck)) {
+                    throw new BusinessException(ErrorCode.BAD_REQUEST, "叙事角色「" + ck + "」重名");
+                }
+                children.add(ck);
+            }
+            if (children.size() > ROLE_CHILDREN_MAX) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST,
+                        "叙事角色「" + key + "」子类不得超过 " + ROLE_CHILDREN_MAX + " 个");
+            }
+            out.add(new RoleVocab(key, children));
         }
-        if (seen.isEmpty()) {
+        if (out.isEmpty()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "叙事角色桶不可为空");
         }
-        return new ArrayList<>(seen);
+        return out;
     }
 
-    private List<String> parseRoles(String json) {
-        if (json == null || json.isBlank()) {
-            return new ArrayList<>(DEFAULT_NARRATIVE_ROLES);
-        }
-        try {
-            List<String> roles = objectMapper.readValue(json, new TypeReference<List<String>>() {});
-            return roles == null ? new ArrayList<>() : new ArrayList<>(roles);
-        } catch (Exception e) {
-            log.warn("parse narrativeRoles failed, fallback default: {}", e.getMessage());
-            return new ArrayList<>(DEFAULT_NARRATIVE_ROLES);
-        }
+    /** 双容错解析（string|object 元素同判，坏 JSON 回落默认五桶）——判型单一事实源 {@link RoleVocab#parse}。 */
+    private List<RoleVocab> parseRoles(String json) {
+        return RoleVocab.parse(objectMapper, json, DEFAULT_NARRATIVE_ROLES);
     }
 
-    private String serializeRoles(List<String> roles) {
+    private String serializeRoles(List<RoleVocab> roles) {
         try {
             return objectMapper.writeValueAsString(roles);
         } catch (Exception e) {

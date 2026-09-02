@@ -18,7 +18,8 @@ import java.time.OffsetDateTime;
  * <p>授权：{@link #ownerId} = 唯一所有者；非 owner 成员走 asset_project_members（V58）。
  * 权限咽喉点 {@code AssetAclService.loadAccessible} 三判（owner/member/admin）。
  *
- * <p>{@link #narrativeRoles} 默认五桶 [人物,道具,场景,风格,通用]，由 owner/editor 维护（防标签腐烂）。
+ * <p>{@link #narrativeRoles} 两级受控词汇 [{key,children}]（修复XI V169），默认五桶
+ * [人物,道具,场景,风格,通用]，由 owner/editor 维护（防标签腐烂）；读侧双容错（存量 string 元素视为无子类一级）。
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
