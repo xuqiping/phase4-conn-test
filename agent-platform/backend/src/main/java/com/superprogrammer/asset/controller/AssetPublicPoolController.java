@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -31,8 +32,11 @@ public class AssetPublicPoolController {
 
     @GetMapping
     @RequirePermission("asset:write")
-    public ResponseEntity<R<List<PublicProjectSummaryVO>>> list() {
-        return ResponseEntity.ok(R.ok(publicPoolService.listPublic(currentUserId(), isAdmin())));
+    public ResponseEntity<R<List<PublicProjectSummaryVO>>> list(
+            @RequestParam(required = false) Boolean official) {
+        // 修复XI B1（XI-2）：official=true 只返管理员发布（publishedByAdmin）项目——
+        // 导演台官方库浏览口径；不传=全量公众池（既有选择器回归口径）。
+        return ResponseEntity.ok(R.ok(publicPoolService.listPublic(currentUserId(), isAdmin(), official)));
     }
 
     @AuditLog(module = "asset", action = "public_pool_publish", targetType = "asset_project")

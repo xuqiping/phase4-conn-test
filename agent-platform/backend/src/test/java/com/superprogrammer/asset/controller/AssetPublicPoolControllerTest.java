@@ -32,15 +32,28 @@ class AssetPublicPoolControllerTest {
                         List.of(new SimpleGrantedAuthority("ROLE_USER"))));
         PublicPublishRequest request = new PublicPublishRequest();
         request.setAccessMode("APPROVAL_REQUIRED");
-        when(service.listPublic(10L, false)).thenReturn(List.of(PublicProjectSummaryVO.builder().id(1L).build()));
+        when(service.listPublic(10L, false, null)).thenReturn(List.of(PublicProjectSummaryVO.builder().id(1L).build()));
 
-        controller.list();
+        controller.list(null);
         controller.publish(1L, request);
         controller.unpublish(1L);
 
-        verify(service).listPublic(10L, false);
+        verify(service).listPublic(10L, false, null);
         verify(service).publish(1L, 10L, false, request);
         verify(service).unpublish(1L, 10L, false);
+    }
+
+    @Test
+    void delegatesOfficialFlagToListPublic() {
+        // 修复XI B1（XI-2）：GET /public-pool?official=true 透传服务层（官方库=仅管理员发布项目）
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(10L, null,
+                        List.of(new SimpleGrantedAuthority("ROLE_USER"))));
+        when(service.listPublic(10L, false, true)).thenReturn(List.of());
+
+        controller.list(true);
+
+        verify(service).listPublic(10L, false, true);
     }
 
     @Test

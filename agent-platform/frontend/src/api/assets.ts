@@ -208,8 +208,9 @@ export const scoreApi = {
 // === 公众池发布、申请与审批（FR-F19-03/04） ===
 
 export const publicPoolApi = {
-  list() {
-    return request.get<ApiResponse<PublicProjectSummaryVO[]>>('/assets/public-pool')
+  /** GET /assets/public-pool — 公众池摘要；official=true 只返管理员发布项目（修复XI B1 官方库口径）。 */
+  list(params?: { official?: boolean }) {
+    return request.get<ApiResponse<PublicProjectSummaryVO[]>>('/assets/public-pool', { params })
   },
   publish(projectId: number, data: PublicPublishRequest) {
     return request.post<ApiResponse<void>>(`/assets/public-pool/${projectId}/publish`, data)

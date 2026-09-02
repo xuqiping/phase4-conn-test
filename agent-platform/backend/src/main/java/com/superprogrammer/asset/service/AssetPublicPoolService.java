@@ -98,11 +98,14 @@ public class AssetPublicPoolService {
                 projectId, userId, revokedCount);
     }
 
-    public List<PublicProjectSummaryVO> listPublic(Long userId, boolean admin) {
+    public List<PublicProjectSummaryVO> listPublic(Long userId, boolean admin, Boolean official) {
+        // 修复XI B1（XI-2）：official=TRUE → 服务端强制过滤 publishedByAdmin（官方=管理员发布，
+        // 不信前端挑拣）；null/false=全量公众池（既有口径）。Q3 拍板：官方库收录仅官方发布。
         List<AssetProject> projects = projectMapper.selectList(
                 new LambdaQueryWrapper<AssetProject>()
                         .eq(AssetProject::getPublicPool, true)
                         .eq(AssetProject::getDeleted, 0)
+                        .eq(Boolean.TRUE.equals(official), AssetProject::getPublishedByAdmin, true)
                         .orderByDesc(AssetProject::getPublishedAt));
         if (projects == null || projects.isEmpty()) {
             return List.of();

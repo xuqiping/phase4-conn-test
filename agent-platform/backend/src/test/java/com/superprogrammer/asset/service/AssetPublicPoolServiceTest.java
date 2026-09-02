@@ -1,5 +1,8 @@
 package com.superprogrammer.asset.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.superprogrammer.asset.dto.PublicPublishRequest;
 import com.superprogrammer.asset.dto.ProjectAssetCountVO;
 import com.superprogrammer.asset.dto.PublicProjectSummaryVO;
@@ -12,6 +15,8 @@ import com.superprogrammer.asset.mapper.AssetPublicAccessRequestMapper;
 import com.superprogrammer.auth.mapper.UserMapper;
 import com.superprogrammer.auth.entity.User;
 import com.superprogrammer.common.exception.BusinessException;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -36,6 +41,13 @@ class AssetPublicPoolServiceTest {
 
     @InjectMocks
     private AssetPublicPoolService service;
+
+    /** 纯单测无 MyBatis 上下文，Lambda 列解析需手动初始化实体表信息（同 RoleControllerHiddenFilterTest 范式）。 */
+    @BeforeAll
+    static void initTableInfo() {
+        MapperBuilderAssistant assistant = new MapperBuilderAssistant(new MybatisConfiguration(), "");
+        TableInfoHelper.initTableInfo(assistant, AssetProject.class);
+    }
 
     @Test
     void publish_ownerStoresChosenModeAndPublisherSnapshot() {
@@ -187,7 +199,7 @@ class AssetPublicPoolServiceTest {
         // V100：先设开关再单次拉取（null 视为 TRUE——迁移 DEFAULT 兼容存量行）
         approval.setAllowPublicCopy(false);
 
-        java.util.List<PublicProjectSummaryVO> result = service.listPublic(20L, false);
+        java.util.List<PublicProjectSummaryVO> result = service.listPublic(20L, false, null);
 
         assertThat(result.get(0).getAllowPublicCopy()).isFalse();
         assertThat(result.get(1).getAllowPublicCopy()).isTrue();
@@ -206,6 +218,42 @@ class AssetPublicPoolServiceTest {
         verify(assetMapper).countByProjectIds(any());
         verify(userMapper).selectBatchIds(any());
         verify(requestMapper).selectList(any());
+    }
+
+    @Test
+    void listPublic_officialTrueAddsServerSideAdminFilter() {
+        // 修复XI B1（XI-2）：official=TRUE → 查询强制带 published_by_admin=true（服务端过滤，不信前端挑拣）
+        AssetProject open = project(1L, 10L);
+        open.setPublicPool(true);
+        open.setPublicAccessMode(AssetProject.PUBLIC_ACCESS_OPEN);
+        open.setPublishedBy(5L);
+        when(projectMapper.selectList(any())).thenReturn(java.util.List.of(open));
+        when(assetMapper.countByProjectIds(any())).thenReturn(java.util.List.of());
+
+        service.listPublic(20L, false, true);
+
+        ArgumentCaptor<LambdaQueryWrapper<AssetProject>> captor =
+                ArgumentCaptor.forClass(LambdaQueryWrapper.class);
+        verify(projectMapper).selectList(captor.capture());
+        assertThat(captor.getValue().getSqlSegment()).contains("published_by_admin");
+    }
+
+    @Test
+    void listPublic_officialOmittedKeepsFullPoolQuery() {
+        // 回归：不传 official=全量公众池——查询不带 published_by_admin 条件（既有选择器口径）
+        AssetProject open = project(1L, 10L);
+        open.setPublicPool(true);
+        open.setPublicAccessMode(AssetProject.PUBLIC_ACCESS_OPEN);
+        open.setPublishedBy(5L);
+        when(projectMapper.selectList(any())).thenReturn(java.util.List.of(open));
+        when(assetMapper.countByProjectIds(any())).thenReturn(java.util.List.of());
+
+        service.listPublic(20L, false, null);
+
+        ArgumentCaptor<LambdaQueryWrapper<AssetProject>> captor =
+                ArgumentCaptor.forClass(LambdaQueryWrapper.class);
+        verify(projectMapper).selectList(captor.capture());
+        assertThat(captor.getValue().getSqlSegment()).doesNotContain("published_by_admin");
     }
 
     private AssetProject project(Long id, Long ownerId) {
