@@ -291,7 +291,7 @@ E 文档收尾+测试方案+问题单（依赖 A3+B4+C5+D5 全绿）
 
 ---
 
-## Chunk E · 文档收尾（依赖 A3+B4+C5+D5）
+## Chunk E · 文档收尾（依赖 A3+B4+C5+D5）✅ 2026-09-02
 
 - **feature-map/user-ops 增补**：无限画布创作页 feature-map+手册「2026-09-02 增补（修复XI）」节——右键菜单（两组项/落点/Esc 逐层退）、官方库（入口/大卡片结构/插入链/与从库选择分工）、组大节点（点选分层/整组拖动/完全包含即带组/⛓ 治边不治壳）；项目资产库 feature-map+手册增补节——两级词汇（编辑分类两级/矩阵两级筛选/删除重指派两级/一键分镜含子类）。
 - **测试方案**：`docs/测试方案/人工测试遗留问题修复XI测试方案.md`（新，S 系列：S1-S5 右键 / S6-S9 官方库 / S10-S14 两级词汇 / S15-S19 组大节点，含反向：菜单 Esc 不清多选、官方库 resolve 失败回滚、删一级归通用、半含不带组、⛓ 关壳留边零）。
@@ -363,6 +363,7 @@ E 文档收尾+测试方案+问题单（依赖 A3+B4+C5+D5 全绿）
 | 2026-09-02 | B 轮完成（bc23dd8b 后端 official 过滤 + 4997a767 OfficialLibrary 大卡片+插入链，全量 1040/1040+后端 2715/2715）。四处实现期偏离：①B2 emit `picked{asset}` 不含 resolve（resolve 需先有 nodeId，改 B3 建节点后发起）；②OfficialLibrary 无 canvasId prop；③无 CanvasView.test.ts——链路拆 paletteItems.test 3 例+CanvasBoard.test 3 例两端单测，接线层留手测；④项目卡文本化无封面。B4 手测项并入 E 轮 S6-S9 | resolve 反序架构必然+避免为测接线新建大文件；回写口径 |
 | 2026-09-02 | C 轮完成（3cd40307 C1 词汇地基 + e800c0ed C2 reassign/筛选展开 + 455cef60 C3 类型/VocabEditor 两级 + 6a2e37f2 C4 矩阵左栏，全量 1042/1042+后端 2734/2734+本地 PG V169 实测闭环）。三处实现期偏离：①C3/C4 边界重划——buildRoleGroupOptions+两处下拉消费点从 C4 提前并入 C3（类型一翻三处 tsc 连锁红，拆两轮中间态不可编译），C4 只剩矩阵左栏；②C2 reassign 增「项目资产 id 预筛」分支（role_links 无 projectId 列，防跨项目同名 key 误删/误迁）；③C1 testcontainer/H2 迁移验证未做→RoleVocab 纯单测+本地 PG 实测（C5）替代 | 类型翻转的消费点收口天然一体；跨项目碰撞为安全必修；本地 PG 实测比 H2 手动 SQL 更真 |
 | 2026-09-02 | D 轮完成（ae72f41c D1 组框点选 + c3ca8382 D2 整组拖动 + 8e5c78cd D3 剪贴板纯函数 + f1463dc9 D4 粘贴重建，全量 1068/1068+vue-tsc 0 错，后端零改动）。四处实现期偏离：①D1 维持框体 pointer-events:none 穿透——组空白点击 DOM 落点是 pane，boardRoot 捕获段坐标命中包围盒记候选+pane-click 转正（比垫层+打洞少一层结构，穿透设计零改动）；②D2 越阈首帧只定基线（吞首段=标准拖动节流语义）+尾帧冲刷须先于会话置空（applyGroupMoveDelta 读会话组 id，先空后冲=丢帧，测试揪出）；③D4 组级边分治——组进板统一走 groupCrossEdges（含成员级内边口径），组不进板照 X-3 走 crossEdges 连原组；④D4「⛓ 关 innerEdges 全不粘」按现状口径落为「诱导边纯节点恒粘（VII，test 597 既有锚）+组级/跨集零」——plan 原行与现状冲突，以现状+锚为准 | 穿透层序探明后捕获段更简；丢帧 bug 实证；分治保 X 回归锚；改动既有语义须锚既有用例 |
+| 2026-09-02 | E 轮完成（文档收尾，本 commit）：两 feature-map+两 user-ops 增补节（无限画布：右键/官方库/组大节点；项目资产库：两级词汇）、测试方案 S1-S19 新建（含反向/批量）、问题单 2x 四项挂「已实现，待人工验证（修复XI）」+commit 号+S 用例指针（其余待办批量视频不动）、help 21-assets-basics 补两级一行、开发进度 README（B/C 类用户地图+技术说明） | 五轮全闭，plan 全勾；P3 出口条件逐项过 |
 
 
 ## 术语表
