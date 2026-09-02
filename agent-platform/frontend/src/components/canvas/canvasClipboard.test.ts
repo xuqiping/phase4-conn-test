@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { buildCopySet, planLabels, planPastePositions, remapCrossEdges, remapEdges } from './canvasClipboard'
-import type { CanvasEdge, CanvasNode } from '@/types/canvas'
+import { buildCopySet, planLabels, planPastePositions, remapCrossEdges, remapEdges, remapGroupCrossEdges } from './canvasClipboard'
+import type { CanvasEdge, CanvasGroup, CanvasNode } from '@/types/canvas'
 
 // 修复VII Chunk3：子图剪贴板纯函数（plan 验证 ①-⑥）。
 function mkNode(id: string, over: Partial<CanvasNode> & { data?: Record<string, unknown> } = {}): CanvasNode {
@@ -268,5 +268,81 @@ describe('crossEdges · 修复X 组端点跨集边', () => {
     )
     expect(out).toHaveLength(1)
     expect(out[0]).toMatchObject({ source: 'group:g2', target: 'new-a' })
+  })
+})
+
+// 修复XI（XI-4 D3，Q7 完全包含即带组）：组进板 + 组级边快照（groupCrossEdges，
+// key=旧节点 id|`group:${下标}`）；半含组不进板仍走 crossEdges 连原组（X-3 锚不动）。
+describe('groups/groupCrossEdges · 修复XI 组进板', () => {
+  const mkGroup = (id: string, memberIds: string[], name = id, color = '#5b8def'): CanvasGroup =>
+    ({ id, name, memberIds, color })
+
+  it('① 完全包含收组：name/color/memberIds 快照进板（旧 id）；空成员组不收', () => {
+    const nodes = [mkNode('a'), mkNode('b')]
+    const clip = buildCopySet(nodes, [], ['a', 'b'], [
+      { id: 'g1', name: '生成链', memberIds: ['a', 'b'], color: '#f00' },
+      { id: 'g0', name: '空组', memberIds: [], color: '#0f0' }
+    ])!
+    expect(clip.groups).toEqual([{ name: '生成链', color: '#f00', memberIds: ['a', 'b'] }])
+  })
+
+  it('② 半含不收（Q7）：部分成员组不进板，其组端点边照 X-3 走 crossEdges 连原组', () => {
+    const nodes = [mkNode('a'), mkNode('b')]
+    const edges = [mkEdge('a', 'group:g1')]
+    const clip = buildCopySet(nodes, edges, ['a'], [mkGroup('g1', ['a', 'b'])])! // b 不在选中集
+    expect(clip.groups).toHaveLength(0)
+    expect(clip.groupCrossEdges).toHaveLength(0)
+    expect(clip.crossEdges.map(e => `${e.source}>${e.target}`)).toEqual(['a>group:g1'])
+  })
+
+  it('③ 成员级到本组边（内边口径）：组进板 → groupCrossEdges 收（节点 key+组下标），不双收 crossEdges', () => {
+    const nodes = [mkNode('a'), mkNode('b')]
+    const edges = [mkEdge('a', 'group:g1'), mkEdge('group:g1', 'b')]
+    const clip = buildCopySet(nodes, edges, ['a', 'b'], [mkGroup('g1', ['a', 'b'])])!
+    expect(clip.groupCrossEdges).toEqual([
+      { fromKey: 'a', toKey: 'group:0' },
+      { fromKey: 'group:0', toKey: 'b' }
+    ])
+    expect(clip.crossEdges).toHaveLength(0)
+  })
+
+  it('④ 组级跨边：组进板+对端在外收（对端保旧 id）；两组全含+组→组边收（各记下标）', () => {
+    const nodes = [mkNode('a'), mkNode('b'), mkNode('ext')]
+    const edges = [mkEdge('group:g1', 'ext'), mkEdge('group:g1', 'group:g2')]
+    const clip = buildCopySet(nodes, edges, ['a', 'b'], [mkGroup('g1', ['a']), mkGroup('g2', ['b'])])!
+    expect(clip.groupCrossEdges).toEqual([
+      { fromKey: 'group:0', toKey: 'ext' },
+      { fromKey: 'group:0', toKey: 'group:1' }
+    ])
+  })
+
+  it('⑤ remap：`group:${idx}`→新组伪 id、板内节点→新 id、板外对端保旧 id+alive 校验（已删丢）', () => {
+    const nodes = [mkNode('a'), mkNode('ext'), mkNode('dead')]
+    const edges = [mkEdge('a', 'group:g1'), mkEdge('group:g1', 'ext'), mkEdge('group:g1', 'dead')]
+    const clip = buildCopySet(nodes, edges, ['a'], [mkGroup('g1', ['a'])])!
+    const out = remapGroupCrossEdges(
+      clip,
+      new Map([['a', 'new-a']]),
+      new Map([[0, 'g9']]),
+      new Set(['ext']) // dead 已删、new-a 板内恒活不查
+    )
+    expect(out).toHaveLength(2)
+    expect(out[0]).toMatchObject({ source: 'new-a', target: 'group:g9' })
+    expect(out[1]).toMatchObject({ source: 'group:g9', target: 'ext' })
+  })
+
+  it('⑥ 向后兼容：无 groups 入参 → 零组收集，X-3 口径原样（既有 VII/IX/X 链路）', () => {
+    const nodes = [mkNode('a')]
+    const clip = buildCopySet(nodes, [mkEdge('a', 'group:g1')], ['a'])!
+    expect(clip.groups).toEqual([])
+    expect(clip.groupCrossEdges).toEqual([])
+    expect(clip.crossEdges.map(e => `${e.source}>${e.target}`)).toEqual(['a>group:g1'])
+  })
+
+  it('⑦ 下标失配防护：groupIdxToNewId 无此下标（理论不可达）→ 丢', () => {
+    const nodes = [mkNode('a')]
+    const clip = buildCopySet(nodes, [mkEdge('a', 'group:g1')], ['a'], [mkGroup('g1', ['a'])])!
+    const out = remapGroupCrossEdges(clip, new Map([['a', 'new-a']]), new Map(), new Set())
+    expect(out).toHaveLength(0)
   })
 })
