@@ -390,8 +390,7 @@ import {
 } from 'naive-ui'
 import {
   AddOutline, AppsOutline, ArrowBackOutline, SaveOutline, TrashOutline, RefreshOutline,
-  DocumentTextOutline, ImageOutline, VideocamOutline, MusicalNotesOutline, CodeSlashOutline,
-  FilmOutline, CubeOutline, GitBranchOutline
+  FilmOutline, GitBranchOutline
 } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
 import { useProjectGroupStore } from '@/stores/projectGroup'
@@ -416,6 +415,7 @@ import { ANNOTATE_COLOR_NAMES } from '@/api/canvas'
 import StoryboardPanel from '@/components/canvas/StoryboardPanel.vue'
 import SaveToAssetDialog from '@/components/canvas/SaveToAssetDialog.vue'
 import AssetPicker from '@/components/canvas/AssetPicker.vue'
+import { PALETTE_ITEMS } from '@/components/canvas/paletteItems'
 import AutoAssociateDialog from '@/components/canvas/AutoAssociateDialog.vue'
 import type { CropRect } from '@/types/canvas'
 import { ancestors, interpolate, findBrokenMentions, uniqueLabel, type MentionResolver } from '@/utils/interpolate'
@@ -2242,16 +2242,12 @@ onUnmounted(() => {
   if (saveTimer) clearTimeout(saveTimer)
 })
 
-/** 节点调色板（C3 起接入各自属性面板与产出触发；MVP 先通用节点占位）。 */
-const palette = [
-  { type: 'text', label: '文本', icon: DocumentTextOutline },
-  { type: 'image', label: '图片', icon: ImageOutline },
-  { type: 'video', label: '视频', icon: VideocamOutline },
-  { type: 'audio', label: '音频', icon: MusicalNotesOutline },
-  { type: 'script', label: '脚本', icon: CodeSlashOutline },
-  { type: 'storyboard', label: '分镜', icon: FilmOutline },
-  { type: 'director', label: '导演台', icon: CubeOutline }
-]
+/**
+ * 节点调色板（C3 起接入各自属性面板与产出触发；MVP 先通用节点占位）。
+ * 修复XI A1：清单迁出共享常量（右键菜单同源，防双份漂移）——本地名保留 `palette`
+ * 使模板/quickAdd/label 反查零改动。
+ */
+const palette = PALETTE_ITEMS
 
 async function loadList() {
   loadingList.value = true
