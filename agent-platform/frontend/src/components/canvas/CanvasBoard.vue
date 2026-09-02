@@ -7,7 +7,7 @@
     @dragover.prevent="onDragOver"
     @drop="onDrop"
     @dblclick="onDblClick"
-    @contextmenu.prevent
+    @contextmenu="onRootContextMenu"
     @mousemove="onRootMouseMove"
     @paste="onPaste"
     @keydown.delete.prevent="deleteSelected"
@@ -199,6 +199,87 @@
       <button class="canvas-board__btn" title="缩小" @click="() => vfZoomOut()">－</button>
       <button class="canvas-board__btn" title="适应视图" @click="() => vfFitView()">⤢</button>
     </div>
+
+    <!-- 修复XI A2（2x 未解决①）：画布空白右键菜单——「添加节点」7 类（paletteItems 单源）
+         +「画布操作」（粘贴/撤销/重做/一键整理，零新逻辑纯入口接线）。范式照 FlowCanvas：
+         全屏透明 overlay（左键他处关；右键他处=冒泡到根 handler 挪位置不叠两层，spec ⑦）；
+         菜单 clientX/Y 定位贴边翻转。Esc 关菜单不外传（逐层退，Lightbox R7 口径）。 -->
+    <div
+      v-if="ctxMenu.visible"
+      class="canvas-board__ctx-overlay"
+      @click="closeContextMenu"
+      @contextmenu.prevent
+    >
+      <div
+        class="canvas-board__ctx-menu"
+        role="menu"
+        aria-label="画布右键菜单"
+        :style="ctxMenuStyle"
+        @click.stop
+      >
+        <div class="canvas-board__ctx-title">添加节点</div>
+        <button
+          v-for="item in PALETTE_ITEMS"
+          :key="item.type"
+          type="button"
+          class="canvas-board__ctx-item"
+          role="menuitem"
+          @click="ctxAddNode(item.type, item.label)"
+        >
+          <n-icon size="14" :component="item.icon" />
+          <span>{{ item.label }}</span>
+        </button>
+        <div class="canvas-board__ctx-sep" aria-hidden="true"></div>
+        <div class="canvas-board__ctx-title">画布操作</div>
+        <button
+          type="button"
+          class="canvas-board__ctx-item"
+          role="menuitem"
+          :disabled="!clipboard"
+          :aria-disabled="!clipboard"
+          @click="ctxPaste()"
+        >
+          <span class="canvas-board__ctx-glyph">📋</span>
+          <span>粘贴</span>
+          <span class="canvas-board__ctx-kbd">Ctrl+V</span>
+        </button>
+        <button
+          type="button"
+          class="canvas-board__ctx-item"
+          role="menuitem"
+          :disabled="!canUndo"
+          :aria-disabled="!canUndo"
+          @click="ctxUndo()"
+        >
+          <span class="canvas-board__ctx-glyph">↩︎</span>
+          <span>撤销</span>
+          <span class="canvas-board__ctx-kbd">Ctrl+Z</span>
+        </button>
+        <button
+          type="button"
+          class="canvas-board__ctx-item"
+          role="menuitem"
+          :disabled="!canRedo"
+          :aria-disabled="!canRedo"
+          @click="ctxRedo()"
+        >
+          <span class="canvas-board__ctx-glyph">↪︎</span>
+          <span>重做</span>
+          <span class="canvas-board__ctx-kbd">Ctrl+Shift+Z</span>
+        </button>
+        <button
+          type="button"
+          class="canvas-board__ctx-item"
+          role="menuitem"
+          :disabled="!nodes.length"
+          :aria-disabled="!nodes.length"
+          @click="ctxAutoLayout()"
+        >
+          <span class="canvas-board__ctx-glyph">✨</span>
+          <span>一键整理布局</span>
+        </button>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -208,6 +289,8 @@ import { Background } from '@vue-flow/background'
 import { VueFlow, useVueFlow } from '@vue-flow/core'
 import type { Connection, EdgeMouseEvent, EdgeTypesObject, NodeChange, NodeMouseEvent, NodeTypesObject, OnConnectStartParams } from '@vue-flow/core'
 import type { CanvasEdge, CanvasGroup, CanvasNode, CanvasNodeData, CanvasSnapshot } from '@/types/canvas'
+import { NIcon } from 'naive-ui'
+import { PALETTE_ITEMS } from './paletteItems'
 import { uniqueLabel } from '@/utils/interpolate'
 import { relatedClosure, type GraphClosure } from '@/utils/graphClosure'
 import { MAX_GROUP_MEMBERS, nextGroupColor } from '@/utils/groupCandidates'
@@ -958,13 +1041,15 @@ function onPasteKeydown(e: KeyboardEvent) {
  * ('paste') + 批写 nodes/edges + 单次 structure-changed = 一步撤回，pasteCount 逐次
  * +32 错开（Q2），落点=鼠标画布坐标（无记录回落视口中心，onPaste 同款口径）。
  */
-function pasteSubgraph() {
+function pasteSubgraph(atClient?: { x: number; y: number }) {
   const clip = clipboard.value
   if (!clip) return
   const rect = (vueFlowRef.value as HTMLElement | null)?.getBoundingClientRect()
     ?? { left: 0, top: 0, width: 0, height: 0 }
-  const cx = hasPointer ? lastClient.x : rect.left + rect.width / 2
-  const cy = hasPointer ? lastClient.y : rect.top + rect.height / 2
+  // 修复XI A2（XI-1⑤）：落点参数化——右键菜单「粘贴」传右键点坐标；键盘 Ctrl+V 不传，
+  // 维持修复VI 口径（最近鼠标位置 > 视口中心回落）。
+  const cx = atClient ? atClient.x : (hasPointer ? lastClient.x : rect.left + rect.width / 2)
+  const cy = atClient ? atClient.y : (hasPointer ? lastClient.y : rect.top + rect.height / 2)
   const target = project({ x: cx - rect.left, y: cy - rect.top })
   const positions = planPastePositions(clip, target)
   const labels = planLabels(clip, nodes.value.map(n => String(n.data.label ?? '')))
@@ -1765,6 +1850,101 @@ function onAutoLayout() {
   nextTick(() => vfFitView({ padding: 0.15, duration: 300 }))
 }
 
+/**
+ * 修复XI A2（2x 未解决①，spec XI-1）：画布空白右键菜单。
+ * 状态：visible/x/y=overlay 定位（client 坐标）；canvasAt=右键点 flow 坐标（添加/粘贴落点）。
+ */
+const ctxMenu = reactive({ visible: false, x: 0, y: 0, canvasAt: { x: 0, y: 0 } })
+/** 菜单占位估值（贴边翻转用；样式 min-width 180 + 两组 11 项上限保守取 200×420）。 */
+const CTX_MENU_W = 200
+const CTX_MENU_H = 420
+const ctxMenuStyle = computed(() => ({
+  left: `${Math.min(ctxMenu.x, Math.max(0, window.innerWidth - CTX_MENU_W - 8))}px`,
+  top: `${Math.min(ctxMenu.y, Math.max(0, window.innerHeight - CTX_MENU_H - 8))}px`
+}))
+
+/**
+ * 根元素 contextmenu（原 @contextmenu.prevent 等价升级）：
+ * 命中节点/普通边/工具条/组框 → 只拦浏览器默认菜单不开自绘菜单（节点右键=现状「存入
+ * 资产库」链由 @node-context-menu 承接，不叠加）；空白 → 记录 client 定位 + project 换算
+ * flow 落点后开菜单。菜单开着再右键=overlay 拦默认后冒泡到此处 → 坐标覆写=挪位置（⑦）。
+ */
+function onRootContextMenu(event: MouseEvent) {
+  event.preventDefault()
+  const tgt = event.target as HTMLElement | null
+  if (
+    tgt?.closest('.vue-flow__node') ||
+    tgt?.closest('.vue-flow__edge') ||
+    tgt?.closest('.canvas-board__toolbar')
+  ) {
+    closeContextMenu()
+    return
+  }
+  if (tgt?.closest('.canvas-board__groupbox')) {
+    // 修复XI 细化1：组框右键分支先立（含组头/组端口）——当前与边同口径不开菜单，
+    // D1「组框点选=组大节点」落地后此处接组级操作（选中整组等）。
+    closeContextMenu()
+    return
+  }
+  const vf = vueFlowRef.value as HTMLElement | null
+  if (!vf) return
+  const { left, top } = vf.getBoundingClientRect()
+  ctxMenu.x = event.clientX
+  ctxMenu.y = event.clientY
+  ctxMenu.canvasAt = project({ x: event.clientX - left, y: event.clientY - top })
+  ctxMenu.visible = true
+  window.addEventListener('keydown', onCtxMenuEsc, { capture: true })
+}
+
+/** Esc 关菜单且不外传（⑥逐层退，Lightbox R7 教训：开着 Esc 只关菜单，不再触发画布清多选/n-modal 关闭链）。 */
+function onCtxMenuEsc(e: KeyboardEvent) {
+  if (e.key !== 'Escape') return
+  e.preventDefault()
+  e.stopPropagation()
+  closeContextMenu()
+}
+
+function closeContextMenu() {
+  if (!ctxMenu.visible) return
+  ctxMenu.visible = false
+  window.removeEventListener('keydown', onCtxMenuEsc, { capture: true })
+}
+
+/** 菜单项：添加节点——落点=右键点 flow 坐标（④），label 带类型名走 addNode 唯一化去重。 */
+function ctxAddNode(type: string, label: string) {
+  closeContextMenu()
+  addNode({ type, position: { ...ctxMenu.canvasAt }, data: { label } })
+}
+
+/** 菜单项：粘贴=Ctrl+V 同链，落点强制=右键点（⑤ 参数化落点）。 */
+function ctxPaste() {
+  if (!clipboard.value) return
+  const at = { x: ctxMenu.x, y: ctxMenu.y }
+  closeContextMenu()
+  pasteSubgraph(at)
+}
+
+/** 菜单项：撤销/重做/一键整理=工具条同 handler 纯入口（⑤零新增逻辑）。 */
+function ctxUndo() {
+  closeContextMenu()
+  undo()
+}
+
+function ctxRedo() {
+  closeContextMenu()
+  redo()
+}
+
+function ctxAutoLayout() {
+  closeContextMenu()
+  onAutoLayout()
+}
+
+/** 卸载兜底摘 Esc 监听（修复X P4 教训：路由切走组件随父卸载，window 捕获监听必须显式摘）。 */
+onUnmounted(() => {
+  window.removeEventListener('keydown', onCtxMenuEsc, { capture: true })
+})
+
 defineExpose({
   addNode, addEdge, appendEdges, removeNodes, loadSnapshot, getSnapshot, getNode, getEdges, getNodes,
   // 修复VIII：组边只读出口（CanvasView resolveEdgesForFlow 合并入口用）
@@ -2066,6 +2246,76 @@ defineExpose({
   width: 20px;
   height: 1px;
   margin: 2px auto;
+  background: var(--color-border);
+}
+
+/* 修复XI A2（2x 未解决①）：画布空白右键菜单——全屏透明 overlay + 光标定位菜单。
+   overlay 高于画布各层（工具条 10），低于 Lightbox(3000)/n-modal 弹层，不遮系统层。 */
+.canvas-board__ctx-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+
+.canvas-board__ctx-menu {
+  position: absolute;
+  min-width: 180px;
+  padding: var(--spacing-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-base);
+  background: var(--color-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.canvas-board__ctx-title {
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  user-select: none;
+}
+
+.canvas-board__ctx-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+    color: var(--color-primary);
+  }
+
+  &:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+}
+
+.canvas-board__ctx-glyph {
+  width: 14px;
+  text-align: center;
+  font-size: 14px;
+}
+
+/* 画布操作项右侧快捷键提示（不换行、弱化色） */
+.canvas-board__ctx-kbd {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  user-select: none;
+}
+
+.canvas-board__ctx-sep {
+  height: 1px;
+  margin: var(--spacing-1) 4px;
   background: var(--color-border);
 }
 </style>

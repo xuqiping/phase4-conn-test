@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { nextTick } from 'vue'
 import { flushPromises } from '@vue/test-utils'
 import { mount } from '@vue/test-utils'
@@ -1007,5 +1007,146 @@ describe('CanvasBoard · 组边与本体直连（修复VIII VIII-1/2）', () => 
     expect(cls.m2).not.toContain('canvas-node--dimmed')
     expect(cls.ext).not.toContain('canvas-node--dimmed')
     expect(cls.far).toContain('canvas-node--dimmed') // 普通边 id 直通口径下无关边/节点照常暗
+  })
+})
+
+/** 修复XI A2（2x 未解决①，spec XI-1）：画布空白右键菜单——判定/两组项/落点/接线/Esc 逐层退。 */
+describe('CanvasBoard · 画布右键菜单（修复XI A2）', () => {
+  type BoardVmXI = ReturnType<typeof boardVm> & {
+    loadSnapshot: (s: { nodes: unknown[]; edges: unknown[] }) => void
+    getSnapshot: () => { nodes: { id: string; position: { x: number; y: number } }[] }
+    clipboard: { items: unknown[]; pasteCount: number; bbox: { left: number; top: number; width: number; height: number } } | null
+    canUndo: boolean
+  }
+  const vm = (w: ReturnType<typeof mount>) => boardVm(w) as unknown as BoardVmXI
+  const key = (k: string, ctrl = true) =>
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: k, ctrlKey: ctrl, bubbles: true }))
+  /** 假容器：project 为 identity mock，rect 全零 → flow 坐标 == client 坐标（落点可精确断言）。 */
+  const fakeEl = () => ({ getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }) })
+  /** 在根内挂一个指定 class 的真实子元素再派发原生 contextmenu（target.closest 走真实 DOM）。 */
+  const rightClickOnClass = (w: ReturnType<typeof mount>, cls: string, x = 300, y = 220) => {
+    const el = document.createElement('div')
+    el.className = cls
+    w.element.appendChild(el)
+    el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x, clientY: y }))
+    return el
+  }
+  const openAt = async (w: ReturnType<typeof mount>, x = 300, y = 220) => {
+    await w.find('.canvas-board').trigger('contextmenu', { clientX: x, clientY: y })
+  }
+  const menuItems = (w: ReturnType<typeof mount>) => w.findAll('button[role="menuitem"]')
+
+  beforeEach(() => { vfState.el = fakeEl() })
+  afterEach(() => { vfState.el = null })
+
+  it('① 空白右键开菜单：role=menu + 两组 11 项（添加节点 7 类 + 粘贴/撤销/重做/整理）；默认粘贴/撤销/重做/整理全禁用', async () => {
+    const wrapper = mount(CanvasBoard)
+    await openAt(wrapper, 300, 220)
+    const menu = wrapper.find('.canvas-board__ctx-menu')
+    expect(menu.exists()).toBe(true)
+    expect(menu.attributes('role')).toBe('menu')
+    expect(menuItems(wrapper)).toHaveLength(11)
+    expect(menuItems(wrapper)[0].text()).toContain('文本')
+    // 空画布：粘贴（无剪贴板）/撤销重做（无历史）/整理（无节点）全 disabled
+    for (const i of [7, 8, 9, 10]) {
+      expect(menuItems(wrapper)[i].attributes('disabled')).toBeDefined()
+      expect(menuItems(wrapper)[i].attributes('aria-disabled')).toBe('true')
+    }
+  })
+
+  it('② 点节点类型项：节点落在右键点 flow 坐标（project identity=client 坐标直通）+菜单即关', async () => {
+    const wrapper = mount(CanvasBoard)
+    await openAt(wrapper, 300, 220)
+    await menuItems(wrapper)[0].trigger('click') // 文本
+    expect(wrapper.find('.canvas-board__ctx-menu').exists()).toBe(false)
+    const snap = vm(wrapper).getSnapshot()
+    expect(snap.nodes).toHaveLength(1)
+    expect(snap.nodes[0].position).toEqual({ x: 300, y: 220 })
+  })
+
+  it('③ 节点/普通边/工具条/组框右键：拦默认菜单但不开自绘菜单（节点右键=存资产库链不叠加；组框分支细化1 先立）', () => {
+    const wrapper = mount(CanvasBoard)
+    for (const cls of ['vue-flow__node', 'vue-flow__edge', 'canvas-board__toolbar', 'canvas-board__groupbox']) {
+      const el = rightClickOnClass(wrapper, cls)
+      expect(wrapper.find('.canvas-board__ctx-menu').exists()).toBe(false)
+      expect(el.dataset).toBeDefined() // 占位断言：每类都走到
+    }
+  })
+
+  it('④ 粘贴项=Ctrl+V 同链且落点强制右键点：单节点剪贴板粘贴 → 新节点恰在 (300,220)', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot({ nodes: [{ id: 'n1', type: 'text', position: { x: 50, y: 50 }, data: { label: 'A' } }], edges: [] })
+    selState.nodes = [{ id: 'n1' }]
+    wrapper.getComponent(VueFlowStub).vm.$emit('selection-end')
+    await flushPromises()
+    key('c')
+    expect(vm(wrapper).clipboard).not.toBeNull()
+    await openAt(wrapper, 300, 220)
+    expect(menuItems(wrapper)[7].attributes('disabled')).toBeUndefined() // 有剪贴板 → 可点
+    await menuItems(wrapper)[7].trigger('click')
+    expect(wrapper.find('.canvas-board__ctx-menu').exists()).toBe(false)
+    const snap = vm(wrapper).getSnapshot()
+    expect(snap.nodes).toHaveLength(2)
+    expect(snap.nodes.find(n => n.id !== 'n1')!.position).toEqual((() => {
+      // 落点契约=planPastePositions 同式：右键点为 bbox 中心锚（非左上角），snap 16 网格
+      const clip = vm(wrapper).clipboard!
+      const snap16 = (v: number) => Math.round(v / 16) * 16
+      return {
+        x: snap16(50 + 300 - (clip.bbox.left + clip.bbox.width / 2)),
+        y: snap16(50 + 220 - (clip.bbox.top + clip.bbox.height / 2))
+      }
+    })())
+  })
+
+  it('⑤ 撤销/整理接线：添加后撤销可用（撤回到空）、整理随之可用——disabled 态实时跟随', async () => {
+    const wrapper = mount(CanvasBoard)
+    await openAt(wrapper, 100, 100)
+    await menuItems(wrapper)[0].trigger('click') // 添加「文本」
+    await openAt(wrapper, 120, 120)
+    expect(menuItems(wrapper)[8].attributes('disabled')).toBeUndefined() // 撤销可点
+    expect(menuItems(wrapper)[10].attributes('disabled')).toBeUndefined() // 整理可点
+    await menuItems(wrapper)[8].trigger('click') // 撤销
+    expect(vm(wrapper).getSnapshot().nodes).toHaveLength(0)
+    expect(vm(wrapper).canUndo).toBe(false)
+  })
+
+  it('⑥ Esc 逐层退：开着只关菜单不外传（外层 document 监听收不到）；关了以后 Esc 放行', async () => {
+    const wrapper = mount(CanvasBoard)
+    await openAt(wrapper, 300, 220)
+    const outerHits: number[] = []
+    const outer = () => outerHits.push(1)
+    document.addEventListener('keydown', outer)
+    // 真实传播路径：body 派发冒泡 → window 捕获层先拦（stopPropagation）→ document 监听不触发
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await nextTick() // v-if 卸载是异步渲染，等一拍再断 DOM
+    expect(wrapper.find('.canvas-board__ctx-menu').exists()).toBe(false)
+    expect(outerHits).toHaveLength(0)
+    // 菜单已关：监听已摘，同事件外层照常收到（不再吞 Esc）
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    expect(outerHits).toHaveLength(1)
+    document.removeEventListener('keydown', outer)
+  })
+
+  it('⑦ 菜单开着再右键空白=挪位置不叠两层；左键点 overlay 他处=关', async () => {
+    const wrapper = mount(CanvasBoard)
+    await openAt(wrapper, 300, 220)
+    // 右键打在 overlay 上：拦默认后冒泡到根 handler → 坐标覆写=挪位置（spec ⑦）
+    await wrapper.find('.canvas-board__ctx-overlay').trigger('contextmenu', { clientX: 500, clientY: 400 })
+    expect(wrapper.find('.canvas-board__ctx-menu').exists()).toBe(true)
+    expect(wrapper.find('.canvas-board__ctx-menu').attributes('style')).toContain('left: 500px')
+    await wrapper.find('.canvas-board__ctx-overlay').trigger('click')
+    expect(wrapper.find('.canvas-board__ctx-menu').exists()).toBe(false)
+  })
+
+  it('⑧ 卸载兜底：菜单开着卸载组件 → window 捕获监听已摘，Esc 不再被吞（修复X P4 教训）', async () => {
+    const wrapper = mount(CanvasBoard)
+    await openAt(wrapper, 300, 220)
+    wrapper.unmount()
+    const outerHits: number[] = []
+    const outer = () => outerHits.push(1)
+    document.addEventListener('keydown', outer)
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    expect(outerHits).toHaveLength(1)
+    document.removeEventListener('keydown', outer)
   })
 })
