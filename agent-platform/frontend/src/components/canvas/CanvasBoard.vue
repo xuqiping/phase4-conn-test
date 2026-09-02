@@ -49,6 +49,7 @@
         v-for="b in groupBoxes"
         :key="b.id"
         class="canvas-board__groupbox"
+        :class="{ 'canvas-board__groupbox--selected': b.id === groupSelectedId }"
         :style="{
           left: `${b.left}px`,
           top: `${b.top}px`,
@@ -57,7 +58,11 @@
           borderColor: b.color
         }"
       >
-        <div class="canvas-board__groupbox-head" :style="{ background: b.color }">
+        <div
+          class="canvas-board__groupbox-head"
+          :style="{ background: b.color }"
+          @pointerdown.self="selectGroup(b.id)"
+        >
           <span
             class="canvas-board__groupbox-name"
             role="button"
@@ -395,6 +400,11 @@ const selectedEdgeId = ref('')
  * delete-key-code 已置 null —— 删除只走应用层，杜绝「库 Backspace 静默删 + 应用单删」双删。
  */
 const multiSelectedIds = ref<string[]>([])
+/**
+ * 修复XI（XI-4 D1）：组选态——点组框空白=选整组（高亮+整组拖动/带组复制复用）。
+ * 与节点选中/多选互斥（selectGroup 清其余，节点选中链反清组选）；Delete 不接组选（Q5 拍板）。
+ */
+const groupSelectedId = ref<string | null>(null)
 const boardRoot = ref<HTMLElement | null>(null)
 
 /**
@@ -958,6 +968,10 @@ watch(nodes, (list) => {
       emit('structure-changed')
     }
   }
+  // 修复XI D1：组选态正挂被解散组（含 loadSnapshot 整体换 groups 清空的路径）→ 清空防悬挂
+  if (groupSelectedId.value && !groups.value.some(g => g.id === groupSelectedId.value)) {
+    groupSelectedId.value = null
+  }
 }, { deep: false })
 
 /**
@@ -966,9 +980,10 @@ watch(nodes, (list) => {
  * 排除可编辑元素（input/textarea/contenteditable/naive 控件），避免误删用户输入。
  */
 function onWindowKeydown(e: KeyboardEvent) {
-  // Esc：清空多选（不删）——框选误操作最顺手的退出键
-  if (e.key === 'Escape' && multiSelectedIds.value.length) {
+  // Esc：清空多选/组选（不删、不吞事件——组选非模态，菜单/灯箱才吞）——框选误操作最顺手的退出键
+  if (e.key === 'Escape' && (multiSelectedIds.value.length || groupSelectedId.value)) {
     clearMultiSelection()
+    groupSelectedId.value = null
     return
   }
   // 修复VII（2x 增补①）：Ctrl/Cmd+C 复制 / V 粘贴节点子图（VII-1）。先于 Delete 分支，
@@ -980,14 +995,21 @@ function onWindowKeydown(e: KeyboardEvent) {
   }
   if (e.key !== 'Delete' && e.key !== 'Backspace') return
   if (!selectedNodeId.value && !selectedEdgeId.value && !multiSelectedIds.value.length) return
-  const t = e.target as HTMLElement | null
-  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable
-    || t.closest('.n-input,.n-base-selection,.mention-ta'))) return
+  // 修复XI D1 实测暴露的存量隐患：target 可能是 window/document（无 closest，isTypingTarget
+  // 注释早有预警）——统一走 isTypingTarget（instanceof 守卫 + 同款可编辑全集），不再裸调 closest。
+  if (isTypingTarget(e.target)) return
   e.preventDefault()
   deleteSelected()
 }
-onMounted(() => window.addEventListener('keydown', onWindowKeydown))
-onUnmounted(() => window.removeEventListener('keydown', onWindowKeydown))
+onMounted(() => {
+  window.addEventListener('keydown', onWindowKeydown)
+  // 修复XI D1：捕获段预判组框空白点击（先于 vue-flow pane 处理；boardRoot 内任何 target 均过此）
+  boardRoot.value?.addEventListener('pointerdown', onBoardPointerDownCapture, { capture: true })
+})
+onUnmounted(() => {
+  window.removeEventListener('keydown', onWindowKeydown)
+  boardRoot.value?.removeEventListener('pointerdown', onBoardPointerDownCapture, { capture: true })
+})
 
 // ---- 修复VII（2x 增补①）：节点复制粘贴（VII-1，Q1 多选子图 / Q2 鼠标落点） ----
 
@@ -1417,6 +1439,7 @@ function dispatchGroupPortDrop(st: GroupDragState, event: PointerEvent) {
 }
 
 function onNodeClick({ node }: NodeMouseEvent) {
+  groupSelectedId.value = null
   selectedNodeId.value = node.id
   selectedEdgeId.value = ''
   clearMultiSelection()
@@ -1435,6 +1458,7 @@ function onNodeClick({ node }: NodeMouseEvent) {
  */
 function onSelectionEnd() {
   nextTick(() => {
+    groupSelectedId.value = null // 修复XI D1：框选起手=离开组选态（互斥）
     const ids = getSelectedNodes.value.map((n: { id: string }) => n.id)
     if (ids.length >= 2) {
       selectedNodeId.value = ''
@@ -1524,6 +1548,7 @@ function focusNodeById(id: string) {
  * boardRoot 上的 @contextmenu.prevent 已拦掉浏览器默认菜单。
  */
 function onNodeContextMenu({ node }: NodeMouseEvent) {
+  groupSelectedId.value = null
   selectedNodeId.value = node.id
   selectedEdgeId.value = ''
   clearMultiSelection()
@@ -1532,6 +1557,7 @@ function onNodeContextMenu({ node }: NodeMouseEvent) {
 }
 
 function onEdgeClick({ edge }: EdgeMouseEvent) {
+  groupSelectedId.value = null
   selectedNodeId.value = ''
   selectedEdgeId.value = edge.id
   clearMultiSelection()
@@ -1540,11 +1566,58 @@ function onEdgeClick({ edge }: EdgeMouseEvent) {
 }
 
 function onPaneClick() {
+  // 修复XI（D1）：组框空白点击转正组选——pointerdown 捕获段已判定落点在某组包围盒空白
+  // （框体穿透设计不变），此处不进清选中链；拖框（selection）则不会走到 pane-click。
+  if (groupClickCandidate) {
+    selectGroup(groupClickCandidate)
+    groupClickCandidate = null
+    boardRoot.value?.focus()
+    return
+  }
+  groupSelectedId.value = null
   selectedNodeId.value = ''
   selectedEdgeId.value = ''
   clearMultiSelection()
   boardRoot.value?.focus()
   emit('node-selected', null)
+}
+
+// ---- 修复XI（XI-4 D1）：组选态与「点组框空白=选整组」 ----
+
+/** 选中整组：清节点单选/多选（互斥），高亮 groupbox--selected；Delete 链对组选态无动作（Q5）。 */
+function selectGroup(id: string) {
+  groupSelectedId.value = id
+  selectedNodeId.value = ''
+  selectedEdgeId.value = ''
+  clearMultiSelection()
+  emit('node-selected', null)
+}
+
+/**
+ * 组框空白点击候选（pointerdown 捕获段预判 → pane-click 转正）：
+ * - 组框体 pointer-events:none 穿透（修复VIII 设计），空白点击的 DOM 落点是 pane——
+ *   在 boardRoot 捕获段（先于 vue-flow pane 处理）按坐标命中 groupBoxes 判定。
+ * - 排除：组头/组端口/组边（自有交互）、节点/普通边（成员点击=现状单选链，反清组选）、
+ *   Shift 起手（框选）、非左键。
+ * - 只记候选不直接选：若随后是拖框/平移，pane-click 不来，候选自然作废（onSelectionEnd 亦清）。
+ */
+let groupClickCandidate: string | null = null
+function onBoardPointerDownCapture(e: PointerEvent) {
+  groupClickCandidate = null
+  if (e.button !== 0 || e.shiftKey) return
+  const t = e.target as HTMLElement | null
+  if (!(t instanceof HTMLElement)) return
+  if (t.closest('.canvas-board__groupbox-head, .canvas-board__groupbox-port, '
+    + '.canvas-board__groupedge, .vue-flow__node, .vue-flow__edge')) return
+  if (!t.closest('.vue-flow__pane')) return
+  const rect = boardRoot.value?.getBoundingClientRect()
+  if (!rect) return
+  const x = e.clientX - rect.left
+  const y = e.clientY - rect.top
+  const hit = groupBoxes.value.find(
+    b => x >= b.left && x <= b.left + b.width && y >= b.top && y <= b.top + b.height
+  )
+  groupClickCandidate = hit?.id ?? null
 }
 
 function deleteSelected() {
@@ -2077,6 +2150,13 @@ defineExpose({
   border: 1.5px dashed;
   border-radius: 10px;
   pointer-events: none;
+}
+
+/* 修复XI D1：组选高亮（点组框空白/组头空白选中整组）——实线+外辉光，与节点选中态同语言 */
+.canvas-board__groupbox--selected {
+  border-style: solid;
+  border-width: 2px;
+  box-shadow: 0 0 0 4px rgba(91, 141, 239, 0.18), 0 0 18px rgba(91, 141, 239, 0.25);
 }
 
 .canvas-board__groupbox-head {

@@ -1208,3 +1208,139 @@ describe('CanvasBoard · 官方库插入链（修复XI B3）', () => {
     expect(snap.edges).toHaveLength(0)
   })
 })
+
+// 修复XI（2x 未解决④，D1）：组框点选分层——点组框空白=选整组（高亮），与节点选中/框选/Esc
+// 互斥；Delete 组选态无动作（Q5 拍板：组选只接拖动+复制，不接删除）。
+describe('CanvasBoard · 组框点选分层（修复XI D1）', () => {
+  type BoardVm12 = ReturnType<typeof boardVm> & {
+    loadSnapshot: (s: { nodes?: unknown[]; edges?: unknown[]; groups?: unknown[] }) => void
+    getSnapshot: () => { nodes: { id: string }[] }
+  }
+  const vm = (w: ReturnType<typeof mount>) => boardVm(w) as unknown as BoardVm12
+  const node = (id: string, x = 0, y = 0) => ({ id, type: 'text', position: { x, y }, data: { label: id } })
+  const groupedSnap = () => ({
+    nodes: [node('m1'), node('m2', 50, 50), node('ext', 600, 0)],
+    edges: [],
+    groups: [{ id: 'g1', name: '组1', memberIds: ['m1', 'm2'], color: '#5b8def' }]
+  })
+  const rafFlush = () => new Promise<void>(r => requestAnimationFrame(() => r()))
+  const key = (k: string) =>
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }))
+
+  /** 组框空白点击的全链模拟：pane div 挂进 boardRoot（捕获监听可达）→ pointerdown → pane-click。 */
+  const clickGroupBlank = async (w: ReturnType<typeof mount>, x = 10, y = 10) => {
+    const pane = document.createElement('div')
+    pane.className = 'vue-flow__pane'
+    w.element.appendChild(pane)
+    pane.dispatchEvent(new MouseEvent('pointerdown', { clientX: x, clientY: y, bubbles: true, button: 0 }))
+    w.getComponent(VueFlowStub).vm.$emit('pane-click')
+    pane.remove()
+    await nextTick()
+  }
+  const boxClass = (w: ReturnType<typeof mount>) => w.find('.canvas-board__groupbox')
+
+  it('① 点组框空白（pane 落点在包围盒内）→ 选中整组高亮 + 属性面板清空', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(groupedSnap())
+    // watch(pre) 微任务先于 rAF 排帧：先 flush 让 scheduleGroupBounds 挂上 rAF，再等帧
+    await flushPromises()
+    await rafFlush()
+    expect(boxClass(wrapper).exists()).toBe(true)
+    await clickGroupBlank(wrapper)
+    expect(boxClass(wrapper).classes()).toContain('canvas-board__groupbox--selected')
+    const emits = wrapper.emitted('node-selected')!
+    expect(emits[emits.length - 1][0]).toBeNull()
+  })
+
+  it('② 点组外空白 → 不选组且组选清（既有清选中链不变）', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(groupedSnap())
+    // watch(pre) 微任务先于 rAF 排帧：先 flush 让 scheduleGroupBounds 挂上 rAF，再等帧
+    await flushPromises()
+    await rafFlush()
+    await clickGroupBlank(wrapper) // 先选中
+    expect(boxClass(wrapper).classes()).toContain('canvas-board__groupbox--selected')
+    await clickGroupBlank(wrapper, 900, 500) // ext(600,0) 外远点，不在任何包围盒
+    expect(boxClass(wrapper).classes()).not.toContain('canvas-board__groupbox--selected')
+  })
+
+  it('③ 点成员节点 → 组选清 + 该节点单选（现状链反清，互斥）', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(groupedSnap())
+    // watch(pre) 微任务先于 rAF 排帧：先 flush 让 scheduleGroupBounds 挂上 rAF，再等帧
+    await flushPromises()
+    await rafFlush()
+    await clickGroupBlank(wrapper)
+    wrapper.getComponent(VueFlowStub).vm.$emit('node-click', { node: { id: 'm1' } })
+    await nextTick()
+    expect(boxClass(wrapper).classes()).not.toContain('canvas-board__groupbox--selected')
+    const emits = wrapper.emitted('node-selected')!
+    expect((emits[emits.length - 1][0] as { id: string }).id).toBe('m1')
+  })
+
+  it('④ Esc / 框选起手 → 组选清（不吞事件、非模态）', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(groupedSnap())
+    // watch(pre) 微任务先于 rAF 排帧：先 flush 让 scheduleGroupBounds 挂上 rAF，再等帧
+    await flushPromises()
+    await rafFlush()
+    await clickGroupBlank(wrapper)
+    key('Escape')
+    await nextTick()
+    expect(boxClass(wrapper).classes()).not.toContain('canvas-board__groupbox--selected')
+
+    await clickGroupBlank(wrapper)
+    selState.nodes = [{ id: 'm1' }, { id: 'm2' }]
+    wrapper.getComponent(VueFlowStub).vm.$emit('selection-end')
+    await flushPromises()
+    expect(boxClass(wrapper).classes()).not.toContain('canvas-board__groupbox--selected')
+  })
+
+  it('⑤ 组头空白（pointerdown.self）→ 选中整组（组头=name/✕ 之外的条带）', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(groupedSnap())
+    // watch(pre) 微任务先于 rAF 排帧：先 flush 让 scheduleGroupBounds 挂上 rAF，再等帧
+    await flushPromises()
+    await rafFlush()
+    const head = wrapper.find('.canvas-board__groupbox-head')
+    expect(head.exists()).toBe(true)
+    await head.trigger('pointerdown') // test-utils trigger target=head 自身=self
+    expect(boxClass(wrapper).classes()).toContain('canvas-board__groupbox--selected')
+  })
+
+  it('⑥ Delete/Backspace 组选态 → 零动作（成员不删、不落库，Q5）', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(groupedSnap())
+    // watch(pre) 微任务先于 rAF 排帧：先 flush 让 scheduleGroupBounds 挂上 rAF，再等帧
+    await flushPromises()
+    await rafFlush()
+    await clickGroupBlank(wrapper)
+    const before = vm(wrapper).getSnapshot().nodes.length
+    const changedBefore = (wrapper.emitted('structure-changed') ?? []).length
+    key('Delete')
+    key('Backspace')
+    await nextTick()
+    expect(vm(wrapper).getSnapshot().nodes).toHaveLength(before)
+    expect((wrapper.emitted('structure-changed') ?? []).length).toBe(changedBefore)
+    // 组选态仍在（Delete 不顺手清组选，组选退出只有 Esc/点选切换）
+    expect(boxClass(wrapper).classes()).toContain('canvas-board__groupbox--selected')
+  })
+
+  it('⑦ 组被解散（✕ 或成员清空）→ 组选态悬挂清理（高亮不残留）', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(groupedSnap())
+    // watch(pre) 微任务先于 rAF 排帧：先 flush 让 scheduleGroupBounds 挂上 rAF，再等帧
+    await flushPromises()
+    await rafFlush()
+    await clickGroupBlank(wrapper)
+    vm(wrapper).loadSnapshot({ nodes: [node('m1')], edges: [], groups: [] })
+    await flushPromises()
+    await rafFlush()
+    // 组没了框也不在——且选中态已被悬挂清理：重载同 id 组不误亮
+    expect(wrapper.find('.canvas-board__groupbox').exists()).toBe(false)
+    vm(wrapper).loadSnapshot(groupedSnap())
+    await flushPromises()
+    await rafFlush()
+    expect(boxClass(wrapper).classes()).not.toContain('canvas-board__groupbox--selected')
+  })
+})
