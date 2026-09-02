@@ -1945,8 +1945,36 @@ onUnmounted(() => {
   window.removeEventListener('keydown', onCtxMenuEsc, { capture: true })
 })
 
+/**
+ * 修复XI B3（spec XI-2⑤）：视口中心建节点（官方库插入落点）——rect 中心换算 flow 坐标
+ * （同 pasteSubgraph 无鼠标回落口径）。返回新节点 id 供调用方接 resolve 写回。
+ */
+function addNodeAtCenter(partial: { type?: string; data?: Record<string, unknown> }): string {
+  const rect = (vueFlowRef.value as HTMLElement | null)?.getBoundingClientRect()
+    ?? { left: 0, top: 0, width: 0, height: 0 }
+  const target = project({ x: rect.width / 2, y: rect.height / 2 })
+  return addNode({ ...partial, position: target })
+}
+
+/**
+ * 修复XI B3（plan 细化4）：官方库插入失败回滚——静默删节点**不入撤销栈**，并弹出该次
+ * add 留下的历史步（add 入栈的是「加节点前」快照，弹掉后撤销链不留「撤了没变化」的空步）。
+ * 连带清边/组边（对端组边级联同 removeNodes 口径），structure-changed 照发落库防残留。
+ */
+function abortNodeAdd(nodeId: string) {
+  nodes.value = nodes.value.filter(n => n.id !== nodeId)
+  edges.value = edges.value.filter(e => e.source !== nodeId && e.target !== nodeId)
+  dropGroupEdgesOfNodes([nodeId])
+  const top = undoStack[undoStack.length - 1]
+  if (top && top.tag === 'add') undoStack.pop()
+  scheduleStoreReconcile()
+  emit('structure-changed')
+}
+
 defineExpose({
   addNode, addEdge, appendEdges, removeNodes, loadSnapshot, getSnapshot, getNode, getEdges, getNodes,
+  // 修复XI B3：官方库插入链（中心建节点 + 失败静默回滚）
+  addNodeAtCenter, abortNodeAdd,
   // 修复VIII：组边只读出口（CanvasView resolveEdgesForFlow 合并入口用）
   getGroupEdges,
   updateNodeData, focusNodeById, dragMode, setDragMode,

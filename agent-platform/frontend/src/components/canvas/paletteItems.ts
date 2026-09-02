@@ -31,3 +31,26 @@ export const PALETTE_ITEMS: PaletteItem[] = [
   { type: 'storyboard', label: '分镜', icon: FilmOutline },
   { type: 'director', label: '导演台', icon: CubeOutline }
 ]
+
+/**
+ * 修复XI B3（2x 未解决②，spec XI-2⑤）：资产媒体类型 → 画布节点类型（官方库插入链反向映射，
+ * AssetPicker NODE_TO_MEDIA 的逆）。两段回落：已知词汇直映；自定义类型按处理类别
+ * （TEXT/IMAGE/VIDEO/AUDIO）回落；都 miss 退 text（永不 undefined，建节点恒有类型）。
+ */
+const MEDIA_TO_NODE: Record<string, string> = {
+  提示词: 'text',
+  剧本: 'script',
+  分镜: 'storyboard',
+  图片: 'image',
+  视频: 'video',
+  音频: 'audio'
+}
+const CATEGORY_FALLBACK: Record<string, string> = {
+  TEXT: 'text',
+  IMAGE: 'image',
+  VIDEO: 'video',
+  AUDIO: 'audio'
+}
+export function mediaToNodeType(mediaType: string, mediaCategory?: string | null): string {
+  return MEDIA_TO_NODE[mediaType] ?? CATEGORY_FALLBACK[mediaCategory ?? ''] ?? 'text'
+}

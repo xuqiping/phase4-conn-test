@@ -1150,3 +1150,61 @@ describe('CanvasBoard · 画布右键菜单（修复XI A2）', () => {
     document.removeEventListener('keydown', outer)
   })
 })
+
+/** 修复XI B3（spec XI-2⑤ 细化4）：官方库插入链落点与失败回滚。 */
+describe('CanvasBoard · 官方库插入链（修复XI B3）', () => {
+  type BoardVmB3 = ReturnType<typeof boardVm> & {
+    loadSnapshot: (s: { nodes: unknown[]; edges: unknown[] }) => void
+    getSnapshot: () => { nodes: { id: string; position: { x: number; y: number } }[]; edges: { id: string }[] }
+    addNodeAtCenter: (p: { type?: string; data?: Record<string, unknown> }) => string
+    abortNodeAdd: (id: string) => void
+    addEdge: (source: string, target: string) => string
+    canUndo: boolean
+    undo: () => void
+  }
+  const vm = (w: ReturnType<typeof mount>) => boardVm(w) as unknown as BoardVmB3
+
+  beforeEach(() => {
+    vfState.el = { getBoundingClientRect: () => ({ left: 40, top: 60, width: 800, height: 600 }) }
+  })
+  afterEach(() => { vfState.el = null })
+
+  it('① addNodeAtCenter：落点=视口中心（rect 中心换算，project identity），返回新 id 可 getNode', () => {
+    const wrapper = mount(CanvasBoard)
+    const id = vm(wrapper).addNodeAtCenter({ type: 'image', data: { label: '官方资产' } })
+    const snap = vm(wrapper).getSnapshot()
+    expect(snap.nodes).toHaveLength(1)
+    expect(id).toBe(snap.nodes[0].id)
+    expect(snap.nodes[0].position).toEqual({ x: 400, y: 300 }) // width/2, height/2（project identity）
+  })
+
+  it('② abortNodeAdd：静默删节点、不入撤销栈且弹出该次 add 历史步（undo 链无空步）', () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot({ nodes: [{ id: 'keep', type: 'text', position: { x: 0, y: 0 }, data: { label: 'K' } }], edges: [] })
+    const id = vm(wrapper).addNodeAtCenter({ type: 'text', data: { label: '官方' } })
+    expect(vm(wrapper).canUndo).toBe(true) // add 的历史步在
+    const before = (wrapper.emitted('structure-changed') ?? []).length
+
+    vm(wrapper).abortNodeAdd(id)
+
+    const snap = vm(wrapper).getSnapshot()
+    expect(snap.nodes.map((n) => n.id)).toEqual(['keep']) // 节点删净
+    expect(vm(wrapper).canUndo).toBe(false) // 该次 add 步被弹出（loadSnapshot 清栈后无其他历史）
+    expect((wrapper.emitted('structure-changed') ?? []).length - before).toBe(1) // 落库照发防残留
+  })
+
+  it('③ abortNodeAdd 连带边：与被删节点相连的边一并清（快照态边，无历史步参与）', () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot({
+      nodes: [
+        { id: 'keep', type: 'text', position: { x: 0, y: 0 }, data: { label: 'K' } },
+        { id: 'victim', type: 'text', position: { x: 9, y: 9 }, data: { label: 'V' } }
+      ],
+      edges: [{ id: 'e1', source: 'victim', target: 'keep' }]
+    })
+    vm(wrapper).abortNodeAdd('victim')
+    const snap = vm(wrapper).getSnapshot()
+    expect(snap.nodes.map((n) => n.id)).toEqual(['keep'])
+    expect(snap.edges).toHaveLength(0)
+  })
+})

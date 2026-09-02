@@ -137,6 +137,17 @@
             <n-icon :component="p.icon" />
             <span>{{ p.label }}</span>
           </div>
+          <!-- 修复XI B3（2x 未解决②）：官方库入口——非 draggable 动作条目（不产 dataTransfer，只开大卡片） -->
+          <div class="canvas-palette__sep" aria-hidden="true"></div>
+          <button
+            type="button"
+            class="canvas-palette__item canvas-palette__item--action"
+            aria-label="打开官方库（浏览官方项目资产并插入画布）"
+            @click="officialShow = true"
+          >
+            <n-icon :component="LibraryOutline" />
+            <span>官方库</span>
+          </button>
         </aside>
 
         <!-- 画布板 -->
@@ -294,6 +305,13 @@
         @picked="onAssetPicked"
       />
 
+      <!-- 修复XI B3（2x 未解决②）：官方库大卡片——浏览官方项目资产并插入画布（选→建节点→resolve→写回） -->
+      <OfficialLibrary
+        v-model:show="officialShow"
+        :picking-id="officialPickingId"
+        @picked="onOfficialPicked"
+      />
+
       <!-- 3x-C2 一键关联预览确认弹窗 -->
       <AutoAssociateDialog
         v-model:show="showAssociate"
@@ -390,7 +408,7 @@ import {
 } from 'naive-ui'
 import {
   AddOutline, AppsOutline, ArrowBackOutline, SaveOutline, TrashOutline, RefreshOutline,
-  FilmOutline, GitBranchOutline
+  FilmOutline, GitBranchOutline, LibraryOutline
 } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
 import { useProjectGroupStore } from '@/stores/projectGroup'
@@ -401,7 +419,7 @@ import { buildCanvasReferenceList, resolveCanvasVideoAttachments, type CanvasRef
 import { expandGroupCandidates } from '@/utils/groupCandidates'
 import { pollMediaTask } from '@/utils/mediaTaskPolling'
 import { assetApi, assetBridgeApi } from '@/api/assets'
-import type { ResolveVO } from '@/types/asset'
+import type { AssetVO, ResolveVO } from '@/types/asset'
 import { MEDIA_TYPE } from '@/types/asset'
 import type { CanvasGroup, CanvasNode, CanvasSnapshot, MentionCandidate, StoryboardSegment } from '@/types/canvas'
 import CanvasBoard from '@/components/canvas/CanvasBoard.vue'
@@ -415,7 +433,8 @@ import { ANNOTATE_COLOR_NAMES } from '@/api/canvas'
 import StoryboardPanel from '@/components/canvas/StoryboardPanel.vue'
 import SaveToAssetDialog from '@/components/canvas/SaveToAssetDialog.vue'
 import AssetPicker from '@/components/canvas/AssetPicker.vue'
-import { PALETTE_ITEMS } from '@/components/canvas/paletteItems'
+import OfficialLibrary from '@/components/canvas/OfficialLibrary.vue'
+import { PALETTE_ITEMS, mediaToNodeType } from '@/components/canvas/paletteItems'
 import AutoAssociateDialog from '@/components/canvas/AutoAssociateDialog.vue'
 import type { CropRect } from '@/types/canvas'
 import { ancestors, interpolate, findBrokenMentions, uniqueLabel, type MentionResolver } from '@/utils/interpolate'
@@ -2172,6 +2191,38 @@ async function onAssetPicked(payload: { node: CanvasNode; resolve: ResolveVO }) 
   message.success(`已引用资产 ${payload.resolve.name ?? ''} v${payload.resolve.version}`)
 }
 
+/**
+ * 修复XI B3（2x 未解决②，spec XI-2⑤）：官方库选定 → 插入画布链（与 AssetPicker 相反序：
+ * 先建节点再 resolve——大卡片浏览时目标节点尚不存在）。类型=媒体类型反向映射
+ * （自定义类型按 mediaCategory 回落，paletteItems.mediaToNodeType 单源）；失败回滚
+ * （plan 细化4）＝toast + 静默删节点（不入撤销栈）+ 大卡片保持开着重选。
+ */
+const officialShow = ref(false)
+const officialPickingId = ref<number | null>(null)
+async function onOfficialPicked(payload: { asset: AssetVO }) {
+  if (officialPickingId.value !== null) return
+  const { asset } = payload
+  officialPickingId.value = asset.id
+  const type = mediaToNodeType(asset.mediaType, asset.mediaCategory)
+  const newId = boardRef.value?.addNodeAtCenter({ type, data: { label: asset.name } })
+  if (!newId) {
+    officialPickingId.value = null
+    return
+  }
+  try {
+    const res = await assetBridgeApi.resolve(asset.id, { canvasId: editingId.value ?? undefined, nodeId: newId })
+    const node = boardRef.value?.getNode(newId)
+    if (node) await applyAssetResolve(node, res.data.data)
+    message.success(`已插入资产 ${res.data.data.name ?? ''} v${res.data.data.version}`)
+    officialShow.value = false
+  } catch (e: unknown) {
+    message.error((e as { msg?: string })?.msg || '引用解析失败')
+    boardRef.value?.abortNodeAdd(newId)
+  } finally {
+    officialPickingId.value = null
+  }
+}
+
 /** 检查资产是否有新版：asset.get 比对 currentVersion > 节点绑定版（L6 不自动变，仅提示）。 */
 async function onCheckUpdate(node: CanvasNode) {
   const assetId = (node.data as Record<string, unknown>).assetId as number | undefined
@@ -3011,6 +3062,21 @@ function flushPendingSave() {
       background: var(--color-primary-light);
       color: var(--color-primary);
     }
+
+    /* 修复XI B3：官方库动作条目——非 draggable（button 重置 + 指针手型），与节点条目区隔 */
+    &--action {
+      width: 100%;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+    }
+  }
+
+  /* 节点条目与动作条目之间的分隔线 */
+  &__sep {
+    height: 1px;
+    margin: var(--spacing-1) 0;
+    background: var(--color-border-light);
   }
 }
 
