@@ -1227,12 +1227,14 @@ describe('CanvasBoard · 组框点选分层（修复XI D1）', () => {
   const key = (k: string) =>
     window.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }))
 
-  /** 组框空白点击的全链模拟：pane div 挂进 boardRoot（捕获监听可达）→ pointerdown → pane-click。 */
+  /** 组框空白点击的全链模拟：pane div 挂进 boardRoot（捕获监听可达）→ pointerdown → pointerup → pane-click。
+   * pointerup 必发（D2 起 pointerdown 开拖动会话，不收尾会跨用例泄漏 window 监听）。 */
   const clickGroupBlank = async (w: ReturnType<typeof mount>, x = 10, y = 10) => {
     const pane = document.createElement('div')
     pane.className = 'vue-flow__pane'
     w.element.appendChild(pane)
     pane.dispatchEvent(new MouseEvent('pointerdown', { clientX: x, clientY: y, bubbles: true, button: 0 }))
+    window.dispatchEvent(new MouseEvent('pointerup'))
     w.getComponent(VueFlowStub).vm.$emit('pane-click')
     pane.remove()
     await nextTick()
@@ -1342,5 +1344,154 @@ describe('CanvasBoard · 组框点选分层（修复XI D1）', () => {
     await flushPromises()
     await rafFlush()
     expect(boxClass(wrapper).classes()).not.toContain('canvas-board__groupbox--selected')
+  })
+})
+
+// 修复XI（2x 未解决④，D2）：整组拖动——选中组拖框空白=成员联动批移（rAF 合帧），
+// 松手一次 structure-changed；未选中拖=先选中不拖（Q6 点选分层）；组端口优先不被抢。
+describe('CanvasBoard · 整组拖动（修复XI D2）', () => {
+  type BoardVmD2 = ReturnType<typeof boardVm> & {
+    loadSnapshot: (s: { nodes?: unknown[]; edges?: unknown[]; groups?: unknown[] }) => void
+    getSnapshot: () => { nodes: { id: string; position: { x: number; y: number } }[] }
+  }
+  const vm = (w: ReturnType<typeof mount>) => boardVm(w) as unknown as BoardVmD2
+  const node = (id: string, x = 0, y = 0) => ({ id, type: 'text', position: { x, y }, data: { label: id } })
+  const groupedSnap = () => ({
+    nodes: [node('m1'), node('m2', 50, 50), node('ext', 600, 0)],
+    edges: [],
+    groups: [{ id: 'g1', name: '组1', memberIds: ['m1', 'm2'], color: '#5b8def' }]
+  })
+  const rafFlush = () => new Promise<void>(r => requestAnimationFrame(() => r()))
+
+  /** 组框空白拖动全链：pane pointerdown（捕获段开拖动会话）→ window pointermove 序列 → pointerup。 */
+  const dragGroupBlank = async (
+    w: ReturnType<typeof mount>,
+    from: [number, number],
+    moves: Array<[number, number]>,
+    up: [number, number]
+  ) => {
+    const pane = document.createElement('div')
+    pane.className = 'vue-flow__pane'
+    w.element.appendChild(pane)
+    pane.dispatchEvent(new MouseEvent('pointerdown', { clientX: from[0], clientY: from[1], bubbles: true, button: 0 }))
+    for (const [mx, my] of moves) {
+      window.dispatchEvent(new MouseEvent('pointermove', { clientX: mx, clientY: my }))
+      await nextTick()
+    }
+    window.dispatchEvent(new MouseEvent('pointerup', { clientX: up[0], clientY: up[1] }))
+    pane.remove()
+    await flushPromises()
+    await rafFlush()
+  }
+  const boot = async (w: ReturnType<typeof mount>) => {
+    vm(w).loadSnapshot(groupedSnap())
+    await flushPromises()
+    await rafFlush()
+  }
+  const pos = (w: ReturnType<typeof mount>, id: string) =>
+    vm(w).getSnapshot().nodes.find(n => n.id === id)!.position
+  const boxClass = (w: ReturnType<typeof mount>) => w.find('.canvas-board__groupbox')
+  /** 点选选中组（D1 全链），供拖动用例起手。 */
+  const selectGroup = async (w: ReturnType<typeof mount>) => {
+    const pane = document.createElement('div')
+    pane.className = 'vue-flow__pane'
+    w.element.appendChild(pane)
+    pane.dispatchEvent(new MouseEvent('pointerdown', { clientX: 10, clientY: 10, bubbles: true, button: 0 }))
+    window.dispatchEvent(new MouseEvent('pointerup'))
+    w.getComponent(VueFlowStub).vm.$emit('pane-click')
+    pane.remove()
+    await nextTick()
+  }
+
+  it('① 选中态拖框空白 → 全成员坐标批移 +delta（zoom=1），非成员不动', async () => {
+    const wrapper = mount(CanvasBoard)
+    await boot(wrapper)
+    await selectGroup(wrapper)
+    const changedBefore = (wrapper.emitted('structure-changed') ?? []).length
+    // 越阈首帧只定基线（吞掉首段，标准拖动节流语义），位移从基线起算：60→110 = +50
+    await dragGroupBlank(wrapper, [10, 10], [[60, 10], [110, 10]], [110, 10])
+    expect(pos(wrapper, 'm1').x).toBe(50)
+    expect(pos(wrapper, 'm1').y).toBe(0)
+    expect(pos(wrapper, 'm2').x).toBe(100)
+    expect(pos(wrapper, 'ext').x).toBe(600) // 组外成员不联动
+    expect((wrapper.emitted('structure-changed') ?? []).length).toBe(changedBefore + 1)
+  })
+
+  it('② 未选中拖=先选中不拖：高亮转正、坐标零变、零落库（Q6 点选分层）', async () => {
+    const wrapper = mount(CanvasBoard)
+    await boot(wrapper)
+    await dragGroupBlank(wrapper, [10, 10], [[80, 80]], [80, 80]) // 远超阈值=拖动意图
+    expect(boxClass(wrapper).classes()).toContain('canvas-board__groupbox--selected')
+    expect(pos(wrapper, 'm1').x).toBe(0)
+    expect(pos(wrapper, 'm2').x).toBe(50)
+    expect(wrapper.emitted('structure-changed')).toBeUndefined()
+  })
+
+  it('③ 未选中拖转正后再次拖=位移（两段式：先选中、后拖动）', async () => {
+    const wrapper = mount(CanvasBoard)
+    await boot(wrapper)
+    await dragGroupBlank(wrapper, [10, 10], [[80, 80]], [80, 80]) // 第一段：只选中
+    await dragGroupBlank(wrapper, [10, 10], [[60, 10], [110, 10]], [110, 10]) // 第二段：越阈定基线 60 后 +50
+    expect(pos(wrapper, 'm1').x).toBe(50)
+    expect(pos(wrapper, 'm2').x).toBe(100)
+  })
+
+  it('④ 拖动中零 structure-changed，松手恰好一次（防抖保存链不打扰）', async () => {
+    const wrapper = mount(CanvasBoard)
+    await boot(wrapper)
+    await selectGroup(wrapper)
+    const baseline = (wrapper.emitted('structure-changed') ?? []).length
+    // 手工驱动序列：down → 越阈 move（起点=该帧）→ 位移 move → rAF 已应用但未松手
+    const pane = document.createElement('div')
+    pane.className = 'vue-flow__pane'
+    wrapper.element.appendChild(pane)
+    pane.dispatchEvent(new MouseEvent('pointerdown', { clientX: 10, clientY: 10, bubbles: true, button: 0 }))
+    window.dispatchEvent(new MouseEvent('pointermove', { clientX: 60, clientY: 10 })) // 越阈，last=60
+    window.dispatchEvent(new MouseEvent('pointermove', { clientX: 110, clientY: 10 })) // +50 入帧
+    await rafFlush() // 帧已应用：位移生效但未 emit
+    expect(pos(wrapper, 'm1').x).toBe(50)
+    expect((wrapper.emitted('structure-changed') ?? []).length).toBe(baseline)
+    window.dispatchEvent(new MouseEvent('pointerup'))
+    pane.remove()
+    await flushPromises()
+    expect((wrapper.emitted('structure-changed') ?? []).length).toBe(baseline + 1)
+  })
+
+  it('⑤ rAF 合帧：多 move 一帧一批净位移；帧外新 move 不立即生效', async () => {
+    const wrapper = mount(CanvasBoard)
+    await boot(wrapper)
+    await selectGroup(wrapper)
+    const pane = document.createElement('div')
+    pane.className = 'vue-flow__pane'
+    wrapper.element.appendChild(pane)
+    pane.dispatchEvent(new MouseEvent('pointerdown', { clientX: 10, clientY: 10, bubbles: true, button: 0 }))
+    window.dispatchEvent(new MouseEvent('pointermove', { clientX: 14, clientY: 10 })) // 越阈（4px）
+    for (let i = 1; i <= 3; i++) {
+      window.dispatchEvent(new MouseEvent('pointermove', { clientX: 14 + i * 10, clientY: 10 })) // +10×3 同帧
+    }
+    await rafFlush()
+    expect(pos(wrapper, 'm1').x).toBe(30) // 三次 move 一帧净 +30（批改 nodes 模型）
+    window.dispatchEvent(new MouseEvent('pointermove', { clientX: 54, clientY: 10 })) // +10 帧外（上帧末 44）
+    expect(pos(wrapper, 'm1').x).toBe(30) // rAF 未到不生效（节流门）
+    await rafFlush()
+    expect(pos(wrapper, 'm1').x).toBe(40)
+    window.dispatchEvent(new MouseEvent('pointerup'))
+    pane.remove()
+    await flushPromises()
+  })
+
+  it('⑥ 组端口拖线优先：端口 pointerdown 不开整组拖动会话（成员零位移）', async () => {
+    const wrapper = mount(CanvasBoard)
+    await boot(wrapper)
+    const port = wrapper.find('.canvas-board__groupbox-port')
+    expect(port.exists()).toBe(true)
+    await port.trigger('pointerdown', { button: 0, clientX: 200, clientY: 79 })
+    window.dispatchEvent(new MouseEvent('pointermove', { clientX: 400, clientY: 79 }))
+    window.dispatchEvent(new MouseEvent('pointerup', { clientX: 400, clientY: 79 }))
+    await flushPromises()
+    await rafFlush()
+    expect(pos(wrapper, 'm1').x).toBe(0) // 端口拖线不位移成员
+    expect(pos(wrapper, 'm2').x).toBe(50)
+    expect(boxClass(wrapper).classes()).not.toContain('canvas-board__groupbox--selected') // 也不顺手选组
   })
 })

@@ -1009,6 +1009,9 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('keydown', onWindowKeydown)
   boardRoot.value?.removeEventListener('pointerdown', onBoardPointerDownCapture, { capture: true })
+  // 修复XI D2：整组拖动会话零残留（挂载期间窗外松手/卸载兜底）
+  detachGroupMoveDragListeners()
+  groupMoveDrag = null
 })
 
 // ---- 修复VII（2x 增补①）：节点复制粘贴（VII-1，Q1 多选子图 / Q2 鼠标落点） ----
@@ -1618,6 +1621,123 @@ function onBoardPointerDownCapture(e: PointerEvent) {
     b => x >= b.left && x <= b.left + b.width && y >= b.top && y <= b.top + b.height
   )
   groupClickCandidate = hit?.id ?? null
+  if (hit) {
+    // 修复XI D2：组空白按下=整组拖动会话接管（捕获段拦下，vue-flow pane 平移/框选不再响应）；
+    // 点选与拖动分离在 move 阈值判定（未选中=先选中不拖，Q6 口径）。
+    e.stopPropagation()
+    startGroupMoveDrag(hit.id, e)
+  }
+}
+
+// ---- 修复XI（XI-4 D2）：整组拖动（选中组拖框=成员联动，rAF 合帧，松手一次落库） ----
+
+/** 拖动会话（null=无）。selectOnly：起手时未选中——阈值触发只转正选中不位移（先选中不拖）。 */
+interface GroupMoveDrag {
+  gid: string
+  startX: number
+  startY: number
+  lastX: number
+  lastY: number
+  moved: boolean
+  selectOnly: boolean
+}
+let groupMoveDrag: GroupMoveDrag | null = null
+const GROUP_MOVE_THRESHOLD = 4 // px：点选抖动容差，超阈才算拖
+const groupMovePending = { x: 0, y: 0, raf: 0 }
+
+function startGroupMoveDrag(gid: string, e: PointerEvent) {
+  if (groupMoveDrag) return
+  groupMoveDrag = {
+    gid,
+    startX: e.clientX,
+    startY: e.clientY,
+    lastX: e.clientX,
+    lastY: e.clientY,
+    moved: false,
+    selectOnly: groupSelectedId.value !== gid
+  }
+  try {
+    ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+  } catch {
+    /* capture 拿不到不影响：window 监听兜底收 pointerup/cancel（组端口拖线同款口径） */
+  }
+  window.addEventListener('pointermove', onGroupMoveDragMove)
+  window.addEventListener('pointerup', onGroupMoveDragUp)
+  window.addEventListener('pointercancel', onGroupMoveDragUp)
+  window.addEventListener('blur', onGroupMoveDragUp)
+}
+
+function onGroupMoveDragMove(e: PointerEvent) {
+  const st = groupMoveDrag
+  if (!st) return
+  if (!st.moved) {
+    if (Math.hypot(e.clientX - st.startX, e.clientY - st.startY) < GROUP_MOVE_THRESHOLD) return
+    if (st.selectOnly) {
+      // 未选中拖=先选中不拖：转正组选后本会话不再位移（下一次按住才拖，plan D2 边界）
+      selectGroup(st.gid)
+      st.selectOnly = false
+      return
+    }
+    st.moved = true
+    st.lastX = e.clientX
+    st.lastY = e.clientY
+    pushHistory('move') // 同单节点拖动：位移开始入撤回栈（位置快照）
+  }
+  const dx = e.clientX - st.lastX
+  const dy = e.clientY - st.lastY
+  if (!dx && !dy) return
+  st.lastX = e.clientX
+  st.lastY = e.clientY
+  // rAF 合帧：多 move 一帧一批（位移改 nodes 模型，包围盒 rAF 既有跟随）
+  groupMovePending.x += dx
+  groupMovePending.y += dy
+  if (!groupMovePending.raf) {
+    groupMovePending.raf = requestAnimationFrame(applyGroupMoveDelta)
+  }
+}
+
+function applyGroupMoveDelta() {
+  groupMovePending.raf = 0
+  const st = groupMoveDrag
+  const g = st && groups.value.find(x => x.id === st.gid)
+  if (!g) {
+    groupMovePending.x = 0
+    groupMovePending.y = 0
+    return
+  }
+  const zoom = vpTransform.value.zoom || 1
+  const dx = groupMovePending.x / zoom
+  const dy = groupMovePending.y / zoom
+  groupMovePending.x = 0
+  groupMovePending.y = 0
+  if (!dx && !dy) return
+  for (const id of g.memberIds) {
+    const n = nodes.value.find(x => x.id === id)
+    if (n) {
+      n.position.x += dx
+      n.position.y += dy
+    }
+  }
+}
+
+function detachGroupMoveDragListeners() {
+  window.removeEventListener('pointermove', onGroupMoveDragMove)
+  window.removeEventListener('pointerup', onGroupMoveDragUp)
+  window.removeEventListener('pointercancel', onGroupMoveDragUp)
+  window.removeEventListener('blur', onGroupMoveDragUp)
+}
+
+function onGroupMoveDragUp() {
+  const st = groupMoveDrag
+  detachGroupMoveDragListeners()
+  if (st?.moved) {
+    if (groupMovePending.raf) {
+      cancelAnimationFrame(groupMovePending.raf)
+      applyGroupMoveDelta() // 冲刷尾帧（pointerup 在 rAF 前到达；会话仍在——组 id 从会话读）
+    }
+    emit('structure-changed') // 拖动中零 emit，松手一次（防抖保存链）
+  }
+  groupMoveDrag = null
 }
 
 function deleteSelected() {
