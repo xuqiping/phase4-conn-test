@@ -215,7 +215,7 @@ E 文档收尾+测试方案+问题单（依赖 A3+B4+C5+D5 全绿）
 
 ## Chunk D · 组大节点（XI-4，P0）
 
-### D1 组框点选 + 高亮 + 选中态互斥
+### D1 组框点选 + 高亮 + 选中态互斥 ✅ 2026-09-02 ae72f41c（实现注：组层 z-5 在 VueFlow 上层，维持框体 pointer-events:none 穿透——组空白点击 DOM 落点是 pane，改 boardRoot 捕获段按坐标命中包围盒记候选、pane-click 转正（拖框/平移 pane-click 不来候选自然作废），穿透设计零改动；Delete 守卫顺修 isTypingTarget 无 instanceof 保护存量隐患）
 
 - **目标**：点组框空白=选整组（高亮）；与节点选中/框选/Esc 分层互斥；Delete 无动作。
 - **动作**（伪代码）：
@@ -235,7 +235,7 @@ E 文档收尾+测试方案+问题单（依赖 A3+B4+C5+D5 全绿）
 - **依赖**：A2 完成（CanvasBoard 无并发改动）
 - **验证**：vitest——点组框空白 groupSelectedId+高亮 class；点成员=清组选+选成员（现状单选）；点 pane/Esc 清；框选起手清；Delete 组选态无动作（不删成员）；改名/✕/组端口三入口回归；A2 补组框右键不开菜单用例（细化1）。
 
-### D2 整组拖动
+### D2 整组拖动 ✅ 2026-09-02 c3ca8382（实现注：拖动会话接在 D1 捕获段命中后 stopPropagation 接管（pane 平移/框选不响应）；越阈 4px 才算拖、越阈首帧只定基线（吞首段=标准拖动节流语义）；尾帧冲刷须先于会话置空——applyGroupMoveDelta 从会话读组 id，先空后冲=丢帧 bug 由测试揪出；pointercancel/blur 同 up 收尾防悬挂）
 
 - **目标**：选中组拖框=成员联动移动，rAF 节流，松手落库。
 - **动作**（伪代码）：
@@ -249,7 +249,7 @@ E 文档收尾+测试方案+问题单（依赖 A3+B4+C5+D5 全绿）
 - **依赖**：D1
 - **验证**：vitest——选中态拖框成员坐标批变（+delta 断言）；未选中拖=只选中不动；拖动中零 structure-changed、松手一次；组端口拖线回归；rAF 节流（多 move 一帧一批）。
 
-### D3 剪贴板 groups 收集 + 组级跨边（纯函数）
+### D3 剪贴板 groups 收集 + 组级跨边（纯函数） ✅ 2026-09-02 8e5c78cd（实现注：组端点边在 buildCopySet 内分治——组进板统一走 groupCrossEdges，组不进板照 X-3 恰一端走 crossEdges 连原组；remapGroupCrossEdges 单 aliveNodeIds 参——组端恒为新组（下标失配才丢），原组 alive 校验仍在既有 remapCrossEdges 域）
 
 - **目标**：完全包含组进剪贴板；组级跨边收集；混合组边规则纯函数化。
 - **动作**（伪代码）：
@@ -269,7 +269,7 @@ E 文档收尾+测试方案+问题单（依赖 A3+B4+C5+D5 全绿）
 - **依赖**：无（可与 D1/D2 并行，纯函数）
 - **验证**：单测——完全包含收组（name/color/memberIds）；半含不收（修复X 回归锚）；两组全含+组→组边收；组进板+组边对端在外收 cross；成员级到本组边收内边口径；remap `group:${idx}`→新 id；对端解散/已删丢边；既有 VII/IX/X 用例全回归（无 groups 入参=零组收集，向后兼容）。
 
-### D4 粘贴重建组 + 组边克隆 + 撤回
+### D4 粘贴重建组 + 组边克隆 + 撤回 ✅ 2026-09-02 f1463dc9（实现注：组重建不走 createGroup——防二次入栈+掏旧组成员，直接 groups.push 同 'paste' 栈帧；组名去重复用 uniqueLabel（空格序号口径）；「⛓ 关 innerEdges 全不粘」按现状口径落为「诱导边纯节点恒粘（VII）+组级/跨集零」——test 597「仅诱导边」为既有锚，plan 该行与现状冲突处以现状+锚为准）
 
 - **目标**：粘出新组（新 id/name 去重/成员重映射），组级跨边连原对端，⛓ 治边不治壳，一步撤。
 - **动作**（伪代码）：
@@ -287,10 +287,7 @@ E 文档收尾+测试方案+问题单（依赖 A3+B4+C5+D5 全绿）
 - **依赖**：D1（组框渲染复用）+D3（clip schema）
 - **验证**：vitest——粘组：新组 id/name 去重/memberIds 全新/与原组零共享；组级跨边落 groupEdges 池+v-model 零伪 id；原组解散后粘贴丢组级边不产断边；⛓ 开全边/⛓ 关壳留边零（细化2 双向用例）；Ctrl+Z 一步撤（组+节点+边全消）；连贴 +32；部分成员粘贴（无 groups）=现状平节点回归。
 
-### D5 D 轮收口测试
-
-- **动作**：vitest 全量 + vue-tsc 0 错；手测标记——点组选组/整组拖动跟手/完全包含 Ctrl+C→V 粘新组连原上下游（真实生成消费：组下游广播取到新组成员产物）/半含平节点/Delete 无动作/解散 ✕/刷新重现。
-- **验证**：全绿 + 记录入变更记录。
+### D5 D 轮收口测试 ✅ 2026-09-02（全量 vitest **1068/1068** + vue-tsc **0 错**；后端零改动不重跑——D 轮纯前端。手测标记并入 E 轮 S15-S19：点组选组/整组拖动跟手/完全包含 Ctrl+C→V 粘新组连原上下游/半含平节点/Delete 无动作/解散 ✕/刷新重现）
 
 ---
 
@@ -365,6 +362,8 @@ E 文档收尾+测试方案+问题单（依赖 A3+B4+C5+D5 全绿）
 | 2026-09-02 | A 轮完成（c1db6300 palette 单源 + 9d9140fc 右键菜单 8 用例，全量 1028/1028）。两处实现期偏离：①A2 ↑↓ 循环焦点未做（原生 button Tab/Enter 可达即满足 spec ⑥ 下限）；②粘贴落点参数传 client 坐标 `{x,y}` 而非 flowPos（pasteSubgraph 内部统一换算，与键盘链同函数同口径，比外层预换算更不易漂）；A3 手测项并入 E 轮 S1 | 计划是建议不是圣旨——P3 发现更简实现回写 plan |
 | 2026-09-02 | B 轮完成（bc23dd8b 后端 official 过滤 + 4997a767 OfficialLibrary 大卡片+插入链，全量 1040/1040+后端 2715/2715）。四处实现期偏离：①B2 emit `picked{asset}` 不含 resolve（resolve 需先有 nodeId，改 B3 建节点后发起）；②OfficialLibrary 无 canvasId prop；③无 CanvasView.test.ts——链路拆 paletteItems.test 3 例+CanvasBoard.test 3 例两端单测，接线层留手测；④项目卡文本化无封面。B4 手测项并入 E 轮 S6-S9 | resolve 反序架构必然+避免为测接线新建大文件；回写口径 |
 | 2026-09-02 | C 轮完成（3cd40307 C1 词汇地基 + e800c0ed C2 reassign/筛选展开 + 455cef60 C3 类型/VocabEditor 两级 + 6a2e37f2 C4 矩阵左栏，全量 1042/1042+后端 2734/2734+本地 PG V169 实测闭环）。三处实现期偏离：①C3/C4 边界重划——buildRoleGroupOptions+两处下拉消费点从 C4 提前并入 C3（类型一翻三处 tsc 连锁红，拆两轮中间态不可编译），C4 只剩矩阵左栏；②C2 reassign 增「项目资产 id 预筛」分支（role_links 无 projectId 列，防跨项目同名 key 误删/误迁）；③C1 testcontainer/H2 迁移验证未做→RoleVocab 纯单测+本地 PG 实测（C5）替代 | 类型翻转的消费点收口天然一体；跨项目碰撞为安全必修；本地 PG 实测比 H2 手动 SQL 更真 |
+| 2026-09-02 | D 轮完成（ae72f41c D1 组框点选 + c3ca8382 D2 整组拖动 + 8e5c78cd D3 剪贴板纯函数 + f1463dc9 D4 粘贴重建，全量 1068/1068+vue-tsc 0 错，后端零改动）。四处实现期偏离：①D1 维持框体 pointer-events:none 穿透——组空白点击 DOM 落点是 pane，boardRoot 捕获段坐标命中包围盒记候选+pane-click 转正（比垫层+打洞少一层结构，穿透设计零改动）；②D2 越阈首帧只定基线（吞首段=标准拖动节流语义）+尾帧冲刷须先于会话置空（applyGroupMoveDelta 读会话组 id，先空后冲=丢帧，测试揪出）；③D4 组级边分治——组进板统一走 groupCrossEdges（含成员级内边口径），组不进板照 X-3 走 crossEdges 连原组；④D4「⛓ 关 innerEdges 全不粘」按现状口径落为「诱导边纯节点恒粘（VII，test 597 既有锚）+组级/跨集零」——plan 原行与现状冲突，以现状+锚为准 | 穿透层序探明后捕获段更简；丢帧 bug 实证；分治保 X 回归锚；改动既有语义须锚既有用例 |
+
 
 ## 术语表
 
