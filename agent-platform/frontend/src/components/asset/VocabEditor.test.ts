@@ -133,8 +133,8 @@ describe('VocabEditor 修复XI 叙事角色两级 + C1b 媒体类型两层编辑
     expect(savePayload(wrapper).roles[0]).toEqual({ key: '人物', children: [] })
   })
 
-  it('AC-XI3-5 一级失焦撞已有子类（全局命名空间）→ 该行清空', async () => {
-    mountEditor({
+  it('AC-XI3-5 一级失焦撞已有子类（全局命名空间）→ 保留输入+行内错误+禁存（P4 review 中④：不清空防静默删桶）', async () => {
+    const wrapper = mountEditor({
       narrativeRoles: [
         { key: '人物', children: ['老人'] },
         { key: '场景', children: [] }
@@ -148,7 +148,21 @@ describe('VocabEditor 修复XI 叙事角色两级 + C1b 媒体类型两层编辑
     await nextTick()
     newRow.dispatchEvent(new Event('blur', { bubbles: true }))
     await nextTick()
-    expect(newRow.value).toBe('')
+    // P4 交叉 review 中④：撞名保留输入+行内错误（原清空会被 normalizedRoles 静默跳过整行含子类——保存即删桶+资产误归通用）
+    expect(newRow.value).toBe('老人')
+    const errs = [...document.body.querySelectorAll('.vocab-editor__child-error')]
+      .map((e) => e.textContent ?? '')
+    expect(errs.some((t) => t.includes('重名'))).toBe(true)
+    expect((findBtn('保存') as HTMLButtonElement).disabled).toBe(true)
+    // 改成不撞的名 → 错误消失 + 可保存
+    setInput(newRow, '道具')
+    await nextTick()
+    newRow.dispatchEvent(new Event('blur', { bubbles: true }))
+    await nextTick()
+    expect((findBtn('保存') as HTMLButtonElement).disabled).toBe(false)
+    ;(findBtn('保存') as HTMLButtonElement).click()
+    await nextTick()
+    expect(savePayload(wrapper).roles.map((r) => r.key)).toEqual(['人物', '场景', '道具'])
   })
 
   it('AC-XI3-6 仅剩 1 一级 → 删除按钮禁用（防删空，后端 normalize 兜底非空）', async () => {

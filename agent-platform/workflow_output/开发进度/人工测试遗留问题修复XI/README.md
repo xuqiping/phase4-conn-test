@@ -1,8 +1,8 @@
 # 修复XI README（右键菜单 + 官方库 + 两级词汇 + 组=大节点）
 
 > 对应 spec `docs/specs/人工测试遗留问题修复XI设计.md`｜plan `docs/plans/人工测试遗留问题修复XI.plan.md`
-> 轮序：A 右键菜单 ✅ → B 官方库 ✅ → C 两级词汇 ✅ → D 组大节点 ✅ → E 文档收尾 ✅
-> 进度明细：[开发进度1.md](开发进度1.md)（A）[开发进度2.md](开发进度2.md)（B）[开发进度3.md](开发进度3.md)（C）[开发进度4.md](开发进度4.md)（D）
+> 轮序：A 右键菜单 ✅ → B 官方库 ✅ → C 两级词汇 ✅ → D 组大节点 ✅ → E 文档收尾 ✅ → P4 运行验证 ✅（冒烟 27/27 修 4 bug `9fa0f25c`；交叉 review 8 发现修 7 驳 1，后端 2735/2735+前端 1077/1077）
+> 进度明细：[开发进度1.md](开发进度1.md)（A）[开发进度2.md](开发进度2.md)（B）[开发进度3.md](开发进度3.md)（C）[开发进度4.md](开发进度4.md)（D）[开发进度5.md](开发进度5.md)（P4）
 
 ## 用户地图
 
@@ -36,7 +36,7 @@
 - **B 官方库**：新 [OfficialLibrary.vue](../../../frontend/src/views/canvas/OfficialLibrary.vue) 大卡片；后端 `AssetPublicPoolController` 增 `official=true` 过滤（服务端不信前端）；插入复用画布既有 asset 节点 resolve 链。
 - **C 两级**：`narrative_roles` JSON 从字符串数组改 `[{key,children[]}]`，Flyway [V169](../../../backend/src/main/resources/db/migration/V169__two_level_narrative_roles.sql) 幂等迁移；读/入参双容错（旧格式自动升级）；筛选与一键分镜服务端展开含子类。
 - **D 组**：组层点击捕获段命中 `groupBoxes` → 点选分层（Q6）；越阈 4px 整组拖动 rAF 合帧；剪贴板 [canvasClipboard.ts](../../../frontend/src/components/canvas/canvasClipboard.ts) 增 `groups`/`groupCrossEdges` 两池（完全包含才收组，组端点边分治：组进板→新组引用，半含→照修复X 连原组）；粘贴同栈帧重建组=一步撤。
-- **测试**：全量 vitest 1068/1068 + vue-tsc 0 错 + 后端 2734/2734；人工项 S1-S19 见 `docs/测试方案/人工测试遗留问题修复XI测试方案.md`。
+- **测试**：全量 vitest 1077/1077 + vue-tsc 0 错 + 后端 2735/2735（P4 冒烟 27/27 + review 修 7 各带回归锁）；人工项 S1-S19 见 `docs/测试方案/人工测试遗留问题修复XI测试方案.md`。
 
 ## 文档索引
 

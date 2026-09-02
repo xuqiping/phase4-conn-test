@@ -116,15 +116,20 @@ export function buildCopySet(
   })
   const groupCrossEdges: GroupCrossEdge[] = []
   const crossEdges: CanvasEdge[] = []
+  // 组端点 key 分流（P4 交叉 review 中①）：进板组→`group:{板内下标}`；**板外组保原伪 id**
+  // `group:{原组 id}`——组↔组恰一端进板时对端组不在板，串化 `group:undefined` 会让粘贴端
+  // 解析 NaN 静默丢边；保原伪 id 即 X-3「连原组」口径（remapGroupCrossEdges 同步分流解析）。
+  const groupKeyOf = (gid: string | null, orig: string): string =>
+    gid !== null && inclIdx.has(gid) ? `group:${inclIdx.get(gid)}` : orig
   for (const e of edges) {
     const srcGroup = isGroupEndpoint(e.source) ? groupIdOf(e.source) : null
     const dstGroup = isGroupEndpoint(e.target) ? groupIdOf(e.target) : null
-    // 任一端=进板组 → 组级边统一进 groupCrossEdges（对端 key=旧节点 id 或另一板内组下标）；
+    // 任一端=进板组 → 组级边统一进 groupCrossEdges（对端 key=旧节点 id/板内组下标/原组伪 id）；
     // 两端都在板（成员↔本组/组↔组）与对端在外（组级跨边）共用同一存储，粘贴端分流。
     if ((srcGroup !== null && inclIdx.has(srcGroup)) || (dstGroup !== null && inclIdx.has(dstGroup))) {
       groupCrossEdges.push({
-        fromKey: srcGroup !== null ? `group:${inclIdx.get(srcGroup)}` : e.source,
-        toKey: dstGroup !== null ? `group:${inclIdx.get(dstGroup)}` : e.target
+        fromKey: groupKeyOf(srcGroup, e.source),
+        toKey: groupKeyOf(dstGroup, e.target)
       })
       continue
     }
@@ -256,12 +261,20 @@ export function remapGroupCrossEdges(
   clip: CanvasClipboard,
   keyToNewId: Map<string, string>,
   groupIdxToNewId: Map<number, string>,
-  aliveNodeIds: Set<string>
+  aliveNodeIds: Set<string>,
+  /** P4 交叉 review 中①：板外原组端（`group:{原组 id}`）存活校验集（X-3 连原组口径）。 */
+  aliveGroupIds: Set<string>
 ): CanvasEdge[] {
   const resolve = (key: string): string | null => {
     if (key.startsWith('group:')) {
-      const newId = groupIdxToNewId.get(Number(key.slice('group:'.length)))
-      return newId ? groupEndpointOf(newId) : null
+      const idx = Number(key.slice('group:'.length))
+      // 板内下标 → 新组伪 id；非数字 = 原组伪 id（组↔组恰一端进板的对端）——保原 id 连原组，
+      // 原组已删/解散 → 丢（同 remapCrossEdges 防悬挂口径）。
+      if (Number.isInteger(idx)) {
+        const newId = groupIdxToNewId.get(idx)
+        return newId ? groupEndpointOf(newId) : null
+      }
+      return aliveGroupIds.has(key.slice('group:'.length)) ? key : null
     }
     if (keyToNewId.has(key)) return keyToNewId.get(key)!
     return aliveNodeIds.has(key) ? key : null // 板外对端：已删 → 丢

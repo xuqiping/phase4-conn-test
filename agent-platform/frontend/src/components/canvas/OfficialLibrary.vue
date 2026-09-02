@@ -146,7 +146,9 @@ function selectProject(p: PublicProjectSummaryVO) {
   void loadAssets()
 }
 
-/** 全量拉取（不按类型过滤——官方库即浏览全部，分组仅展示层）。 */
+/** 全量拉取（不按类型过滤——官方库即浏览全部，分组仅展示层）。
+ * P4 交叉 review 低②：读 total 超 100 续页拉全（每页 100 至多再拉 50 页封顶防失控），
+ * 原单页 size:100 对超百资产项目静默截断。 */
 async function loadAssets() {
   if (projectId.value == null) return
   const request = ++assetRequestId
@@ -160,7 +162,17 @@ async function loadAssets() {
     if (request !== assetRequestId || session !== sessionId || !props.show
       || requestProjectId !== projectId.value) return
     const page = (res as AxiosResponse<{ code: number; data: PageResult<AssetVO> }>).data.data
-    assets.value = page?.records ?? []
+    let records = page?.records ?? []
+    const total = page?.total ?? records.length
+    const pages = Math.min(Math.ceil(total / 100), 51) // 含首页，封顶 5100 条
+    for (let p = 2; p <= pages; p++) {
+      const more = await assetApi.list(requestProjectId, { page: p, size: 100 })
+      if (request !== assetRequestId || session !== sessionId || !props.show
+        || requestProjectId !== projectId.value) return
+      const mp = (more as AxiosResponse<{ code: number; data: PageResult<AssetVO> }>).data.data
+      records = records.concat(mp?.records ?? [])
+    }
+    assets.value = records
   } catch {
     if (request !== assetRequestId || session !== sessionId || !props.show
       || requestProjectId !== projectId.value) return

@@ -27,6 +27,7 @@
               size="small"
               placeholder="一级角色名（如 人物）"
               :maxlength="30"
+              :status="rowError[i] ? 'error' : undefined"
               @blur="dedupeRow(i)"
             />
             <n-popconfirm @positive-click="removeRole(i)">
@@ -62,6 +63,7 @@
               @blur="addChild(i)"
             />
           </div>
+          <div v-if="rowError[i]" class="vocab-editor__child-error">{{ rowError[i] }}</div>
           <div v-if="childError[i]" class="vocab-editor__child-error">{{ childError[i] }}</div>
         </div>
         <n-button size="small" dashed block @click="addRole">
@@ -157,10 +159,13 @@ interface RoleDraft {
   children: string[]
 }
 
-/** 本地草稿（增/改名/删都在此，保存时整体提交）；childDrafts/childError 与 draftRoles 按下标平行。 */
+/** 本地草稿（增/改名/删都在此，保存时整体提交）；childDrafts/childError/rowError 与 draftRoles 按下标平行。 */
 const draftRoles = ref<RoleDraft[]>([])
 const childDrafts = ref<string[]>([])
 const childError = ref<string[]>([])
+/** P4 交叉 review 中④：一级名行内错误（撞名/空名不清空——清空会被 normalizedRoles 静默
+ * 跳过整行含子类，保存即删桶+后端 reassign 资产归通用）。 */
+const rowError = ref<string[]>([])
 const draftMediaTypes = ref<MediaTypeDef[]>([])
 
 // 弹窗每次打开 → 从 prop 拷贝最新（避免上次草稿残留）；immediate 兼容 mount 时即 show=true
@@ -174,6 +179,7 @@ watch(
       }))
       childDrafts.value = draftRoles.value.map(() => '')
       childError.value = draftRoles.value.map(() => '')
+      rowError.value = draftRoles.value.map(() => '')
       // 深拷贝 mediaTypes（避免直改源；补默认 category 兜底）
       draftMediaTypes.value = props.mediaTypes.map((t) => ({
         key: t.key,
@@ -196,14 +202,20 @@ function isGlobalDup(v: string, selfIndex: number, asChild: boolean): boolean {
   })
 }
 
-/** 一级名失焦：trim 写回；若与他处重名回退为空让用户改。 */
+/** 一级名失焦：trim 写回；空名/与他处重名 → **保留输入+行内错误+禁存**（P4 交叉 review 中④：
+ * 原回退为空会被 normalizedRoles 静默跳过整行含子类——保存即删桶+后端 reassign 资产归通用，
+ * 两级化后爆炸半径从一桶扩到一桶带全部子类）。 */
 function dedupeRow(i: number) {
   const row = draftRoles.value[i]
   if (!row) return
   const v = (row.key ?? '').trim()
-  if (!v) return
+  rowError.value[i] = ''
+  if (!v) {
+    rowError.value[i] = '一级角色名不能为空'
+    return
+  }
   row.key = v
-  if (isGlobalDup(v, i, false)) row.key = ''
+  if (isGlobalDup(v, i, false)) rowError.value[i] = `「${v}」与已有一级或子类重名`
 }
 
 /** 新增子类（回车或失焦触发）：≤20 个、全局不重名，通过则入 children 并清输入。 */
@@ -234,12 +246,14 @@ function addRole() {
   draftRoles.value.push({ key: '', children: [] })
   childDrafts.value.push('')
   childError.value.push('')
+  rowError.value.push('')
 }
 
 function removeRole(i: number) {
   draftRoles.value.splice(i, 1)
   childDrafts.value.splice(i, 1)
   childError.value.splice(i, 1)
+  rowError.value.splice(i, 1)
 }
 
 function dedupeTypeKey(i: number) {
@@ -303,7 +317,10 @@ const normalizedMediaTypes = computed<MediaTypeDef[]>(() => {
 })
 
 const canSave = computed(
-  () => normalizedRoles.value.length >= 1 && normalizedMediaTypes.value.length >= 1
+  () => normalizedRoles.value.length >= 1
+    && normalizedMediaTypes.value.length >= 1
+    // P4 交叉 review 中④：一级名有行内错误（空/撞名）禁存——防静默删桶
+    && rowError.value.every((e) => !e)
 )
 
 function onSave() {

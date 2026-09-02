@@ -290,11 +290,16 @@ public class AssetProjectService {
         for (RoleVocab old : oldRoles) {
             String oldKey = old.getKey();
             if (!keptLevelOne.contains(oldKey)) {
-                // 分支1：删一级——其子类随删，统一归「通用」（若仍存在）
+                // 分支1：删一级——其子类随删，统一归「通用」（若仍存在）。
+                // P4 交叉 review 高①：一级**重命名**（子类随迁新键保留，keptChildToParent 含之）
+                // 也走本分支——仍存子类不得随删消解（否则挂「老人」的 link 被删、资产误降通用），
+                // 同分支2 过滤口径：仍存子类的 link 保键不动。
                 List<String> gone = new ArrayList<>();
                 gone.add(oldKey);
                 if (old.getChildren() != null) {
-                    gone.addAll(old.getChildren());
+                    gone.addAll(old.getChildren().stream()
+                            .filter(c -> !keptLevelOne.contains(c) && !keptChildToParent.containsKey(c))
+                            .collect(Collectors.toList()));
                 }
                 groups.add(new GoneGroup(gone, keptLevelOne.contains(FALLBACK_ROLE) ? FALLBACK_ROLE : null));
             } else if (old.getChildren() != null) {

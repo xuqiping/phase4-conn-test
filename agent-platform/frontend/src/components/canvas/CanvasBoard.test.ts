@@ -1660,6 +1660,11 @@ describe('CanvasBoard · 修复XI P4 冒烟修复回归（27/27 后置锁）', (
       groups: { id: string; name: string; memberIds: string[] }[]
     }
     getGroupEdges: () => { id: string; source: string; target: string }[]
+    ungroupGroup: (id: string) => void
+    addNodeAtCenter: (p: { type?: string; data?: Record<string, unknown> }) => string
+    abortNodeAdd: (id: string) => void
+    canUndo: boolean
+    undo: () => void
   }
   const vm = (w: ReturnType<typeof mount>) => boardVm(w) as unknown as BoardVmP4
   const key = (k: string, shift = false) =>
@@ -1771,5 +1776,80 @@ describe('CanvasBoard · 修复XI P4 冒烟修复回归（27/27 后置锁）', (
     window.removeEventListener('mousedown', onOuter)
     pane.remove()
     probe.remove()
+  })
+})
+
+describe('CanvasBoard · 修复XI P4 交叉 review 修复回归', () => {
+  type BoardVmRv = ReturnType<typeof boardVm> & {
+    loadSnapshot: (s: { nodes?: unknown[]; edges?: unknown[]; groups?: unknown[] }) => void
+    getSnapshot: () => { nodes: { id: string }[]; groups: { id: string; name: string; memberIds: string[] }[] }
+    getGroupEdges: () => unknown[]
+    ungroupGroup: (id: string) => void
+    addNodeAtCenter: (p: { type?: string; data?: Record<string, unknown> }) => string
+    abortNodeAdd: (id: string) => void
+    canUndo: boolean
+    undo: () => void
+  }
+  const vm = (w: ReturnType<typeof mount>) => boardVm(w) as unknown as BoardVmRv
+  const key = (k: string) =>
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: k, ctrlKey: true, bubbles: true }))
+  const node = (id: string, x = 0, y = 0) => ({ id, type: 'text', position: { x, y }, data: { label: id } })
+  const rafFlush = () => new Promise<void>(r => requestAnimationFrame(() => r()))
+  const groupedSnap = () => ({
+    nodes: [node('m1'), node('m2', 50, 50), node('ext', 600, 0)],
+    edges: [],
+    groups: [{ id: 'g1', name: '组1', memberIds: ['m1', 'm2'], color: '#5b8def' }]
+  })
+  const boxClass = (w: ReturnType<typeof mount>) => w.find('.canvas-board__groupbox')
+  /** D1 全链点选组（pane pointerdown 组包围盒内 + pane-click 转正）。 */
+  const selectGroup = async (w: ReturnType<typeof mount>) => {
+    const pane = document.createElement('div')
+    pane.className = 'vue-flow__pane'
+    w.element.appendChild(pane)
+    pane.dispatchEvent(new MouseEvent('pointerdown', { clientX: 10, clientY: 10, bubbles: true, button: 0 }))
+    window.dispatchEvent(new MouseEvent('pointerup'))
+    w.getComponent(VueFlowStub).vm.$emit('pane-click')
+    pane.remove()
+    await nextTick()
+  }
+
+  it('中③ ✕ 解散被选中组即清组选：撤销解散后组不复活选中高亮（原 nodes 不动 watch 不触发悬挂）', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(groupedSnap())
+    await flushPromises()
+    await rafFlush()
+    await selectGroup(wrapper)
+    expect(boxClass(wrapper).classes()).toContain('canvas-board__groupbox--selected')
+    vm(wrapper).ungroupGroup('g1') // ✕ 解散选中组
+    await flushPromises()
+    vm(wrapper).undo() // 撤销解散：组恢复
+    await flushPromises()
+    expect(vm(wrapper).getSnapshot().groups).toHaveLength(1) // 组回来了
+    expect(boxClass(wrapper).classes()).not.toContain('canvas-board__groupbox--selected') // 但选中态不复活
+  })
+
+  it('低① abortNodeAdd 按栈帧身份弹：连续两 add 撤销窗内 abort 首个不误弹（第二个 add 的撤销步保住）', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot({ nodes: [node('keep')], edges: [] })
+    const id1 = vm(wrapper).addNodeAtCenter({ type: 'text', data: { label: 'A' } })
+    const id2 = vm(wrapper).addNodeAtCenter({ type: 'text', data: { label: 'B' } }) // 800ms 内同 tag 合并=同一栈帧
+    vm(wrapper).abortNodeAdd(id1) // resolve 异步窗口内先 abort 的是第一个
+    expect(vm(wrapper).canUndo).toBe(true) // 不误弹——id2 的 add 撤销步还在
+    vm(wrapper).abortNodeAdd(id2) // 再 abort 第二个（正是记录的栈帧）→ 弹
+    expect(vm(wrapper).canUndo).toBe(false)
+    expect(vm(wrapper).getSnapshot().nodes.map(n => n.id)).toEqual(['keep'])
+  })
+
+  it('低③ groups-pasted 节点数=Σ板内组员（混选组外散节点不计入）', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(groupedSnap())
+    await flushPromises()
+    selState.nodes = [{ id: 'm1' }, { id: 'm2' }, { id: 'ext' }] // 组两成员+组外散节点
+    wrapper.getComponent(VueFlowStub).vm.$emit('selection-end')
+    await flushPromises()
+    key('c')
+    key('v')
+    const emitted = wrapper.emitted('groups-pasted')!
+    expect(emitted[emitted.length - 1]).toEqual([1, 2]) // 1 个组、组内 2 节点（ext 不算）
   })
 })

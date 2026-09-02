@@ -634,6 +634,9 @@ function ungroupGroup(groupId: string) {
   pushHistory('group')
   groups.value = groups.value.filter(g => g.id !== groupId)
   dropGroupEdgesOfGroups([groupId])
+  // P4 交叉 review 中③：nodes 未动（watch 不触发=悬挂清理唯一挂点失效）——解散被选中组
+  // 须就地清组选，否则高亮悬挂；撤销解散后 groups 恢复也不复活选中态。
+  if (groupSelectedId.value === groupId) groupSelectedId.value = null
   emit('structure-changed')
 }
 
@@ -1143,12 +1146,19 @@ function pasteSubgraph(atClient?: { x: number; y: number }) {
     }
     if (clip.groupCrossEdges.length) {
       const aliveNodes = new Set(nodes.value.map(n => n.id))
-      for (const e of remapGroupCrossEdges(clip, keyToNewId, groupIdxToNewId, aliveNodes)) {
+      // P4 交叉 review 中①：组↔组恰一端进板的对端组保原伪 id——alive 组校验集同源传入
+      const aliveGroups = new Set(groups.value.map(g => g.id))
+      for (const e of remapGroupCrossEdges(clip, keyToNewId, groupIdxToNewId, aliveNodes, aliveGroups)) {
         groupEdges.value.push(e)
       }
     }
   }
-  if (groupIdxToNewId.size) emit('groups-pasted', groupIdxToNewId.size, clip.items.length)
+  // P4 交叉 review 低③：nodeCount=组内节点数（Σ板内组员），非全部复制节点——混选散节点时
+  // 「已粘贴 1 个组（5 个节点）」的 5 曾含组外散点，与用户直觉（组多大）不符。
+  if (groupIdxToNewId.size) {
+    const groupNodeCount = clip.groups.reduce((s, g) => s + g.memberIds.length, 0)
+    emit('groups-pasted', groupIdxToNewId.size, groupNodeCount)
+  }
   scheduleStoreReconcile()
   emit('structure-changed')
   clip.pasteCount++
@@ -2195,8 +2205,19 @@ function addNodeAtCenter(partial: { type?: string; data?: Record<string, unknown
   const rect = (vueFlowRef.value as HTMLElement | null)?.getBoundingClientRect()
     ?? { left: 0, top: 0, width: 0, height: 0 }
   const target = project({ x: rect.width / 2, y: rect.height / 2 })
-  return addNode({ ...partial, position: target })
+  const id = addNode({ ...partial, position: target })
+  // 记录本次 add 的栈帧身份+节点 id（abortNodeAdd 按身份弹，见其注释）
+  pendingAddFrame = { nodeId: id, entry: undoStack[undoStack.length - 1] ?? null }
+  return id
 }
+
+/**
+ * 修复XI B3（plan 细化4）配套：addNodeAtCenter 记录的 'add' 栈帧身份。P4 交叉 review 低①：
+ * 原按 `top.tag === 'add'` 认顶弹栈——resolve 异步窗口内用户再建节点（>800ms 独立 'add' 步）
+ * 会被误弹他人历史步；中间夹 'move' 时又该弹没弹留空撤步。改按身份：仅当记录栈帧仍在顶且
+ * 节点 id 吻合才弹；被覆盖则不弹（他人步骤不可误撤，多留一步无害——该栈帧快照本就无此节点）。
+ */
+let pendingAddFrame: { nodeId: string; entry: HistoryEntry | null } | null = null
 
 /**
  * 修复XI B3（plan 细化4）：官方库插入失败回滚——静默删节点**不入撤销栈**，并弹出该次
@@ -2207,8 +2228,15 @@ function abortNodeAdd(nodeId: string) {
   nodes.value = nodes.value.filter(n => n.id !== nodeId)
   edges.value = edges.value.filter(e => e.source !== nodeId && e.target !== nodeId)
   dropGroupEdgesOfNodes([nodeId])
-  const top = undoStack[undoStack.length - 1]
-  if (top && top.tag === 'add') undoStack.pop()
+  // P4 交叉 review 低①：按 addNodeAtCenter 记录的栈帧身份弹（非 top.tag 认顶），防误弹/漏弹；
+  // 身份不吻合（abort 的是更早节点）→ 帧保留——最新 add 仍待 resolve/abort，不得连带作废
+  if (pendingAddFrame?.nodeId === nodeId) {
+    if (pendingAddFrame.entry
+      && undoStack[undoStack.length - 1] === pendingAddFrame.entry) {
+      undoStack.pop()
+    }
+    pendingAddFrame = null
+  }
   scheduleStoreReconcile()
   emit('structure-changed')
 }

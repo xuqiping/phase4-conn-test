@@ -324,7 +324,8 @@ describe('groups/groupCrossEdges · 修复XI 组进板', () => {
       clip,
       new Map([['a', 'new-a']]),
       new Map([[0, 'g9']]),
-      new Set(['ext']) // dead 已删、new-a 板内恒活不查
+      new Set(['ext']), // dead 已删、new-a 板内恒活不查
+      new Set() // 板外组端集（本用例无原组对端）
     )
     expect(out).toHaveLength(2)
     expect(out[0]).toMatchObject({ source: 'new-a', target: 'group:g9' })
@@ -342,7 +343,33 @@ describe('groups/groupCrossEdges · 修复XI 组进板', () => {
   it('⑦ 下标失配防护：groupIdxToNewId 无此下标（理论不可达）→ 丢', () => {
     const nodes = [mkNode('a')]
     const clip = buildCopySet(nodes, [mkEdge('a', 'group:g1')], ['a'], [mkGroup('g1', ['a'])])!
-    const out = remapGroupCrossEdges(clip, new Map([['a', 'new-a']]), new Map(), new Set())
+    const out = remapGroupCrossEdges(clip, new Map([['a', 'new-a']]), new Map(), new Set(), new Set())
     expect(out).toHaveLength(0)
+  })
+
+  it('⑧ P4 交叉 review 中①：组↔组恰一端进板——板外组端保原伪 id（不再串 group:undefined 丢边）', () => {
+    // 选满 g1 不选 g2，g1→g2 边：g1 进板、g2 板外——原实现两端都串 `group:${inclIdx.get(...)}`，
+    // g2 不在板 → `group:undefined` → remap Number('undefined')=NaN → 边静默丢。
+    const nodes = [mkNode('a'), mkNode('b')]
+    const edges = [mkEdge('group:g1', 'group:g2')]
+    const clip = buildCopySet(nodes, edges, ['a'], [mkGroup('g1', ['a']), mkGroup('g2', ['b'])])!
+    expect(clip.groupCrossEdges).toEqual([{ fromKey: 'group:0', toKey: 'group:g2' }])
+  })
+
+  it('⑨ P4 交叉 review 中① remap：原组端 alive→连原组（新组→原组），原组已删/解散→丢', () => {
+    const nodes = [mkNode('a'), mkNode('b')]
+    const edges = [mkEdge('group:g1', 'group:g2'), mkEdge('group:g2', 'group:g1')]
+    const clip = buildCopySet(nodes, edges, ['a'], [mkGroup('g1', ['a']), mkGroup('g2', ['b'])])!
+    expect(clip.groupCrossEdges).toEqual([
+      { fromKey: 'group:0', toKey: 'group:g2' },
+      { fromKey: 'group:g2', toKey: 'group:0' }
+    ])
+    const keyToNewId = new Map([['a', 'new-a']])
+    const groupIdxToNewId = new Map([[0, 'g9']])
+    // g2 存活：g9↔g2 双向克隆；g2 已删：两条全丢（绝不产断边）
+    const alive = remapGroupCrossEdges(clip, keyToNewId, groupIdxToNewId, new Set(), new Set(['g2']))
+    expect(alive.map(e => `${e.source}>${e.target}`)).toEqual(['group:g9>group:g2', 'group:g2>group:g9'])
+    const dead = remapGroupCrossEdges(clip, keyToNewId, groupIdxToNewId, new Set(), new Set())
+    expect(dead).toHaveLength(0)
   })
 })

@@ -19,6 +19,7 @@ import com.superprogrammer.asset.mapper.AssetProjectMemberMapper;
 import com.superprogrammer.asset.mapper.AssetRoleLinkMapper;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
@@ -30,6 +31,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.time.OffsetDateTime;
 
@@ -38,6 +40,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -241,6 +244,53 @@ class AssetProjectServiceTest {
         verify(roleLinkMapper).delete(any());
         ArgumentCaptor<AssetRoleLink> ins = ArgumentCaptor.forClass(AssetRoleLink.class);
         verify(roleLinkMapper).insert(ins.capture());
+        assertEquals("通用", ins.getValue().getRoleKey());
+    }
+
+    @Test
+    void update_levelOneRenamed_keptChildLinkUntouched() {
+        // 修复XI P4 交叉 review 高①：一级重命名（人物→人物2，子类「老人」随迁新键保留）——
+        // 分支1 须过滤仍存子类：挂「老人」的 link 原键不动，不得随旧一级整桶收 gone 误删+降「通用」
+        when(aclService.requireWrite(PROJECT_ID, OWNER_ID, false)).thenReturn(AssetRole.OWNER);
+        AssetProject p = project(PROJECT_ID, OWNER_ID,
+                "[{\"key\":\"人物\",\"children\":[\"老人\"]},{\"key\":\"通用\",\"children\":[]}]");
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(p);
+        Asset a5 = new Asset();
+        a5.setId(5L);
+        Asset a6 = new Asset();
+        a6.setId(6L);
+        when(assetMapper.selectList(any())).thenReturn(List.of(a5, a6));
+        AssetRoleLink linkParent = new AssetRoleLink(); // 挂旧一级「人物」→ 删 + 补「通用」
+        linkParent.setId(1L);
+        linkParent.setAssetId(5L);
+        linkParent.setRoleKey("人物");
+        AssetRoleLink linkChild = new AssetRoleLink(); // 挂仍存子类「老人」→ 原键不动
+        linkChild.setId(2L);
+        linkChild.setAssetId(6L);
+        linkChild.setRoleKey("老人");
+        // 按 wrapper 实参过滤（模拟真实 SQL 只命中 roleKey ∈ goneKeys 的 link）——
+        // 修复前 gone=[人物,老人] 两 link 全中；修复后 gone=[人物] 仅命中旧一级
+        when(roleLinkMapper.selectList(any())).thenAnswer(inv -> {
+            LambdaQueryWrapper<AssetRoleLink> w = inv.getArgument(0);
+            // MP 的 IN 参数惰性物化（ISqlSegment lambda 到 getSqlSegment 才 formatParam 入表）——先渲染再读
+            w.getSqlSegment();
+            Collection<Object> goneVals = w.getParamNameValuePairs().values();
+            return List.of(linkParent, linkChild).stream()
+                    .filter(l -> goneVals.contains(l.getRoleKey()))
+                    .toList();
+        });
+        when(roleLinkMapper.selectCount(any())).thenReturn(0L);
+
+        ProjectUpdateRequest req = new ProjectUpdateRequest();
+        req.setNarrativeRoles(List.of(new RoleVocab("人物2", new ArrayList<>(List.of("老人"))),
+                new RoleVocab("通用", new ArrayList<>()))); // 一级改名，子类随迁保留
+        service.update(PROJECT_ID, OWNER_ID, false, req);
+
+        // 只有 asset5（旧一级「人物」）补挂「通用」；asset6（「老人」）零 insert
+        verify(roleLinkMapper, times(1)).delete(any());
+        ArgumentCaptor<AssetRoleLink> ins = ArgumentCaptor.forClass(AssetRoleLink.class);
+        verify(roleLinkMapper, times(1)).insert(ins.capture());
+        assertEquals(5L, ins.getValue().getAssetId());
         assertEquals("通用", ins.getValue().getRoleKey());
     }
 
