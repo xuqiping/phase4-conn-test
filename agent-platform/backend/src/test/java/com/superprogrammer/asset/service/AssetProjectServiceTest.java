@@ -189,6 +189,62 @@ class AssetProjectServiceTest {
     }
 
     @Test
+    void update_childRemoved_reassignsToParent() {
+        // 修复XI C2：删子类（父保留）→ 挂子类的资产归父级「人物」而非「通用」
+        when(aclService.requireWrite(PROJECT_ID, OWNER_ID, false)).thenReturn(AssetRole.OWNER);
+        AssetProject p = project(PROJECT_ID, OWNER_ID,
+                "[{\"key\":\"人物\",\"children\":[\"老人\"]},{\"key\":\"通用\",\"children\":[]}]");
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(p);
+        Asset a = new Asset();
+        a.setId(5L);
+        when(assetMapper.selectList(any())).thenReturn(List.of(a));
+        AssetRoleLink link = new AssetRoleLink();
+        link.setId(1L);
+        link.setAssetId(5L);
+        link.setRoleKey("老人");
+        when(roleLinkMapper.selectList(any())).thenReturn(List.of(link));
+        when(roleLinkMapper.selectCount(any())).thenReturn(0L);
+
+        ProjectUpdateRequest req = new ProjectUpdateRequest();
+        req.setNarrativeRoles(List.of(new RoleVocab("人物", new ArrayList<>()),
+                new RoleVocab("通用", new ArrayList<>()))); // 删子类「老人」，父「人物」保留
+        service.update(PROJECT_ID, OWNER_ID, false, req);
+
+        verify(roleLinkMapper).delete(any());
+        ArgumentCaptor<AssetRoleLink> ins = ArgumentCaptor.forClass(AssetRoleLink.class);
+        verify(roleLinkMapper).insert(ins.capture());
+        assertEquals(5L, ins.getValue().getAssetId());
+        assertEquals("人物", ins.getValue().getRoleKey()); // 归父级
+    }
+
+    @Test
+    void update_levelOneRemoved_childrenFollowToFallback() {
+        // 修复XI C2：删一级 → 其子类随删，挂「老人」（子类）者也归「通用」
+        when(aclService.requireWrite(PROJECT_ID, OWNER_ID, false)).thenReturn(AssetRole.OWNER);
+        AssetProject p = project(PROJECT_ID, OWNER_ID,
+                "[{\"key\":\"人物\",\"children\":[\"老人\"]},{\"key\":\"通用\",\"children\":[]}]");
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(p);
+        Asset a = new Asset();
+        a.setId(5L);
+        when(assetMapper.selectList(any())).thenReturn(List.of(a));
+        AssetRoleLink link = new AssetRoleLink();
+        link.setId(1L);
+        link.setAssetId(5L);
+        link.setRoleKey("老人");
+        when(roleLinkMapper.selectList(any())).thenReturn(List.of(link));
+        when(roleLinkMapper.selectCount(any())).thenReturn(0L);
+
+        ProjectUpdateRequest req = new ProjectUpdateRequest();
+        req.setNarrativeRoles(List.of(new RoleVocab("通用", new ArrayList<>()))); // 删一级「人物」
+        service.update(PROJECT_ID, OWNER_ID, false, req);
+
+        verify(roleLinkMapper).delete(any());
+        ArgumentCaptor<AssetRoleLink> ins = ArgumentCaptor.forClass(AssetRoleLink.class);
+        verify(roleLinkMapper).insert(ins.capture());
+        assertEquals("通用", ins.getValue().getRoleKey());
+    }
+
+    @Test
     void update_viewerDenied() {
         when(aclService.requireWrite(PROJECT_ID, EDITOR_ID, false))
                 .thenThrow(new BusinessException(ErrorCode.FORBIDDEN, "需要编辑权限"));

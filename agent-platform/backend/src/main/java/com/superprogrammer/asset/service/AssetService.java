@@ -285,9 +285,13 @@ public class AssetService {
             return List.of();
         }
         Map<Long, List<String>> roleMap = rolesOf(images.stream().map(Asset::getId).collect(Collectors.toList()));
-        // 修复XI C1：默认五桶两级化，实体三桶取扁平前三位（人物/道具/场景）；C2 按项目词汇展开含子类
-        List<String> entityRoles = RoleVocab.flatten(AssetProjectService.DEFAULT_NARRATIVE_ROLES)
-                .subList(0, 3);
+        // 修复XI C2：实体桶 = {人物,道具,场景} ∪ 各自在项目词汇中的子类（词汇缺该一级回落默认集=现状）
+        Set<String> entityRoles = new LinkedHashSet<>(List.of("人物", "道具", "场景"));
+        for (RoleVocab r : loadRoleVocab(projectId)) {
+            if (entityRoles.contains(r.getKey()) && r.getChildren() != null) {
+                entityRoles.addAll(r.getChildren());
+            }
+        }
         List<ImageCatalogItem> out = new ArrayList<>();
         for (Asset a : images) {
             List<String> rks = roleMap.getOrDefault(a.getId(), Collections.emptyList());
@@ -416,10 +420,24 @@ public class AssetService {
             final String keyword = kw;
             w.and(qw -> qw.like(Asset::getName, keyword).or().like(Asset::getDescription, keyword));
         }
-        // 角色过滤：走 role_links 关系表（不查 JSONB）
+        // 角色过滤：走 role_links 关系表（不查 JSONB）；修复XI C2：一级筛选展开含其子类，子级只查自身
         if (role != null && !role.isBlank()) {
+            String roleKey = role.trim();
+            Set<String> expand = new LinkedHashSet<>();
+            for (RoleVocab r : loadRoleVocab(projectId)) {
+                if (r.getKey().equals(roleKey)) {
+                    expand.add(roleKey);
+                    if (r.getChildren() != null) {
+                        expand.addAll(r.getChildren());
+                    }
+                    break;
+                }
+            }
+            if (expand.isEmpty()) {
+                expand.add(roleKey); // 未知/已删 key → 只查自身（现状口径）
+            }
             List<Long> ids = roleLinkMapper.selectList(new LambdaQueryWrapper<AssetRoleLink>()
-                            .eq(AssetRoleLink::getRoleKey, role))
+                            .in(AssetRoleLink::getRoleKey, expand))
                     .stream().map(AssetRoleLink::getAssetId).collect(Collectors.toList());
             if (ids.isEmpty()) {
                 return PageResult.of(Collections.emptyList(), 0L, page, size);
@@ -917,16 +935,20 @@ public class AssetService {
     }
 
     /**
-     * 加载项目叙事角色词汇 → 扁平全集（父 + 全部子类，修复XI C1）。
-     * syncRoleLinks 受控校验/复制过滤由此自动接受子类 key；坏行回落默认五桶。
+     * 加载项目两级角色词汇（修复XI C1/C2）：双容错解析，坏行回落默认五桶。
+     * 筛选展开（一级含子类）与分镜目录（实体桶含子类）由此取结构。
      */
-    private List<String> loadNarrativeRoles(Long projectId) {
+    private List<RoleVocab> loadRoleVocab(Long projectId) {
         AssetProject p = projectMapper.selectById(projectId);
         if (p == null || p.getNarrativeRoles() == null || p.getNarrativeRoles().isBlank()) {
-            return RoleVocab.flatten(AssetProjectService.DEFAULT_NARRATIVE_ROLES);
+            return AssetProjectService.DEFAULT_NARRATIVE_ROLES;
         }
-        return RoleVocab.flatten(
-                RoleVocab.parse(objectMapper, p.getNarrativeRoles(), AssetProjectService.DEFAULT_NARRATIVE_ROLES));
+        return RoleVocab.parse(objectMapper, p.getNarrativeRoles(), AssetProjectService.DEFAULT_NARRATIVE_ROLES);
+    }
+
+    /** 扁平全集（父 + 全部子类）：syncRoleLinks 受控校验 / 复制过滤共用（修复XI C1）。 */
+    private List<String> loadNarrativeRoles(Long projectId) {
+        return RoleVocab.flatten(loadRoleVocab(projectId));
     }
 
     /** 加载项目媒体类型受控词汇 → key→def 映射（V60 §C1b，受控校验单一事实源）。 */

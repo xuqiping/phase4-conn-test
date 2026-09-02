@@ -28,6 +28,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -262,22 +263,54 @@ public class AssetProjectService {
     // ---------- L10：删叙事角色桶联动 ----------
 
     /**
-     * 移除角色桶时，挂该桶的资产自动归「通用」（L10）。
-     * 仅处理被移除的桶；保留桶不动。空桶直接删（无资产挂载时自然无操作）。
-     *
-     * <p>修复XI C1：签名切两级 {@link RoleVocab}；本步先按一级键集合比对（与改造前行为等价），
-     * 子类重指派（删子类归父/删一级含子类）由 C2 落地。
+     * 移除角色词汇时重指派挂载资产（L10，修复XI C2 两级口径）：
+     * <ul>
+     *   <li>删子类（父保留）→ 挂该子类的 link 删 + 资产补挂<b>父级</b> key</li>
+     *   <li>删一级（其子类随删）→ 挂一级或其子类的 link 删 + 「通用」仍存在则资产补挂<b>通用</b></li>
+     * </ul>
+     * 保留桶不动；无挂载自然无操作。项目资产 id 预圈（role_links 无 projectId 列，防跨项目同名词误伤）。
      */
     private void reassignOnRemovedRoles(Long projectId, List<RoleVocab> oldRoles, List<RoleVocab> newRoles) {
-        Set<String> removed = new LinkedHashSet<>();
-        oldRoles.forEach(r -> removed.add(r.getKey()));
-        Set<String> kept = new LinkedHashSet<>();
-        newRoles.forEach(r -> kept.add(r.getKey()));
-        removed.removeAll(kept);
-        if (removed.isEmpty()) {
+        // 新词汇索引：一级键集 + 子类→父键
+        Set<String> keptLevelOne = new LinkedHashSet<>();
+        Map<String, String> keptChildToParent = new LinkedHashMap<>();
+        for (RoleVocab r : newRoles) {
+            keptLevelOne.add(r.getKey());
+            if (r.getChildren() == null) {
+                continue;
+            }
+            for (String c : r.getChildren()) {
+                keptChildToParent.put(c, r.getKey());
+            }
+        }
+        // 旧词汇逐桶消解：删一级（含子类）/删子类（父保留）两分支收集
+        record GoneGroup(List<String> keys, String fallback) {
+        }
+        List<GoneGroup> groups = new ArrayList<>();
+        for (RoleVocab old : oldRoles) {
+            String oldKey = old.getKey();
+            if (!keptLevelOne.contains(oldKey)) {
+                // 分支1：删一级——其子类随删，统一归「通用」（若仍存在）
+                List<String> gone = new ArrayList<>();
+                gone.add(oldKey);
+                if (old.getChildren() != null) {
+                    gone.addAll(old.getChildren());
+                }
+                groups.add(new GoneGroup(gone, keptLevelOne.contains(FALLBACK_ROLE) ? FALLBACK_ROLE : null));
+            } else if (old.getChildren() != null) {
+                // 分支2：删子类（父保留）——归父级
+                List<String> goneChildren = old.getChildren().stream()
+                        .filter(c -> !keptLevelOne.contains(c) && !keptChildToParent.containsKey(c))
+                        .collect(Collectors.toList());
+                if (!goneChildren.isEmpty()) {
+                    groups.add(new GoneGroup(goneChildren, oldKey));
+                }
+            }
+        }
+        if (groups.isEmpty()) {
             return;
         }
-        // 项目内资产 ids
+        // 项目内资产 ids（含挂载预圈）
         List<Long> assetIds = assetMapper.selectList(new LambdaQueryWrapper<Asset>()
                         .eq(Asset::getProjectId, projectId)
                         .eq(Asset::getDeleted, 0)
@@ -286,28 +319,29 @@ public class AssetProjectService {
         if (assetIds.isEmpty()) {
             return;
         }
-        boolean fallbackExists = kept.contains(FALLBACK_ROLE);
-        for (String removedKey : removed) {
-            // 找挂了被删桶的资产
-            List<AssetRoleLink> links = roleLinkMapper.selectList(new LambdaQueryWrapper<AssetRoleLink>()
-                    .in(AssetRoleLink::getAssetId, assetIds)
-                    .eq(AssetRoleLink::getRoleKey, removedKey));
-            if (links.isEmpty()) {
-                continue;
-            }
-            // 删除这些 link
-            roleLinkMapper.delete(new LambdaQueryWrapper<AssetRoleLink>()
-                    .in(AssetRoleLink::getAssetId, links.stream().map(AssetRoleLink::getAssetId).collect(Collectors.toList()))
-                    .eq(AssetRoleLink::getRoleKey, removedKey));
-            // 受影响资产归「通用」（仅当通用桶仍存在）
-            if (fallbackExists) {
-                for (AssetRoleLink link : links) {
-                    ensureRoleLink(link.getAssetId(), FALLBACK_ROLE);
-                }
-            }
-            log.info("narrative role removed: projectId={} role={} affectedAssets={} fallback={}",
-                    projectId, removedKey, links.size(), fallbackExists);
+        for (GoneGroup g : groups) {
+            reassignLinks(projectId, assetIds, g.keys(), g.fallback());
         }
+    }
+
+    /** 删挂 goneKeys 的 link（项目资产圈内）；fallback 非空则受影响资产补挂该键（幂等）。 */
+    private void reassignLinks(Long projectId, List<Long> assetIds, List<String> goneKeys, String fallback) {
+        List<AssetRoleLink> links = roleLinkMapper.selectList(new LambdaQueryWrapper<AssetRoleLink>()
+                .in(AssetRoleLink::getAssetId, assetIds)
+                .in(AssetRoleLink::getRoleKey, goneKeys));
+        if (links.isEmpty()) {
+            return;
+        }
+        roleLinkMapper.delete(new LambdaQueryWrapper<AssetRoleLink>()
+                .in(AssetRoleLink::getAssetId, links.stream().map(AssetRoleLink::getAssetId).collect(Collectors.toList()))
+                .in(AssetRoleLink::getRoleKey, goneKeys));
+        if (fallback != null) {
+            for (AssetRoleLink link : links) {
+                ensureRoleLink(link.getAssetId(), fallback);
+            }
+        }
+        log.info("narrative role removed: projectId={} keys={} affectedAssets={} fallback={}",
+                projectId, goneKeys, links.size(), fallback == null ? "-" : fallback);
     }
 
     /** 确保资产挂了某角色（幂等，无则插）。 */

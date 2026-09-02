@@ -1,6 +1,7 @@
 package com.superprogrammer.asset.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.superprogrammer.asset.dto.AssetCreateRequest;
 import com.superprogrammer.asset.dto.AssetCopyRequest;
@@ -37,6 +38,7 @@ import java.util.Base64;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -450,6 +452,73 @@ class AssetServiceTest {
         PageResult<AssetVO> result = service.list(PROJECT_ID, OWNER_ID, false,
                 null, "人物", null, null, null, null, null, null, 1, 20);
         assertTrue(result.getRecords().isEmpty());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void list_levelOneRoleFilter_expandsChildrenInQuery() {
+        // 修复XI C2：一级筛选展开含子类——wrapper IN 集须含 人物+老人+孩童
+        when(aclService.loadAccessible(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
+        AssetProject p = new AssetProject();
+        p.setId(PROJECT_ID);
+        p.setNarrativeRoles("[{\"key\":\"人物\",\"children\":[\"老人\",\"孩童\"]},{\"key\":\"通用\",\"children\":[]}]");
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(p);
+        when(roleLinkMapper.selectList(any())).thenReturn(List.of());
+        service.list(PROJECT_ID, OWNER_ID, false, null, "人物", null, null, null, null, null, null, 1, 20);
+
+        ArgumentCaptor<LambdaQueryWrapper<AssetRoleLink>> cap =
+                ArgumentCaptor.forClass((Class) LambdaQueryWrapper.class);
+        verify(roleLinkMapper).selectList(cap.capture());
+        assertTrue(cap.getValue().getSqlSegment().contains("role_key IN"));
+        assertTrue(cap.getValue().getParamNameValuePairs().containsValue("人物"));
+        assertTrue(cap.getValue().getParamNameValuePairs().containsValue("老人"));
+        assertTrue(cap.getValue().getParamNameValuePairs().containsValue("孩童"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void list_childRoleFilter_queriesChildOnly() {
+        // 修复XI C2：子级筛选只查自身（不并父级）
+        when(aclService.loadAccessible(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
+        AssetProject p = new AssetProject();
+        p.setId(PROJECT_ID);
+        p.setNarrativeRoles("[{\"key\":\"人物\",\"children\":[\"老人\",\"孩童\"]},{\"key\":\"通用\",\"children\":[]}]");
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(p);
+        when(roleLinkMapper.selectList(any())).thenReturn(List.of());
+        service.list(PROJECT_ID, OWNER_ID, false, null, "老人", null, null, null, null, null, null, 1, 20);
+
+        ArgumentCaptor<LambdaQueryWrapper<AssetRoleLink>> cap =
+                ArgumentCaptor.forClass((Class) LambdaQueryWrapper.class);
+        verify(roleLinkMapper).selectList(cap.capture());
+        // MP 惰性：paramNameValuePairs 在 getSqlSegment() 渲染时才填——断言前先触发
+        String seg = cap.getValue().getSqlSegment();
+        assertTrue(seg.contains("role_key IN"));
+        assertTrue(cap.getValue().getParamNameValuePairs().containsValue("老人"));
+        assertFalse(cap.getValue().getParamNameValuePairs().containsValue("人物"));
+        assertFalse(cap.getValue().getParamNameValuePairs().containsValue("孩童"));
+    }
+
+    @Test
+    void imageCatalog_includesEntityChildRoleAssets() {
+        // 修复XI C2：一键分镜目录实体桶含实体一级的子类（人物→老人 收，「风格→水墨」不收）
+        AssetProject p = new AssetProject();
+        p.setId(PROJECT_ID);
+        p.setNarrativeRoles(
+                "[{\"key\":\"人物\",\"children\":[\"老人\"]},{\"key\":\"风格\",\"children\":[\"水墨\"]},{\"key\":\"通用\",\"children\":[]}]");
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(p);
+        Asset oldManImg = asset(1L, Asset.MEDIA_IMAGE);
+        oldManImg.setMediaCategory(Asset.CATEGORY_IMAGE);
+        Asset styleImg = asset(2L, Asset.MEDIA_IMAGE);
+        styleImg.setMediaCategory(Asset.CATEGORY_IMAGE);
+        when(assetMapper.selectList(any())).thenReturn(List.of(oldManImg, styleImg));
+        when(roleLinkMapper.selectList(any())).thenReturn(
+                List.of(roleLink(1L, "老人"), roleLink(2L, "水墨")));
+
+        List<AssetService.ImageCatalogItem> out = service.getImageCatalog(PROJECT_ID, 10);
+
+        assertEquals(1, out.size());
+        assertEquals(1L, out.get(0).id());
+        assertEquals(List.of("老人"), out.get(0).roleKeys());
     }
 
     @Test
