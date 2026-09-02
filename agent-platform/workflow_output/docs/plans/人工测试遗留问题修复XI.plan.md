@@ -72,7 +72,7 @@ E 文档收尾+测试方案+问题单（依赖 A3+B4+C5+D5 全绿）
 
 ## Chunk B · 官方库大卡片（XI-2，P0）
 
-### B1 后端：listPublic official 参数 + AssetVO.mediaCategory
+### B1 后端：listPublic official 参数 + AssetVO.mediaCategory ✅ 2026-09-02（bc23dd8b；AssetVO.mediaCategory 核查既有已透出——「缺则补」分支未触发零改动）
 
 - **目标**：官方项目服务端过滤；资产 VO 供前端反向映射节点类型。
 - **动作**（伪代码）：
@@ -86,7 +86,7 @@ E 文档收尾+测试方案+问题单（依赖 A3+B4+C5+D5 全绿）
 - **依赖**：无
 - **验证**：后端测试——official=true 只返 publishedByAdmin 项目；不传=全量（现状回归）；AssetVO 含 mediaCategory。
 
-### B2 OfficialLibrary.vue 大卡片
+### B2 OfficialLibrary.vue 大卡片 ✅ 2026-09-02（4997a767；实现偏离：①emit `picked {asset}` 不含 resolve——resolve 需先有 nodeId，改由 B3 父组件建节点后发起；②无 canvasId prop——resolve 参数在父组件就地取 editingId；③项目卡无封面（文本卡：badge/名称/计数/发布者/日期/描述），封面懒加载不做）
 
 - **目标**：双栏大卡片——左官方项目列表、右按媒体类型分组资产行（四态预览复用）。
 - **动作**（伪代码）：
@@ -105,7 +105,7 @@ E 文档收尾+测试方案+问题单（依赖 A3+B4+C5+D5 全绿）
 - **依赖**：B1
 - **验证**：vitest——official=true 请求断言；项目列表渲染；按 mediaTypes 词汇序分组+「其他」尾组+空组隐藏；行四态渲染（复用 AssetPickerRow 即组件级回归）；Lightbox 开于卡片之上；空态两路；选择按钮 emit picked（resolve mock）+关弹窗。
 
-### B3 CanvasView 接线：入口条目 + 插入链
+### B3 CanvasView 接线：入口条目 + 插入链 ✅ 2026-09-02（4997a767；实现偏离：①无 CanvasView.test.ts 该文件——链路拆两端单测替代：mediaToNodeType 纯函数 3 例在 paletteItems.test.ts、addNodeAtCenter/abortNodeAdd 3 例在 CanvasBoard.test.ts，接线层留 E 轮 S 系列手测；②回滚抽 abortNodeAdd 公共方法而非临时 removeNode）
 
 - **目标**：调色板导演台下「官方库」条目；选择→建节点→resolve→写节点→保存。
 - **动作**（伪代码）：
@@ -126,7 +126,7 @@ E 文档收尾+测试方案+问题单（依赖 A3+B4+C5+D5 全绿）
 - **依赖**：B2
 - **验证**：vitest——入口条目渲染+不可拖拽；六已知类型映射正确+自定义类型按 category 回落；建节点于中心（addNodeAtCenter mock 断言位置）；成功链写节点+scheduleSave+关卡片；resolve 失败删节点+toast+卡片留；addNodeAtCenter 中心换算单测。
 
-### B4 B 轮收口测试
+### B4 B 轮收口测试 ✅ 2026-09-02（全量 vitest 1040/1040 + vue-tsc 0 错 + 后端 2715/2715 BUILD SUCCESS；手测项并入 E 轮 S6-S9）
 
 - **动作**：vitest 全量 + vue-tsc 0 错 + 后端测试全绿；手测标记——真实官方项目浏览四态预览/大图盖卡片/选择插入成正确类型节点+产物可看/刷新重现。
 - **验证**：全绿 + 记录入变更记录。
@@ -363,6 +363,7 @@ E 文档收尾+测试方案+问题单（依赖 A3+B4+C5+D5 全绿）
 |---|---|---|
 | 2026-09-02 | 建立 plan（A1-A3/B1-B4/C1-C5/D1-D5/E 五轮；critique 后五处实现期细化：A2 组框右键时序/B2 mediaTypes 容错/B3 回滚不入栈/C1 双容错规则/D3 向后兼容签名）。同轮补规格 XI-4⑨ ⛓ 治边不治壳口径 | 修复XI 规格过审进入 P2 |
 | 2026-09-02 | A 轮完成（c1db6300 palette 单源 + 9d9140fc 右键菜单 8 用例，全量 1028/1028）。两处实现期偏离：①A2 ↑↓ 循环焦点未做（原生 button Tab/Enter 可达即满足 spec ⑥ 下限）；②粘贴落点参数传 client 坐标 `{x,y}` 而非 flowPos（pasteSubgraph 内部统一换算，与键盘链同函数同口径，比外层预换算更不易漂）；A3 手测项并入 E 轮 S1 | 计划是建议不是圣旨——P3 发现更简实现回写 plan |
+| 2026-09-02 | B 轮完成（bc23dd8b 后端 official 过滤 + 4997a767 OfficialLibrary 大卡片+插入链，全量 1040/1040+后端 2715/2715）。四处实现期偏离：①B2 emit `picked{asset}` 不含 resolve（resolve 需先有 nodeId，改 B3 建节点后发起）；②OfficialLibrary 无 canvasId prop；③无 CanvasView.test.ts——链路拆 paletteItems.test 3 例+CanvasBoard.test 3 例两端单测，接线层留手测；④项目卡文本化无封面。B4 手测项并入 E 轮 S6-S9 | resolve 反序架构必然+避免为测接线新建大文件；回写口径 |
 
 ## 术语表
 
