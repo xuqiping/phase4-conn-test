@@ -48,6 +48,12 @@ export type CanvasImportMode = 'NEW_VERSION' | 'NEW_ASSET'
 
 // ---------- 项目 ----------
 
+/** 叙事角色两级受控词汇条目（修复XI XI-3：一级 key + 子类 children；存量 string 数组已由后端 V169 迁移）。 */
+export interface NarrativeRoleVocab {
+  key: string
+  children: string[]
+}
+
 /** 项目视图（ProjectVO）。role=当前用户在本项目的角色。 */
 export interface AssetProjectVO {
   id: number
@@ -55,8 +61,8 @@ export interface AssetProjectVO {
   description?: string
   coverFileId?: string
   ownerId: number
-  /** 叙事角色受控词汇桶（数组）。 */
-  narrativeRoles: string[]
+  /** 叙事角色两级受控词汇（修复XI：{key,children}）。 */
+  narrativeRoles: NarrativeRoleVocab[]
   /** 媒体类型受控词汇桶（V60，{key,category}）。 */
   mediaTypes: MediaTypeDef[]
   role: ProjectRole
@@ -100,14 +106,14 @@ export interface PublicProjectSummaryVO {
 export interface ProjectCreateRequest {
   name: string
   description?: string
-  narrativeRoles?: string[]
+  narrativeRoles?: NarrativeRoleVocab[]
 }
 
 export interface ProjectUpdateRequest {
   name?: string
   description?: string
-  /** null=不改；数组=覆盖；删桶联动 L10。 */
-  narrativeRoles?: string[] | null
+  /** null=不改；数组=覆盖；删词汇联动两级重指派（删子类归父/删一级归通用，修复XI L10）。 */
+  narrativeRoles?: NarrativeRoleVocab[] | null
   /** null=不改；数组=覆盖；删 type 联动同 category 迁移（V60）。 */
   mediaTypes?: MediaTypeDef[] | null
   coverFileId?: string | null

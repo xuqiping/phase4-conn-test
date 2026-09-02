@@ -53,7 +53,7 @@
       <AssetMatrixFilter
         v-model="filter"
         :counts="matrix"
-        :roles="project.narrativeRoles ?? []"
+        :roles="(project.narrativeRoles ?? []).map((r) => r.key)"
         :media-types="project.mediaTypes ?? []"
         :project-id="projectId"
       >
@@ -254,6 +254,8 @@ import type {
   ProjectRole
 } from '@/types/asset'
 import { MEDIA_TYPE } from '@/types/asset'
+import type { NarrativeRoleVocab } from '@/types/asset'
+import { buildRoleGroupOptions } from '@/utils/assetVocab'
 
 const authStore = useAuthStore()
 const message = useMessage()
@@ -324,9 +326,8 @@ async function onSettingsSaved() {
   await reload()
 }
 
-const roleOptions = computed(() =>
-  (project.value?.narrativeRoles ?? []).map((r) => ({ label: r, value: r }))
-)
+/** 叙事角色下拉分组选项（修复XI 两级：每级一组，「不细分」=挂一级本身，子类各为选项）。 */
+const roleOptions = computed(() => buildRoleGroupOptions(project.value?.narrativeRoles ?? []))
 
 /** 文本类（TEXT 类别）媒体类型下拉选项（新建文本资产用；V60 从受控词汇派生）。 */
 const textTypeOptions = computed(() => {
@@ -717,8 +718,8 @@ const roleAssetCounts = computed<Record<string, number>>(() => {
   }
   return m
 })
-/** VocabEditor 保存 → 整体覆盖 narrativeRoles + mediaTypes（后端 normalize + reassign 兜底）。 */
-async function onSaveVocab(payload: { roles: string[]; mediaTypes: MediaTypeDef[] }) {
+/** VocabEditor 保存 → 整体覆盖两级 narrativeRoles + mediaTypes（后端 normalize + reassign 兜底）。 */
+async function onSaveVocab(payload: { roles: NarrativeRoleVocab[]; mediaTypes: MediaTypeDef[] }) {
   savingVocab.value = true
   try {
     await projectApi.update(projectId.value, {

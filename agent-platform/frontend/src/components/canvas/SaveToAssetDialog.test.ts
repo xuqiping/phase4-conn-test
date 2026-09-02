@@ -26,7 +26,13 @@ function mkProject(id: number, role: 'OWNER' | 'EDITOR' | 'VIEWER'): AssetProjec
     id,
     name: `项目${id}`,
     ownerId: 1,
-    narrativeRoles: id === 10 ? ['人物', '场景'] : [],
+    narrativeRoles:
+      id === 10
+        ? [
+            { key: '人物', children: ['老人'] },
+            { key: '场景', children: [] }
+          ]
+        : [],
     mediaTypes: [{ key: '提示词', category: 'TEXT' }],
     role,
     createdAt: '2026-08-05'

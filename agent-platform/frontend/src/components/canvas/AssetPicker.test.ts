@@ -35,7 +35,7 @@ function mkProject(id: number): AssetProjectVO {
     id,
     name: `项目${id}`,
     ownerId: 1,
-    narrativeRoles: ['人物'],
+    narrativeRoles: [{ key: '人物', children: [] }],
     mediaTypes: [{ key: '提示词', category: 'TEXT' }],
     role: 'OWNER',
     createdAt: '2026-08-05'

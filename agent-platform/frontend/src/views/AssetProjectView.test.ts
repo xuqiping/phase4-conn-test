@@ -48,7 +48,11 @@ function mkProject(role: 'OWNER' | 'EDITOR' | 'VIEWER', over: Partial<AssetProje
     name: '短剧第一季',
     description: 'desc',
     ownerId: 1,
-    narrativeRoles: ['人物', '道具', '场景'],
+    narrativeRoles: [
+      { key: '人物', children: ['老人', '孩童'] },
+      { key: '道具', children: [] },
+      { key: '场景', children: [] }
+    ],
     mediaTypes: [
       { key: '提示词', category: 'TEXT' },
       { key: '剧本', category: 'TEXT' },

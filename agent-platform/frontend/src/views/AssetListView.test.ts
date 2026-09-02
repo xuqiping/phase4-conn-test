@@ -55,7 +55,10 @@ function mkProject(id: number, role: 'OWNER' | 'EDITOR' | 'VIEWER', over: Partia
     name: `项目${id}`,
     description: 'desc',
     ownerId: 1,
-    narrativeRoles: ['人物', '道具'],
+    narrativeRoles: [
+      { key: '人物', children: [] },
+      { key: '道具', children: [] }
+    ],
     mediaTypes: [{ key: '提示词', category: 'TEXT' }],
     role,
     createdAt: '2026-08-05',

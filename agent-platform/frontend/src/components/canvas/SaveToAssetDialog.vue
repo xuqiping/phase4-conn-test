@@ -67,6 +67,7 @@ import { NButton, NForm, NFormItem, NInput, NModal, NSelect, useMessage } from '
 import { projectApi, assetBridgeApi } from '@/api/assets'
 import type { AssetProjectVO, CanvasImportMode, CanvasImportVO } from '@/types/asset'
 import type { CanvasNode } from '@/types/canvas'
+import { buildRoleGroupOptions } from '@/utils/assetVocab'
 
 const props = defineProps<{
   show: boolean
@@ -116,8 +117,9 @@ const projectOptions = computed(() =>
 )
 
 const selectedProject = computed(() => projects.value.find(p => p.id === form.projectId))
+/** 叙事角色下拉分组选项（修复XI 两级：每级一组，「不细分」=挂一级本身，子类各为选项）。 */
 const roleOptions = computed(() =>
-  (selectedProject.value?.narrativeRoles ?? []).map(r => ({ label: r, value: r }))
+  buildRoleGroupOptions(selectedProject.value?.narrativeRoles ?? [])
 )
 
 /**

@@ -26,7 +26,7 @@ function mkProject(over: Partial<AssetProjectVO> = {}): AssetProjectVO {
     name: '短剧第一季',
     description: '',
     ownerId: 1,
-    narrativeRoles: ['人物'],
+    narrativeRoles: [{ key: '人物', children: [] }],
     mediaTypes: [],
     role: 'OWNER',
     memberScoringEnabled: false,
