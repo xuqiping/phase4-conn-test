@@ -164,6 +164,7 @@
           @open-director="onOpenDirector"
           @preview-media="onPreviewMedia"
           @nodes-copied="onNodesCopied"
+          @groups-pasted="onGroupsPasted"
         />
 
         <!-- 修复III C6（2x-6）：单击媒体节点 → Lightbox 统一预览（复用 D1 组件） -->
@@ -2672,6 +2673,11 @@ function onPreviewMedia(payload: { kind: 'image' | 'video'; src: string; poster?
 /** 修复VII（2x 增补①）：Ctrl+C 复制节点成功提示（Q1 子图复制，Board 无 message 上下文由本层出）。 */
 function onNodesCopied(count: number) {
   message.success(`已复制 ${count} 个节点，Ctrl+V 在鼠标处粘贴`)
+}
+
+/** 修复XI（XI-4 D4）：粘贴体重建组提示（完全包含即带组，Q7）。 */
+function onGroupsPasted(groupCount: number, nodeCount: number) {
+  message.success(`已粘贴 ${groupCount} 个组（${nodeCount} 个节点）`)
 }
 
 /**

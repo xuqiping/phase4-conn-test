@@ -311,7 +311,7 @@ import {
   splitSnapshotEdges,
   type GroupRectLike
 } from '@/utils/groupEdges'
-import { buildCopySet, planLabels, planPastePositions, remapCrossEdges, remapEdges, type CanvasClipboard } from './canvasClipboard'
+import { buildCopySet, planLabels, planPastePositions, remapCrossEdges, remapEdges, remapGroupCrossEdges, type CanvasClipboard } from './canvasClipboard'
 import { keepLinksOnCopy, toggleKeepLinksOnCopy } from '@/utils/canvasPrefs'
 import TextNode from './nodes/TextNode.vue'
 import ImageNode from './nodes/ImageNode.vue'
@@ -451,6 +451,8 @@ const emit = defineEmits<{
   (e: 'pane-paste-files', payload: { files: File[]; position: { x: number; y: number } }): void
   /** 修复VII（2x 增补①）：Ctrl+C 复制节点成功 → 父层 toast（Board 无 message 上下文）。 */
   (e: 'nodes-copied', count: number): void
+  /** 修复XI（XI-4 D4）：粘贴体重建组 → 父层 toast「已粘贴 N 个组（M 个节点）」。 */
+  (e: 'groups-pasted', groupCount: number, nodeCount: number): void
 }>()
 
 /** 导演台节点 → 画布桥：节点组件 inject 调 openEditor，本组件上抛父（Vue Flow 节点 emit 不冒泡）。 */
@@ -1038,7 +1040,8 @@ function onCopyKeydown(e: KeyboardEvent) {
     return
   }
   // 修复X（X-3）：普通边+组边混合传入——组端点跨集边（节点↔组）进剪贴板（plan 细化3）。
-  const clip = buildCopySet(nodes.value, [...edges.value, ...groupEdges.value], selected)
+  // 修复XI（D3/D4）：第4参传组——完全包含组随选进板，粘贴重建新组（Q7）。
+  const clip = buildCopySet(nodes.value, [...edges.value, ...groupEdges.value], selected, groups.value)
   if (!clip) {
     clipboard.value = null
     return
@@ -1098,19 +1101,44 @@ function pasteSubgraph(atClient?: { x: number; y: number }) {
     })
   })
   for (const e of remapEdges(clip, keyToNewId)) edges.value.push(e)
+  // 修复XI（XI-4 D4，细化2「⛓ 治边不治壳」）：进板组重建——新 id/成员重映射/名去重
+  // （撞名追加序号，同 uniqueLabel 口径），color 拷贝；**无条件建壳**（开关只治边）。
+  // 同 'paste' 栈帧=组+节点+边一步撤（不另走 createGroup——那会二次入栈+掏旧组成员）。
+  const groupIdxToNewId = new Map<number, string>()
+  for (const [idx, g] of clip.groups.entries()) {
+    const id = `group-${Date.now()}-${seqCounter++}`
+    groupIdxToNewId.set(idx, id)
+    groups.value.push({
+      id,
+      name: uniqueLabel(g.name.trim() || `组${groups.value.length + 1}`, groups.value.map(x => x.name)),
+      memberIds: g.memberIds.map(k => keyToNewId.get(k)).filter((v): v is string => !!v),
+      color: g.color
+    })
+  }
   // 修复IX-2 B2（Q4 拍板）：粘贴时点判定——开关开 → 跨集边单侧重映射补连线（集内端→新节点，
   // 集外端保原 id=副本接入原上下文）；关 → 零跨集边。alive 集含刚 push 的新节点（悬挂防护
   // 只滤「集外端点已删」）。平行重复边允许并存（Q4 口径，不 dedup）。
   // 修复X（X-3）：alive 增组集（groups 粘贴时点快照——复制后解散的组丢边不产断边）；
   // 产物分流——组端点边进 groupEdges 池（伪 id 绝不进 v-model），普通边照旧。
-  if (keepLinksOnCopy.value && clip.crossEdges.length) {
-    const aliveNodes = new Set(nodes.value.map(n => n.id))
-    const aliveGroups = new Set(groups.value.map(g => g.id))
-    for (const e of remapCrossEdges(clip, keyToNewId, aliveNodes, aliveGroups)) {
-      if (isGroupEndpoint(e.source) || isGroupEndpoint(e.target)) groupEdges.value.push(e)
-      else edges.value.push(e)
+  // 修复XI（D4）：组级边（成员↔新组/新组↔原对端/新组↔新组）同入开关治理——关=零组级边；
+  // 开 → remapGroupCrossEdges 重映射，恒落 groupEdges 池（含组伪 id 端点必不进 v-model）。
+  if (keepLinksOnCopy.value) {
+    if (clip.crossEdges.length) {
+      const aliveNodes = new Set(nodes.value.map(n => n.id))
+      const aliveGroups = new Set(groups.value.map(g => g.id))
+      for (const e of remapCrossEdges(clip, keyToNewId, aliveNodes, aliveGroups)) {
+        if (isGroupEndpoint(e.source) || isGroupEndpoint(e.target)) groupEdges.value.push(e)
+        else edges.value.push(e)
+      }
+    }
+    if (clip.groupCrossEdges.length) {
+      const aliveNodes = new Set(nodes.value.map(n => n.id))
+      for (const e of remapGroupCrossEdges(clip, keyToNewId, groupIdxToNewId, aliveNodes)) {
+        groupEdges.value.push(e)
+      }
     }
   }
+  if (groupIdxToNewId.size) emit('groups-pasted', groupIdxToNewId.size, clip.items.length)
   scheduleStoreReconcile()
   emit('structure-changed')
   clip.pasteCount++

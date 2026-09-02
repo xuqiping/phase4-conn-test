@@ -1495,3 +1495,154 @@ describe('CanvasBoard · 整组拖动（修复XI D2）', () => {
     expect(boxClass(wrapper).classes()).not.toContain('canvas-board__groupbox--selected') // 也不顺手选组
   })
 })
+
+// 修复XI（2x 未解决④，D4）：粘贴重建组——完全包含组粘新组（新 id/名去重/成员重映射），
+// 组级边（成员↔新组/新组↔原对端/新组↔新组）随 ⛓ 落组池；⛓ 治边不治壳；一步撤。
+describe('CanvasBoard · 粘贴重建组（修复XI D4）', () => {
+  type BoardVm13 = ReturnType<typeof boardVm> & {
+    loadSnapshot: (s: { nodes?: unknown[]; edges?: unknown[]; groups?: unknown[] }) => void
+    getSnapshot: () => {
+      nodes: { id: string; data: Record<string, unknown>; position: { x: number; y: number } }[]
+      edges: { id: string; source: string; target: string }[]
+      groups: { id: string; name: string; memberIds: string[] }[]
+    }
+    getEdges: () => { id: string; source: string; target: string }[]
+    getGroupEdges: () => { id: string; source: string; target: string }[]
+    undo: () => void
+    clipboard: { groups: unknown[]; groupCrossEdges: unknown[]; crossEdges: unknown[] } | null
+  }
+  const vm = (w: ReturnType<typeof mount>) => boardVm(w) as unknown as BoardVm13
+  const key = (k: string) =>
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: k, ctrlKey: true, bubbles: true }))
+  const node = (id: string, x = 0, y = 0) => ({ id, type: 'text', position: { x, y }, data: { label: id } })
+  /** 两组（g1[m1,m2]/g2[n1,n2]）+ 组外 b；组级边三态：成员级/对外/组↔组 + 普通诱导边。 */
+  const graph = () => ({
+    nodes: [node('m1'), node('m2', 50, 50), node('n1', 300, 0), node('n2', 350, 50), node('b', 600, 0)],
+    edges: [
+      { id: 'ie', source: 'm1', target: 'm2', type: 'deletable' },
+      { id: 'ge1', source: 'm1', target: 'group:g1' }, // 成员→本组（内边口径）
+      { id: 'ge2', source: 'b', target: 'group:g1' },  // 组→板外节点（组级跨边）
+      { id: 'ge3', source: 'group:g1', target: 'group:g2' } // 组↔组（两板组）
+    ],
+    groups: [
+      { id: 'g1', name: '组1', memberIds: ['m1', 'm2'], color: '#5b8def' },
+      { id: 'g2', name: '组2', memberIds: ['n1', 'n2'], color: '#7bd88f' }
+    ]
+  })
+  /** 全选两组四成员（组完全包含 → 进板）。 */
+  const selectAll = async (w: ReturnType<typeof mount>) => {
+    selState.nodes = [{ id: 'm1' }, { id: 'm2' }, { id: 'n1' }, { id: 'n2' }]
+    w.getComponent(VueFlowStub).vm.$emit('selection-end')
+    await flushPromises()
+  }
+
+  beforeEach(() => setKeepLinksOnCopy(true))
+
+  it('① 粘组全链：新组新 id/名去重/成员全新；组级边三态落组池；v-model 零伪 id；groups-pasted 上抛', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(graph())
+    await selectAll(wrapper)
+    key('c')
+    const clip = vm(wrapper).clipboard!
+    expect(clip.groups).toHaveLength(2)
+    expect(clip.groupCrossEdges).toHaveLength(3)
+    expect(clip.crossEdges).toHaveLength(0) // 组端点边已分治到 groupCrossEdges
+    key('v')
+    const snap = vm(wrapper).getSnapshot()
+    expect(snap.groups).toHaveLength(4) // g1/g2 + 两新组
+    const ng1 = snap.groups.find(g => g.name === '组1 2')!
+    const ng2 = snap.groups.find(g => g.name === '组2 2')!
+    expect(ng1.id).not.toBe('g1')
+    expect(ng1.memberIds.every(id => id !== 'm1' && id !== 'm2')).toBe(true) // 成员全新
+    const newM1 = snap.nodes.find(n => n.data.label === 'm1 2')!
+    const ge = vm(wrapper).getGroupEdges()
+    expect(ge).toHaveLength(6) // 原 ge1-ge3 + 三态克隆
+    expect(ge.some(e => e.source === newM1.id && e.target === `group:${ng1.id}`)).toBe(true) // 成员级
+    expect(ge.some(e => e.source === 'b' && e.target === `group:${ng1.id}`)).toBe(true) // 板外对端保旧 id
+    expect(ge.some(e => e.source === `group:${ng1.id}` && e.target === `group:${ng2.id}`)).toBe(true) // 新↔新
+    const modelEdges = vm(wrapper).getEdges()
+    expect(modelEdges).toHaveLength(2) // 原 ie + 诱导边克隆（VII 口径）
+    expect(modelEdges.some(e => e.source === newM1.id)).toBe(true) // 伪 id 绝不进 v-model
+    const emitted = wrapper.emitted('groups-pasted')!
+    expect(emitted[emitted.length - 1]).toEqual([2, 4])
+  })
+
+  it('② ⛓ 关：壳照建边全零（细化2 治边不治壳）——组池维持 3、组级/跨集边不粘、诱导边照旧', async () => {
+    setKeepLinksOnCopy(false)
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(graph())
+    await selectAll(wrapper)
+    key('c')
+    key('v')
+    expect(vm(wrapper).getSnapshot().groups).toHaveLength(4) // 壳照建
+    expect(vm(wrapper).getGroupEdges()).toHaveLength(3) // 零组级边
+    expect(vm(wrapper).getEdges()).toHaveLength(2) // 原 ie + 诱导边（纯节点）不受开关治理
+    expect(wrapper.emitted('groups-pasted')).toBeTruthy()
+  })
+
+  it('③ 板外对端已删 → 组级跨边悬挂防护丢弃（不产断边），板内三态照常', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(graph())
+    await selectAll(wrapper)
+    key('c')
+    // 复制后 b 被删（整体重载，剪贴板会话态保留）
+    const g = graph()
+    g.nodes = g.nodes.filter(n => n.id !== 'b')
+    g.edges = g.edges.filter(e => e.id !== 'ge2')
+    vm(wrapper).loadSnapshot(g)
+    key('v')
+    const ge = vm(wrapper).getGroupEdges()
+    expect(ge).toHaveLength(4) // 原 ge1/ge3 + 成员级 + 组↔组 克隆；b 端边丢弃
+    expect(ge.every(e => e.source !== 'b' && e.target !== 'b')).toBe(true) // 无断边
+  })
+
+  it('④ Ctrl+Z 一步撤：组+节点+两池边随 paste 栈帧齐消', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(graph())
+    await selectAll(wrapper)
+    key('c')
+    key('v')
+    expect(vm(wrapper).getSnapshot().groups).toHaveLength(4)
+    expect(vm(wrapper).getGroupEdges()).toHaveLength(6)
+    vm(wrapper).undo()
+    const snap = vm(wrapper).getSnapshot()
+    expect(snap.groups).toHaveLength(2)
+    expect(snap.nodes).toHaveLength(5)
+    expect(vm(wrapper).getGroupEdges()).toHaveLength(3)
+    expect(vm(wrapper).getEdges()).toHaveLength(1) // 回原 ie
+  })
+
+  it('⑤ 连贴两次：第二批整体 +32 错开（组员/组名各自再去重）', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(graph())
+    await selectAll(wrapper)
+    key('c')
+    key('v')
+    key('v')
+    const snap = vm(wrapper).getSnapshot()
+    expect(snap.groups).toHaveLength(6) // 2 原生 + 2 批 × 2 组
+    expect(snap.groups.filter(g => g.name.startsWith('组1')).map(g => g.name).sort())
+      .toEqual(['组1', '组1 2', '组1 3'])
+    const p2 = snap.nodes.find(n => n.data.label === 'm1 2')!
+    const p3 = snap.nodes.find(n => n.data.label === 'm1 3')!
+    expect(p3.position.x - p2.position.x).toBe(32)
+    expect(p3.position.y - p2.position.y).toBe(32)
+  })
+
+  it('⑥ 半含成员复制（无 groups）=现状平节点回归：组不重建，节点↔原组边照 X-3 连原组', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(graph())
+    selState.nodes = [{ id: 'm1' }] // 半含 g1
+    wrapper.getComponent(VueFlowStub).vm.$emit('selection-end')
+    await flushPromises()
+    key('c')
+    expect(vm(wrapper).clipboard!.groups).toHaveLength(0)
+    expect(vm(wrapper).clipboard!.crossEdges).toHaveLength(2) // m1→group:g1 + ie（m2 端在外）恰一端
+    key('v')
+    expect(vm(wrapper).getSnapshot().groups).toHaveLength(2) // 组不重建
+    const newM1 = vm(wrapper).getSnapshot().nodes.find(n => n.data.label === 'm1 2')!
+    expect(vm(wrapper).getGroupEdges().some(e => e.source === newM1.id && e.target === 'group:g1')).toBe(true)
+    expect(vm(wrapper).getGroupEdges()).toHaveLength(4) // 原3 + X-3 克隆
+    expect(wrapper.emitted('groups-pasted')).toBeFalsy() // 无组粘贴不 toast
+  })
+})
