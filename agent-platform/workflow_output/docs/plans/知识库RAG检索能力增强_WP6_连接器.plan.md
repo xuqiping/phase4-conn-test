@@ -22,11 +22,12 @@ created-date: 2026-09-03
 
 ## 实现步骤
 
-- [ ] **Step 1：数据层与凭证加密**
+- [x] **Step 1：数据层与凭证加密**（代码+测试全落，测试 4/4）
   - **目标**：两表落库；凭证密文存取
   - **动作**：①迁移 `V1xx__knowledge_connectors.sql`（connectors + connector_docs，规格 §8.1 DDL）；②实体/Mapper；③`ConnectorCryptoService`：AES-GCM 加解密 config（加密设施核实复用，见坑点表）；④Controller CRUD（仅 owner/canManage，@AuditLog 增删改）；⑤config 明文校验（endpoint 格式/类型必填字段结构）
   - **文件**：迁移 ×1、`connector/ConnectorCryptoService.java`、实体 ×2、Mapper ×2、`KnowledgeConnectorController.java`、Test ×2
-  - **依赖**：无｜**验证**：单测——密文落库无明文/解密回读/权限 403/审计落库
+  - **依赖**：无｜**验证**：单测——密文落库无明文/解密回读 ✅/权限 403 ✅/审计落库（@AuditLog 切面既有机制，注解挂齐+集成验证留 Phase4）
+  - **实现注（偏离）**：①**无 ConnectorCryptoService**——核实既有 AES-GCM 设施=`llm/service/AesEncryptService`（billing/LLM 密钥同款主密钥 llm.encryption.secret，自带生产态弱密钥 fail-fast SEC-FR-074），直接注入复用，不新建重复轮子；②V175 对规格 DDL 修正：补 house 审计列（updated_by/updated_at/deleted @TableLogic——连接器有 status/last_sync 更新语义）+**超前落 `sync_on_source_delete`**（坑点表「源删误删」开关，默认 false=ISOLATED；趁建表免 Step3 再迁移）+connector_docs 补 `manual_deleted`（手工删不复活）与 tenant_id；③权限=**KB 治理级 isOwnerOrAdmin**（复用 KnowledgeBaseService 公有方法；canManage 授予位不含连接器——同 KB 改名/删除口径，比计划「owner/canManage」收紧）；④config 以 Map<String,Object> 进出（非裸 JSON 串）：明文态做类型结构校验（URL_SITE seedUrl/S3 endpoint+bucket+AK+SK/WEBDAV baseUrl+username；http(s) 形状）→Jackson 序列化→AES-GCM；**凭证只写不读**——VO 零 config 字段，重配=整表单重提交（update config=null=保留原密文）；⑤类型创建后不可变（external_id 语义随类型，换源=新建）；cron 用 Spring `CronExpression.isValidExpression` 六段校验；⑥删除=逻辑删（映射行随连接器失活不 CASCADE——FK CASCADE 仅硬删兜底；本地文档孤儿化保留）；⑦测试 4 条（计划 ×2）：密文落库断言不含 endpoint/AK/SK 任何明文+真 AES 实例解密回读+默认值口径/非 owner 403 零 insert/结构校验四态/类型不可变+config null 保留密文——AES 用真实实例非 mock 自证；⑧坑：ErrorCode.getCode() 返 int（403/422）非枚举名；R 包在 `common.result` 非 `common.response`。
 
 - [ ] **Step 2：SPI 与三连接器**
   - **目标**：URL_SITE/S3/WebDAV 可枚举可下载
