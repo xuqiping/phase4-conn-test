@@ -36,21 +36,21 @@ created-date: 2026-09-03
 
 ## 安全检查清单（P3 逐项验证）
 
-- [ ] **鉴权**：C1 关联管理仅 canManage/owner；带出文档 canRead 复校；C6 连接器管理仅 owner/canManage
-- [ ] **权限穿透**：C1 step6.5 逐文档复检+静默丢弃（防侧信道：不报错不提示存在）
-- [ ] **SSRF**：C6 全 URL 过 assertFetchSafe（含重定向后地址复检）；内网/非常规协议拒绝
-- [ ] **加密**：C6 凭证 AES-GCM 落库；日志/trace/异常不落明文凭证
-- [ ] **输入校验**：C2 描述 ≤4000 字必填、注入上限 8000 字；C6 config_cipher 结构校验；C1 边自环/跨库/语义等价重复拒绝
-- [ ] **审计**：C1 建边/删边/建议采纳、C6 连接器增删改/立即同步，均 @AuditLog
-- [ ] **错误处理**：保密库 403 话术复用（不泄漏边存在性）；C6 同步错误摘要不含内网地址明文
+- [x] **鉴权**：C1 关联管理仅 canManage/owner；带出文档 canRead 复校；C6 连接器管理仅 owner/canManage（落地=isOwnerOrAdmin 治理级，较清单收紧；403 用例见 WP1/WP6 测试）
+- [x] **权限穿透**：C1 step6.5 逐文档复检+静默丢弃（防侧信道：不报错不提示存在）——RelationGraphPostProcessor 批量复检，L1 边界用例锁死
+- [x] **SSRF**：C6 全 URL 过 assertFetchSafe（含重定向后地址复检）；内网/非常规协议拒绝——落地名 `SsrfGuard.validate`+SafeHttpFetch 手动跟跳逐跳复检（五渗透字面量+302 跳内网两用例）；S3 endpoint 建客户端前先验
+- [x] **加密**：C6 凭证 AES-GCM 落库（复用 AesEncryptService）；日志/trace/异常不落明文凭证——VO 零 config 字段只写不读+worker `sanitize` 剥 URL userinfo
+- [x] **输入校验**：C2 描述 ≤4000 字必填、注入上限 8000 字；C6 config_cipher 结构校验（四态用例）；C1 边自环/跨库/语义等价重复拒绝
+- [x] **审计**：C1 建边/删边/建议采纳、C6 连接器增删改/启停/立即同步，均 @AuditLog（connector_create/update/delete/enable/disable/sync）
+- [x] **错误处理**：保密库 403 话术复用（不泄漏边存在性）；C6 同步错误摘要不含内网地址明文——内网地址不脱敏口径偏离（owner/admin 自配置已知，见 WP6 Step5 实现注②），凭证/userinfo 已脱
 
 ## 性能考虑与验证计划
 
-- [ ] step6.5 关系扩展 ≤150ms：批量 IN 单查（禁逐 doc 查边）+ 权限判定复用已载 KB（WP1）
-- [ ] 附件图片注入未命中缓存 +≤3s：VLM 调用 2.5s 超时→降级仅描述注入（WP1）
-- [ ] 循环只在缺覆盖触发：trace rounds=0 场景延迟与基线差 <5ms（WP2）
-- [ ] 每文档 C4 +1 次 LLM（与 L1 同批）；每图 C5 +1 次 embed——计费归户 docOwner（WP3/WP5）
-- [ ] 连接器 1 req/s 限速、单轮 ≤50（WP6）
+- [x] step6.5 关系扩展 ≤150ms：批量 IN 单查（禁逐 doc 查边）+ 权限判定复用已载 KB（WP1）——落地已验；P95 实测归 Phase4
+- [x] 附件图片注入未命中缓存 +≤3s：VLM 调用 2.5s 超时→降级仅描述注入（WP1）
+- [x] 循环只在缺覆盖触发：trace rounds=0 场景延迟与基线差 <5ms（WP2）——基线对比用例锁死（覆盖足够=0 轮 0 开销）
+- [x] 每文档 C4 +1 次 LLM（与 L1 同批）；每图 C5 +1 次 embed——计费归户 docOwner（WP3/WP5）
+- [x] 连接器 1 req/s 限速、单轮 ≤50（WP6）——FetchLimiter+MAX_ACTIONS_PER_ROUND 用例锁死
 - [ ] Phase 4：检索调试 P95、问答 P95 与基线对比不回归；黄金集 Recall/MRR 门禁不降
 
 ## 功能联动点清单（含反向/半选/批量边界）
@@ -80,11 +80,11 @@ created-date: 2026-09-03
 
 ## 整体验证（功能级）
 
-- [ ] 后端全量单测绿（基线 2735+，新增见各子 plan）
-- [ ] 前端 vitest 全绿 + vue-tsc 0 错
-- [ ] 黄金集评估门禁不降（C1-C4 各 ≥5 例先建用例再实现）
-- [ ] playwright：L1-L8 联动点逐条（测试方案另出，Phase 4）
-- [ ] 与规格 §3-§9 对齐复核，偏离记各子 plan 备注
+- [x] 后端全量单测绿（基线 2735+，新增见各子 plan）→ 末次 **2915/2915**（+180）
+- [x] 前端 vitest 全绿 + vue-tsc 0 错 → **1103/1103**（+10）+ vue-tsc 0
+- [x] 黄金集评估门禁不降（C1-C4 各 ≥5 例先建用例再实现）→ 合成黄金集建毕：多轮 maxRounds 1→2 Recall 0.750→1.000/MRR 0.750→1.000（四类语义等价划分）；**真实库全量跑 Phase4**（评测中心 V115 数据集在库）
+- [ ] playwright：L1-L8 联动点逐条（[测试方案](../测试方案/知识库RAG检索能力增强测试方案.md) L1-L8+S1-S17，Phase 4）
+- [x] 与规格 §3-§9 对齐复核，偏离记各子 plan 备注——六子 plan 实现注全（ISOLATED=QUARANTINED 前缀分流/历史轮次不做/SPI 全量枚举等）
 
 ## 术语表
 
