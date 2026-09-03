@@ -858,6 +858,11 @@ import {
 import { findFileProcesses, closeProcess } from './api/processes'
 import { captureScreenshotRegion } from './api/screenshot'
 import { closeScreenshotOverlayWindow, openScreenshotOverlayWindow } from './api/screenshotOverlay'
+import {
+  exitApplication,
+  restoreMainWindow,
+  showFloatingBall
+} from './api/floatingBall'
 import GroupManager from './components/GroupManager.vue'
 import AddFileButton from './components/AddFileButton.vue'
 import EditFileDialog from './components/EditFileDialog.vue'
@@ -871,6 +876,8 @@ import WorkReportManagement from './components/work-report/WorkReportManagement.
 import OfficeWorkspace from './components/office/OfficeWorkspace.vue'
 import { deriveIconFromExt, resolveGroupId } from './utils/file'
 import { highlightText } from './utils/highlight'
+import { applyCloseBehavior } from './utils/closeBehavior'
+import type { CloseBehavior, FloatingBallPosition } from './types/settings'
 import { useSortableFiles } from './composables/useSortableFiles'
 import { useVirtualScroll } from './composables/useVirtualScroll'
 import type { FileItem } from './types/file'
@@ -1349,14 +1356,10 @@ async function maximizeWindow() {
 }
 
 async function closeWindow() {
-  if (settingsStore.settings.minimizeToTray) {
-    await appWindow.hide()
-  } else {
-    await appWindow.close()
-  }
+  await appWindow.close()
 }
 
-async function handleSaveSettings(settings: { globalShortcut: string; clipboardShortcut: string; screenshotShortcut: string; minimizeToTray: boolean; theme: 'light' | 'dark' | 'auto' }) {
+async function handleSaveSettings(settings: { globalShortcut: string; clipboardShortcut: string; screenshotShortcut: string; closeBehavior: CloseBehavior; theme: 'light' | 'dark' | 'auto' }) {
   const proposed = {
     globalShortcut: normalizeShortcut(settings.globalShortcut),
     clipboardShortcut: normalizeShortcut(settings.clipboardShortcut),
@@ -1380,7 +1383,7 @@ async function handleSaveSettings(settings: { globalShortcut: string; clipboardS
   }
 
   settingsStore.updateSettings({
-    minimizeToTray: settings.minimizeToTray,
+    closeBehavior: settings.closeBehavior,
     theme: settings.theme,
   })
 
@@ -1403,6 +1406,7 @@ let dndUnlisten: (() => void) | null = null
 let closeRequestedUnlisten: (() => void) | null = null
 let screenshotCaptureUnlisten: UnlistenFn | null = null
 let screenshotCancelUnlisten: UnlistenFn | null = null
+let floatingBallMovedUnlisten: UnlistenFn | null = null
 let shortcutHandling = false // Prevent double-trigger
 let clipboardShortcutHandling = false
 let screenshotShortcutHandling = false
@@ -1420,8 +1424,7 @@ async function handleGlobalShortcut() {
     if (isVisible) {
       await appWindow.hide()
     } else {
-      await appWindow.show()
-      await appWindow.setFocus()
+      await restoreMainWindow()
     }
   } finally {
     setTimeout(() => { shortcutHandling = false }, 300)
@@ -1540,12 +1543,25 @@ onMounted(async () => {
   // Performance monitoring: record app startup time
   const startupTime = performance.now()
 
-  // Intercept window close event to minimize to tray
+  // Intercept close so all three configured behaviors share one safe path.
   closeRequestedUnlisten = await appWindow.onCloseRequested(async (event) => {
-    if (settingsStore.settings.minimizeToTray) {
-      event.preventDefault()
-      await appWindow.hide()
-    }
+    event.preventDefault()
+    await applyCloseBehavior(settingsStore.settings.closeBehavior, {
+      showFloatingBall: async () => {
+        const position = await showFloatingBall(settingsStore.settings.floatingBallPosition)
+        settingsStore.updateSettings({ floatingBallPosition: position })
+      },
+      hideMainWindow: () => appWindow.hide(),
+      exitApplication,
+      onFloatingBallFailure: (error) => {
+        console.warn('[Window] Floating ball unavailable; using tray fallback:', error instanceof Error ? error.message : String(error))
+        alert(t('settings.floatingBallFailed'))
+      }
+    })
+  })
+
+  floatingBallMovedUnlisten = await listen<FloatingBallPosition>('floating-ball://moved', (event) => {
+    settingsStore.updateSettings({ floatingBallPosition: event.payload })
   })
 
   screenshotCaptureUnlisten = await listen<ScreenshotRegion>('screenshot://capture', async (event) => {
@@ -1747,6 +1763,10 @@ onUnmounted(async () => {
   if (screenshotCancelUnlisten) {
     screenshotCancelUnlisten()
     screenshotCancelUnlisten = null
+  }
+  if (floatingBallMovedUnlisten) {
+    floatingBallMovedUnlisten()
+    floatingBallMovedUnlisten = null
   }
   if (tokenRefreshInterval !== null) {
     clearInterval(tokenRefreshInterval)

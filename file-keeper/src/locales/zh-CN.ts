@@ -20,6 +20,20 @@ export default {
     aiLoginDescription: 'AI 配置保存在你的账号下，请登录后管理。',
     loginAction: '登录账号'
   },
+  settings: {
+    closeBehaviorTitle: '关闭主窗口后的行为',
+    closeBehaviorHint: '选择关闭按钮后保留悬浮入口、留在托盘，或直接退出应用。',
+    closeBehaviorFloatingBall: '显示悬浮球',
+    closeBehaviorFloatingBallDesc: '隐藏主窗口并显示可拖动的悬浮球，单击即可恢复。',
+    closeBehaviorTray: '最小化到托盘',
+    closeBehaviorTrayDesc: '隐藏主窗口，只保留系统托盘入口。',
+    closeBehaviorExit: '退出应用',
+    closeBehaviorExitDesc: '关闭主窗口时结束 File Keeper。',
+    floatingBallFailed: '悬浮球启动失败，已切换到系统托盘。',
+    floatingBallOpen: '打开主窗口',
+    floatingBallTray: '切换为托盘',
+    floatingBallExit: '退出 File Keeper'
+  },
   file: {
     searchPlaceholder: '搜索文件、路径或标签...',
     sortLabel: '排序',

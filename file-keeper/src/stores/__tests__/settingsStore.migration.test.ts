@@ -6,6 +6,7 @@ describe('settings migration', () => {
     const settings = normalizeSettings({ minimizeToTray: true })
 
     expect(settings.closeBehavior).toBe('tray')
+    expect(settings).not.toHaveProperty('minimizeToTray')
   })
 
   it('migrates the legacy exit preference to the new floating ball default', () => {

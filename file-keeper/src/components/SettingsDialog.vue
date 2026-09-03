@@ -123,31 +123,29 @@
             </p>
           </div>
 
-          <!-- Minimize to Tray -->
-          <div class="flex items-center justify-between">
-        <div>
-              <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                最小化到托盘
-            </label>
-        <p class="text-xs text-gray-500 mt-1">
-                关闭窗口时隐藏到系统托盘而不是退出
-              </p>
-            </div>
-        <button
-           @click="localMinimizeToTray = !localMinimizeToTray"
-              :class="[
-           'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
-                localMinimizeToTray ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-600'
-              ]"
+          <fieldset>
+            <legend class="text-sm font-medium text-gray-700 dark:text-gray-300">
+              {{ t('settings.closeBehaviorTitle') }}
+            </legend>
+            <p class="mb-2 mt-1 text-xs text-gray-500">{{ t('settings.closeBehaviorHint') }}</p>
+            <label
+              v-for="option in closeBehaviorOptions"
+              :key="option.value"
+              class="mb-2 flex cursor-pointer items-start gap-3 rounded-md border border-gray-200 p-3 dark:border-dark-border"
             >
-          <span
-                :class="[
-               'inline-block h-4 w-4 transform rounded-full bg-white transition-transform',
-                  localMinimizeToTray ? 'translate-x-6' : 'translate-x-1'
-                ]"
+              <input
+                v-model="localCloseBehavior"
+                type="radio"
+                name="close-behavior"
+                :value="option.value"
+                :data-test="`close-behavior-${option.value === 'floating_ball' ? 'floating-ball' : option.value}`"
               />
-            </button>
-          </div>
+              <span>
+                <span class="block text-sm font-medium text-gray-700 dark:text-gray-200">{{ option.label }}</span>
+                <span class="block text-xs text-gray-500">{{ option.description }}</span>
+              </span>
+            </label>
+          </fieldset>
 
           <!-- Theme -->
           <div>
@@ -252,6 +250,7 @@ import { useFileStore } from '../stores/fileStore'
 import { useI18n } from '../composables/useI18n'
 import { findShortcutConflict, normalizeShortcut } from '../utils/shortcut'
 import AiConfigSettings from './AiConfigSettings.vue'
+import type { CloseBehavior } from '../types/settings'
 
 const props = defineProps<{
   show: boolean
@@ -260,7 +259,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: []
   login: []
-  save: [settings: { globalShortcut: string; clipboardShortcut: string; screenshotShortcut: string; minimizeToTray: boolean; theme: 'light' | 'dark' | 'auto' }]
+  save: [settings: { globalShortcut: string; clipboardShortcut: string; screenshotShortcut: string; closeBehavior: CloseBehavior; theme: 'light' | 'dark' | 'auto' }]
 }>()
 
 const settingsStore = useSettingsStore()
@@ -280,9 +279,26 @@ const visibleTabs = computed(() => {
 const localShortcut = ref(settingsStore.settings.globalShortcut)
 const localClipboardShortcut = ref(settingsStore.settings.clipboardShortcut)
 const localScreenshotShortcut = ref(settingsStore.settings.screenshotShortcut)
-const localMinimizeToTray = ref(settingsStore.settings.minimizeToTray)
+const localCloseBehavior = ref<CloseBehavior>(settingsStore.settings.closeBehavior)
 const localTheme = ref(settingsStore.settings.theme)
 const shortcutError = ref('')
+const closeBehaviorOptions = computed(() => [
+  {
+    value: 'floating_ball' as const,
+    label: t('settings.closeBehaviorFloatingBall'),
+    description: t('settings.closeBehaviorFloatingBallDesc')
+  },
+  {
+    value: 'tray' as const,
+    label: t('settings.closeBehaviorTray'),
+    description: t('settings.closeBehaviorTrayDesc')
+  },
+  {
+    value: 'exit' as const,
+    label: t('settings.closeBehaviorExit'),
+    description: t('settings.closeBehaviorExitDesc')
+  }
+])
 
 // Reset local values when dialog opens
 watch(() => props.show, (newShow) => {
@@ -291,7 +307,7 @@ watch(() => props.show, (newShow) => {
     localShortcut.value = settingsStore.settings.globalShortcut
     localClipboardShortcut.value = settingsStore.settings.clipboardShortcut
     localScreenshotShortcut.value = settingsStore.settings.screenshotShortcut
-    localMinimizeToTray.value = settingsStore.settings.minimizeToTray
+    localCloseBehavior.value = settingsStore.settings.closeBehavior
     localTheme.value = settingsStore.settings.theme
     shortcutError.value = ''
   }
@@ -381,7 +397,7 @@ function handleSave() {
   }
   emit('save', {
     ...proposed,
-    minimizeToTray: localMinimizeToTray.value,
+    closeBehavior: localCloseBehavior.value,
     theme: localTheme.value
   })
 }

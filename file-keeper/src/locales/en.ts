@@ -20,6 +20,20 @@ export default {
     aiLoginDescription: 'AI configurations are stored under your account. Sign in to manage them.',
     loginAction: 'Sign in'
   },
+  settings: {
+    closeBehaviorTitle: 'When the main window closes',
+    closeBehaviorHint: 'Keep a floating entry point, remain in the tray, or exit the application.',
+    closeBehaviorFloatingBall: 'Show floating ball',
+    closeBehaviorFloatingBallDesc: 'Hide the main window and show a draggable ball that restores it with one click.',
+    closeBehaviorTray: 'Minimize to tray',
+    closeBehaviorTrayDesc: 'Hide the main window and keep only the system tray entry.',
+    closeBehaviorExit: 'Exit application',
+    closeBehaviorExitDesc: 'Quit File Keeper when the main window is closed.',
+    floatingBallFailed: 'The floating ball could not start. File Keeper remains available in the system tray.',
+    floatingBallOpen: 'Open main window',
+    floatingBallTray: 'Switch to tray',
+    floatingBallExit: 'Exit File Keeper'
+  },
   file: {
     searchPlaceholder: 'Search files, paths, or tags...',
     sortLabel: 'Sort',

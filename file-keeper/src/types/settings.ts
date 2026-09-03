@@ -14,8 +14,6 @@ export interface Settings {
   clipboardShortcut: string     // 剪贴板面板快捷键
   screenshotShortcut: string    // 截图快捷键
   autoStart: boolean          // 开机自启
-  /** @deprecated Chunk 5 完成三态关闭 UI 后移除。 */
-  minimizeToTray: boolean       // 旧版关闭行为兼容字段
   closeBehavior: CloseBehavior  // 关闭主窗口后的行为
   floatingBallPosition?: FloatingBallPosition
   defaultView: 'grid' | 'list'  // 默认视图

@@ -47,6 +47,10 @@ use commands::office::{
     office_list_tasks, office_recover_tasks, office_save_credential, office_start_task,
     OfficeCommandState,
 };
+use commands::window::{
+    exit_application, hide_floating_ball, hide_floating_ball_if_present, restore_main_window,
+    show_floating_ball, show_floating_ball_menu,
+};
 use clipboard::ClipboardService;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
@@ -88,6 +92,7 @@ fn main() {
                 .on_menu_event(|app, event| {
                     match event.id().as_ref() {
                         "show" => {
+                            hide_floating_ball_if_present(app);
                             if let Some(window) = app.get_webview_window("main") {
                                 let _ = window.show();
                                 let _ = window.set_focus();
@@ -99,7 +104,7 @@ fn main() {
                             }
                         }
                         "quit" => {
-                            std::process::exit(0);
+                            app.exit(0);
                         }
                         _ => {}
                     }
@@ -111,6 +116,7 @@ fn main() {
                         ..
                     } = event {
                         let app = tray.app_handle();
+                        hide_floating_ball_if_present(app);
                         if let Some(window) = app.get_webview_window("main") {
                             let _ = window.show();
                             let _ = window.set_focus();
@@ -172,7 +178,12 @@ fn main() {
             office_list_tasks,
             office_recover_tasks,
             office_save_credential,
-            office_delete_credential
+            office_delete_credential,
+            show_floating_ball,
+            show_floating_ball_menu,
+            hide_floating_ball,
+            restore_main_window,
+            exit_application
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

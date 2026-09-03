@@ -10,6 +10,14 @@ export default defineConfig({
     },
   },
   clearScreen: false,
+  build: {
+    rollupOptions: {
+      input: {
+        main: resolve(__dirname, 'index.html'),
+        floatingBall: resolve(__dirname, 'floating-ball.html'),
+      },
+    },
+  },
   server: {
     port: 1420,
     strictPort: true,

@@ -11,7 +11,6 @@ export const defaultSettings: Settings = {
   globalShortcut: 'CommandOrControl+Alt+K',
   clipboardShortcut: 'CommandOrControl+Shift+V',
   screenshotShortcut: 'CommandOrControl+Shift+X',
-  minimizeToTray: true,
   closeBehavior: 'floating_ball',
   autoStart: false,
   language: 'zh-CN',
@@ -33,13 +32,12 @@ export function normalizeSettings(data: unknown): Settings {
     && typeof persisted.floatingBallPosition === 'object'
     ? persisted.floatingBallPosition as Settings['floatingBallPosition']
     : undefined
+  const { minimizeToTray: _legacyMinimizeToTray, ...persistedSettings } = persisted
 
   return {
     ...defaultSettings,
-    ...persisted,
+    ...persistedSettings,
     closeBehavior: migratedCloseBehavior,
-    // Chunk 5 前 App.vue 还不能显示悬浮球，先安全降级为托盘入口。
-    minimizeToTray: migratedCloseBehavior !== 'exit',
     ...(floatingBallPosition ? { floatingBallPosition } : {})
   } as Settings
 }
@@ -61,7 +59,6 @@ export const useSettingsStore = defineStore('settings', () => {
 
   // Actions
   function updateSettings(updates: Partial<Settings>) {
-    // Chunk 5 切换关闭行为 UI 前保留旧开关的即时语义。
     Object.assign(settings.value, updates)
   }
 

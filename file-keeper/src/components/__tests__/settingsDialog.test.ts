@@ -23,6 +23,18 @@ describe('SettingsDialog', () => {
     expect(payload.screenshotShortcut).toBe('CommandOrControl+Alt+S')
   })
 
+  it('saves one of the three mutually exclusive close behaviors', async () => {
+    setActivePinia(createPinia())
+    const wrapper = mount(SettingsDialog, { props: { show: true } })
+
+    await wrapper.get('[data-test="close-behavior-tray"]').setValue()
+    await wrapper.get('[data-test="save-settings"]').trigger('click')
+
+    const payload = wrapper.emitted('save')?.[0]?.[0] as any
+    expect(payload.closeBehavior).toBe('tray')
+    expect(payload).not.toHaveProperty('minimizeToTray')
+  })
+
   it('always shows the AI tab but renders a login prompt without loading AI config when logged out', async () => {
     setActivePinia(createPinia())
     const wrapper = mount(SettingsDialog, {
