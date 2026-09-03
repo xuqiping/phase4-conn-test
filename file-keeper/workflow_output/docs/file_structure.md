@@ -42,6 +42,8 @@ file-keeper/                       # 代码根 = 上层 C:/AI Projects monorepo 
 
 `docs/specs/人工测试问题1-4修复.*.md` 是文件管理、进程管理、悬浮球与剪贴板六项修复的规格组，包含 PRD、architecture、db_schema、security_strategy、performance_goals 和 testing_strategy。后续 Phase 2/3 必须以该规格组为输入，不得只依据人工测试问题中的一句描述直接改代码。
 
+对应 Phase 2 实施计划为 `docs/plans/人工测试问题1-4修复.plan.md`，按影响基线、共享迁移、收藏快捷键、`.lnk` 托管、进程标题、悬浮球、剪贴板数据层和 UI 联动八个 Chunk 串行推进。
+
 ## 桌面端前端 `src/`
 
 | 目录 / 文件 | 说明 |
