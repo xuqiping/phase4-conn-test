@@ -73,11 +73,17 @@ created-date: 2026-09-03
     - ⑤子意图接线：service 两路把 `llmSubIntents` 传入 `runIterativeLoop`→orchestrator expand→CoverageVerifier requiredFrom 合并；step6.6 邻近扩展 strategies 取最终规划结果
     - 验证：LlmQueryPlannerTest 5（正常规划+护栏/非法字段保留规则版/超时回退/坏 JSON 回退/开关关 verifyNoInteractions 零调用）；三个服务测试类补 llmQueryPlanner 桩（ServiceTest 透传 lambda 保留 per-test queryPlanner.plan 覆写；AnswerModelTest 删已死 queryPlanner.plan 桩防 UnnecessaryStubbing）；全量 2829/2829。**黄金集 A/B 留 Step5 基线回归门一并做**
 
-- [ ] **Step 5：基线回归门**
+- [x] **Step 5：基线回归门**
   - **目标**：证明激活循环没有破坏现状
   - **动作**：①黄金集全量跑：max-rounds=1（=基线行为）与 max-rounds=2（默认）两组；②覆盖场景 trace 断言 rounds=0+证据集逐条一致；③既有检索单测全量绿
   - **文件**：Test ×1（基线对比套件）
   - **依赖**：Step 2-4｜**验证**：两组指标输出落档；差异仅允许出现在「原 INSUFFICIENT 现补齐」的正向场景
+  - **实现注（2026-09-03，commit 4e6e817）**：
+    - ①落地形态=`RagBaselineRegressionGateTest`（合成黄金集 4 例：SEMANTIC 无 filter/EXACT round0 已覆盖/EXACT 缺锚点需补轮/LIST 无 filter）；**真实黄金集 DB 全量跑留 Phase4 实测**（评测中心 V115 数据集在库，单测层无 DB——合成集覆盖四类语义等价划分）
+    - ②无缺口 3 例：两组 rounds=0 + 证据 nodeId:content **逐条一致**（fingerprint 断言）；缺口 1 例：基线组 rounds=0 锚点缺席（=原 INSUFFICIENT 场景）、默认组 rounds=1 补轮召回锚点
+    - ③**正向性口径修正**：首版「默认组证据 ⊇ 基线组」过强——topK 窗口（B3 候选上限）固定，补轮候选按统一重排分**竞争**进窗，实测低分尾证据（sim 0.45）被高分锚点（0.6）挤出。正确不变式=窗口大小不变+挤掉者分严格高于被挤者（分数竞争尾淘汰），已按此断言
+    - ④指标落档：maxRounds=1 **Recall=0.750 MRR=0.750** → maxRounds=2 **Recall=1.000 MRR=1.000**（stdout 输出+此处记录）；全量 2832/2832
+    - 坑：fetchL2Children 桩分支 docIds=**第 3 参**（getArgument(2)）——首版取第 2 参全走默认分支，补轮空召回假红
 
 ## 联动点（WP2 专属细化）
 
@@ -89,6 +95,6 @@ created-date: 2026-09-03
 
 ## 验证汇总
 
-- [ ] 单测新增 ~10；基线对比套件 1 套
-- [ ] 黄金集：默认配置 Recall 不降、MRR 不降；正向改善场景记录
-- [ ] 手测剧本：列表题缺一章→自动补轮召回；拒答题两轮仍缺→INSUFFICIENT 文案不变
+- [x] 单测新增 ~10；基线对比套件 1 套（Step2 +15、Step3 +7、Step4 +5、Step5 套件 3，累计 +30；2832/2832）
+- [x] 黄金集：默认配置 Recall 不降、MRR 不降；正向改善场景记录（合成集 0.750/0.750→1.000/1.000；真实黄金集 DB 全量跑 Phase4）
+- [ ] 手测剧本：列表题缺一章→自动补轮召回；拒答题两轮仍缺→INSUFFICIENT 文案不变（Phase4 手测）
