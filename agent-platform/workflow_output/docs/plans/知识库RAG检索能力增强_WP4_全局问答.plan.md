@@ -20,11 +20,12 @@ created-date: 2026-09-03
 
 ## 实现步骤
 
-- [ ] **Step 1：L-KB 数据层与生成 Worker**
+- [x] **Step 1：L-KB 数据层与生成 Worker**（commit f4e8ecfd，2847/2847）
   - **目标**：库级摘要自动生成、节流、不出库
   - **动作**：①迁移 `V1xx__knowledge_base_summaries.sql`（规格 §9.1 DDL）；②`global/KbSummaryWorker.java`（@Scheduled 低峰默认 04:30）：触发判定（变更 ≥10% 或 >7 天）→取库内全 ACTIVE 文档 L1 摘要分批 ≤20 → map 每批浓缩要点 → reduce 合成库级摘要 ≤2000 字+主题清单 → 写表（新 version 行）；③失败重试 3 次→状态 ERROR；④摘要读取仅 Service 内部，无对外 VO
   - **文件**：迁移 ×1、`global/KbSummaryWorker.java`（新）、实体/Mapper ×1、Test ×2
-  - **依赖**：无（L1 现状已有）｜**验证**：单测——触发矩阵/分批/重试上限/无 L1 文档库跳过；API 层无暴露
+  - **依赖**：无（L1 现状已有）｜**验证**：单测——触发矩阵/分批/重试上限/无 L1 文档库跳过；API 层无暴露 ✅（KbSummaryWorkerTest 3 例）
+  - **实现注（偏离）**：表加 status 列（READY/ERROR——计划动作③要求 ERROR 态而规格 DDL 未列，小偏离已注）；实体独立不继承 BaseEntity（本表无 deleted 列且 version 为业务版本，继承带 @TableLogic 会拼 deleted=0 炸 SQL）；重试=整体生成重试（map+reduce 一体计一次 attempt）
 
 - [ ] **Step 2：GLOBAL 分类与 map-reduce 分支**
   - **目标**：「总结全库」类问题走全局回答
