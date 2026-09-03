@@ -50,9 +50,17 @@
       <div v-else-if="result" class="rag-debug__result">
         <n-alert
           :type="result.abstained ? 'warning' : 'success'"
-          :title="result.abstained ? `拒答（${result.abstainReason || ''}）` : '命中（SUPPORTED）'"
+          :title="alertTitle"
           style="margin-bottom: var(--spacing-3)"
         />
+        <!-- C7 GLOBAL（WP4 Step4）：全局分支标识——map-reduce 文档级引用，无 chunk 候选/证据 -->
+        <div v-if="result.globalMode" class="rag-debug__global" :class="{ 'rag-debug__global--degraded': result.globalDegraded }">
+          🌍 GLOBAL 全局问答（map-reduce · 文档级引用 [n]《标题》）
+          · 参与文档 <b>{{ result.globalDocCount ?? 0 }}</b>
+          · map <b>{{ result.globalBatches ?? 0 }}</b> 批
+          · L-KB 概览 <b>{{ result.globalOverviewReady ? '就绪' : '未生成' }}</b>
+          <template v-if="result.globalDegraded">· ⚠ 已降级（仅库级概览，建议缩小问题范围）</template>
+        </div>
         <div v-if="result.bm25Fallback" class="rag-debug__fallback-hint">
           ⚠ BM25 词法兜底触发：有候选无向量父锚，纯词法命中进入 pool（见下「候选 BM25」）
         </div>
@@ -178,6 +186,15 @@ const kbOptions = computed(() =>
   })
 )
 const canRun = computed(() => !!form.value.kbId && form.value.query.trim().length > 0)
+
+/** C7 GLOBAL：告警标题区分常规命中与全局分支（降级时 PARTIAL） */
+const alertTitle = computed(() => {
+  if (result.value?.abstained) return `拒答（${result.value.abstainReason || ''}）`
+  if (result.value?.globalMode) {
+    return result.value.globalDegraded ? '命中（PARTIAL · GLOBAL 降级）' : '命中（SUPPORTED · GLOBAL）'
+  }
+  return '命中（SUPPORTED）'
+})
 
 const citationCols: DataTableColumns<RagCitation> = [
   { title: '[n]', key: 'index', width: 60 },
@@ -334,6 +351,21 @@ async function run() {
   background: var(--color-card);
   color: var(--color-text-secondary);
   font-size: 12px;
+}
+
+/* C7 GLOBAL：全局分支标识条（降级=警示描边） */
+.rag-debug__global {
+  margin-top: calc(-1 * var(--spacing-2));
+  padding: var(--spacing-2) var(--spacing-3);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+
+  b { color: var(--color-primary); }
+}
+.rag-debug__global--degraded {
+  border-color: var(--color-warning, #f0a020);
 }
 .rag-debug__l1-meta {
   padding: var(--spacing-2) var(--spacing-3);

@@ -366,6 +366,16 @@ export interface RagRetrieveVO {
   tokenBudget: RagTokenBudget
   latencyMs: number
   retrievalTimeline?: Array<{ stage: string; configuredMode?: string; effectiveMode?: string; model?: string | null; candidateCount: number; latencyMs: number; status: string }>
+  /** C7 GLOBAL（WP4）：true=全局 map-reduce 问答（文档级引用 [n]《标题》，无 chunk 证据/L0/L1 候选） */
+  globalMode?: boolean
+  /** GLOBAL 参与文档数（引用白名单基数） */
+  globalDocCount?: number
+  /** GLOBAL map 批数 */
+  globalBatches?: number
+  /** GLOBAL 库级摘要 L-KB 概览段是否已拼装 */
+  globalOverviewReady?: boolean
+  /** GLOBAL 降级（超时/引用越界/无 L1 → 仅概览+提示缩小范围） */
+  globalDegraded?: boolean
 }
 
 /** 检索审计记录（对应后端 RagRetrievalLogVO，大 JSON 字段原样透传） */

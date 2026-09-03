@@ -94,6 +94,14 @@
             rel="noopener noreferrer"
             :title="c.url"
           >🌐 {{ c.title || c.url }}</a>
+          <!-- C7 GLOBAL（WP4 Step4）：文档级引用（无 nodeId 段落锚，全库 map-reduce 产物）→ 📄 可点跳知识库 -->
+          <a
+            v-else-if="c.documentId && !c.nodeId"
+            class="message-bubble__citation-doc"
+            href="/knowledge"
+            title="文档级引用（全局问答）：跳转知识库查看"
+            @click.prevent="jumpToKnowledge"
+          >📄 {{ c.title || `文档 ${c.documentId}` }}</a>
           <span v-else class="message-bubble__citation-title">{{ c.title || c.originalName || `文档 ${c.documentId}` }}</span>
           <!-- C2：附件型文档引用（原件内容已注入证据，回答基于真实内容） -->
           <span
@@ -139,6 +147,7 @@ import { PersonOutline, SparklesOutline, CopyOutline, CheckmarkOutline, ArchiveO
 import type { ChatMessage } from '@/api/chat'
 import type { RecalledFileCard } from '@/api/memory'
 import { knowledgeApi } from '@/api/knowledge'
+import { useRouter } from 'vue-router'
 import { fetchFilePreview } from '@/api/file'
 import MessageFileCard from './MessageFileCard.vue'
 import MarkdownContent from './MarkdownContent.vue'
@@ -153,6 +162,12 @@ const emit = defineEmits<{
 }>()
 
 const showThinking = ref(true)
+
+/** C7 GLOBAL（WP4 Step4）：文档级引用点击 → 跳知识库模块（无 doc→kb 深链基建，落到模块首页由用户选库）。 */
+const router = useRouter()
+function jumpToKnowledge() {
+  void router.push('/knowledge')
+}
 
 /** 9x#12：入库弹窗开关 + 默认资产名（正文首行截 40 字）。 */
 const showSaveAsset = ref(false)
@@ -222,6 +237,8 @@ const usageLine = computed<string | null>(() => {
 interface Citation {
   index: number
   documentId?: number
+  /** chunk 级引用的节点锚（有值=段落级）；无值+documentId=C7 GLOBAL 文档级引用。 */
+  nodeId?: number
   title?: string
   docType?: string
   fileRef?: string
@@ -492,6 +509,17 @@ async function downloadAttachment(a: { fileId: string; name: string }) {
 
 .message-bubble__citation-title {
   word-break: break-word;
+}
+
+/* C7 GLOBAL：文档级引用（可点跳知识库） */
+.message-bubble__citation-doc {
+  color: var(--color-primary);
+  text-decoration: none;
+  word-break: break-word;
+
+  &:hover {
+    text-decoration: underline;
+  }
 }
 
 .message-bubble__citation-attach {
