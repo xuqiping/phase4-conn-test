@@ -20,17 +20,19 @@ created-date: 2026-09-03
 
 ## 实现步骤
 
-- [ ] **Step 1：定位表生成（Contextualizer 升级）**
+- [x] **Step 1：定位表生成（Contextualizer 升级）**（commit 06ed7cbb）
   - **目标**：每文档 1 次 LLM 调用产出全 chunk 定位语
   - **动作**：①`Contextualizer` 增 `contextualizeWithLlm(doc, version, nodes, l1Summary)`：提示词=输入 L1 摘要+chunk 清单（id/标题/首行），输出 JSON 数组 [{nodeId, locator ≤50字}]；maxTokens≥2000、超时与 L1 同口径；解析容错逐 chunk 降级；②定位语不含权限信息过滤；③开关 `rag.contextual.llm.enabled` 默认 true，关=纯规则版现状；④计费归户 docOwner
   - **文件**：`service/Contextualizer.java`、`RagConfig`、`LlmGateway`（调用）、Test ×2
-  - **依赖**：无（L1 链路现状已有）｜**验证**：单测——正常生成/JSON 烂尾部分降级/权限词过滤/开关关闭走纯规则
+  - **依赖**：无（L1 链路现状已有）｜**验证**：单测——正常生成/JSON 烂尾部分降级/权限词过滤/开关关闭走纯规则 ✅
+  - **实现注（偏离）**：独立类 `LlmContextualizer`（非 Contextualizer 加方法——职责分离：Contextualizer=纯规则拼接零依赖，LlmContextualizer=LLM 调用+解析容错）；key 用 chunk **path**（`/L0-i/L2-ordinal`，写库前确定）非 nodeId（LLM 调用必须在 writeNodes 事务前，节点 id 尚未生成——鸡生蛋问题）；权限过滤口径=整条丢弃（GOVERNANCE_WORDS 12 词，词级替换有泄漏风险）；JSON 烂尾容错=`salvageObjects` 花括号配对+字符串状态机扫描逐对象解析（readTree 整体失败也能捞回完整对象）；配置独立 `RagContextualProperties`（rag.contextual 前缀）非塞 RagConfig
 
-- [ ] **Step 2：存储与索引接线**
+- [x] **Step 2：存储与索引接线**（commit 0b020f19）
   - **目标**：定位语落库、embed 文本升级、双写一致
   - **动作**：①迁移 `V1xx__knowledge_rag_context_multimodal.sql`：`knowledge_nodes.contextual_text TEXT NULL`（C5 的 modality 列同文件，WP5 用）；②SUMMARIZING 完成后写回 nodes.contextual_text；③`IndexJobWorker` embed 文本=规则前缀+定位语+原文，contextHash=新公式（含定位语），pipeline_version=CTX_LLM_V1；④OpenSearch chunk 文档带 contextual_text
   - **文件**：迁移 ×1、`entity/KnowledgeNode.java`、`service/Contextualizer.java`、`IndexJobWorker.java`、`opensearch/OpenSearchChunkDocument.java`、Test ×2
-  - **依赖**：Step 1｜**验证**：单测——embed 文本拼接顺序、hash 新公式、存量行不受影响；集成：新文档索引后 OpenSearch 读回
+  - **依赖**：Step 1｜**验证**：单测——embed 文本拼接顺序、hash 新公式、存量行不受影响；集成：新文档索引后 OpenSearch 读回（单测 ✅；OS 集成读回留 Phase4 手测） ✅
+  - **实现注（偏离）**：V171（非 V1xx 占位）；定位表落库在 `KnowledgeNodeWriter` 新 7 参 writeNodes（+contextualLocators）而非 worker 回写——节点与 contextual_text 同事务同 hash（worker 侧 hash 复校直接可用）；previewChunks() 供事务外 LLM 调用取 chunk 清单（path 同构）；pipeline 字面量 CTX_LLM_V1 在 writer 内联（全库配置 rag.index.pipeline-version 不动）；6 参旧签名保留委托 Map.of() 零测试搅动；OpenSearchChunkDocument +contextualText +KnowledgeIndexSchema mapping 补 text/index:false（dynamic:strict 不补则 bulk 全炸）
 
 - [ ] **Step 3：存量可选重建入口**
   - **目标**：库 owner 可选为存量文档应用 LLM 上下文增强
