@@ -1,5 +1,5 @@
 use crate::clipboard::{
-    ClipboardItemSummary, ClipboardQuery, ClipboardService, ClipboardSettings,
+    ClipboardGroup, ClipboardItemSummary, ClipboardQuery, ClipboardService, ClipboardSettings,
     ClipboardStorageTypeUsage, ClipboardStorageUsage,
 };
 use sha2::{Digest, Sha256};
@@ -135,19 +135,90 @@ pub fn set_clipboard_ocr_text_for_testing(
 
 #[tauri::command]
 pub fn delete_clipboard_item(
+    app: AppHandle,
     id: String,
     service: State<'_, ClipboardService>,
 ) -> Result<(), String> {
-    service.delete_item(&id)
+    service.delete_item(&id)?;
+    emit_clipboard_changed(&app);
+    Ok(())
 }
 
 #[tauri::command]
 pub fn update_clipboard_item_note(
+    app: AppHandle,
     id: String,
     note: Option<String>,
     service: State<'_, ClipboardService>,
 ) -> Result<Option<String>, String> {
-    service.update_note(&id, note.as_deref())
+    let result = service.update_note(&id, note.as_deref())?;
+    emit_clipboard_changed(&app);
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn get_clipboard_groups(
+    service: State<'_, ClipboardService>,
+) -> Result<Vec<ClipboardGroup>, String> {
+    service.list_groups()
+}
+
+#[tauri::command]
+pub fn create_clipboard_group(
+    app: AppHandle,
+    name: String,
+    service: State<'_, ClipboardService>,
+) -> Result<ClipboardGroup, String> {
+    let group = service.create_group(&name)?;
+    emit_clipboard_changed(&app);
+    Ok(group)
+}
+
+#[tauri::command]
+pub fn rename_clipboard_group(
+    app: AppHandle,
+    id: String,
+    name: String,
+    service: State<'_, ClipboardService>,
+) -> Result<ClipboardGroup, String> {
+    let group = service.rename_group(&id, &name)?;
+    emit_clipboard_changed(&app);
+    Ok(group)
+}
+
+#[tauri::command]
+pub fn delete_clipboard_group(
+    app: AppHandle,
+    id: String,
+    service: State<'_, ClipboardService>,
+) -> Result<(), String> {
+    service.delete_group(&id)?;
+    emit_clipboard_changed(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn move_clipboard_items(
+    app: AppHandle,
+    ids: Vec<String>,
+    group_id: Option<String>,
+    service: State<'_, ClipboardService>,
+) -> Result<(), String> {
+    service.move_items_to_group(&ids, group_id.as_deref())?;
+    emit_clipboard_changed(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_clipboard_items_pinned(
+    app: AppHandle,
+    ids: Vec<String>,
+    is_pinned: bool,
+    service: State<'_, ClipboardService>,
+) -> Result<(), String> {
+    service.set_items_pinned(&ids, is_pinned)?;
+    emit_clipboard_changed(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -353,10 +424,13 @@ pub fn remember_clipboard_target_window(
 
 #[tauri::command]
 pub fn clear_clipboard_history(
+    app: AppHandle,
     scope: String,
     service: State<'_, ClipboardService>,
 ) -> Result<(), String> {
-    service.clear_history(&scope)
+    service.clear_history(&scope)?;
+    emit_clipboard_changed(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -373,6 +447,13 @@ fn hash_bytes(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     format!("{:x}", hasher.finalize())
+}
+
+fn emit_clipboard_changed(app: &AppHandle) {
+    // Persistence is already committed when this runs. Event delivery is a
+    // refresh hint, so a transient Webview listener failure must not turn a
+    // successful database write into a false rollback signal.
+    let _ = app.emit("clipboard://changed", "mutation");
 }
 
 pub fn clipboard_database_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {

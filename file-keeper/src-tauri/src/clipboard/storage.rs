@@ -1,9 +1,9 @@
 use crate::clipboard::search::normalize_search_text;
 use crate::clipboard::types::{
-    CacheState, ClipboardItemSummary, ClipboardKind, ClipboardQuery, ClipboardSettings,
-    ClipboardSourceApp,
+    CacheState, ClipboardGroup, ClipboardItemSummary, ClipboardKind, ClipboardQuery,
+    ClipboardSettings, ClipboardSourceApp,
 };
-use rusqlite::{params, Connection};
+use rusqlite::{params, params_from_iter, types::Value, Connection};
 use uuid::Uuid;
 
 pub struct ClipboardStorage {
@@ -301,6 +301,7 @@ impl ClipboardStorage {
             .map(|value| format!("%{}%", normalize_search_text(value)));
         let kind = query.kind.as_ref().filter(|value| value.as_str() != "all");
         let favorite_only = query.favorite_only.unwrap_or(false);
+        let group_id = query.group_id.as_deref();
 
         let mut statement = self.connection.prepare(
             "SELECT id, kind, title, summary, source_process, source_title, source_pid, created_at,
@@ -312,8 +313,11 @@ impl ClipboardStorage {
                AND (?3 = 0 OR is_favorite = 1)
                AND (?4 IS NULL OR created_at >= ?4)
                AND (?5 IS NULL OR created_at <= ?5)
-             ORDER BY created_at DESC
-             LIMIT ?6 OFFSET ?7"
+               AND (?6 IS NULL
+                    OR (?6 = '__ungrouped__' AND group_id IS NULL)
+                    OR (?6 <> '__ungrouped__' AND group_id = ?6))
+             ORDER BY is_pinned DESC, pinned_at DESC, created_at DESC, id DESC
+             LIMIT ?7 OFFSET ?8"
         ).map_err(|err| err.to_string())?;
 
         let rows = statement
@@ -324,6 +328,7 @@ impl ClipboardStorage {
                     if favorite_only { 1 } else { 0 },
                     query.start_at,
                     query.end_at,
+                    group_id,
                     query.limit,
                     query.offset
                 ],
@@ -350,6 +355,196 @@ impl ClipboardStorage {
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(err) => Err(err.to_string()),
         }
+    }
+
+    pub fn list_groups(&self) -> Result<Vec<ClipboardGroup>, String> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT id, name, sort_order, created_at, updated_at
+                 FROM clipboard_groups
+                 ORDER BY sort_order ASC, created_at ASC, id ASC",
+            )
+            .map_err(|err| err.to_string())?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok(ClipboardGroup {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    sort_order: row.get(2)?,
+                    created_at: row.get(3)?,
+                    updated_at: row.get(4)?,
+                })
+            })
+            .map_err(|err| err.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|err| err.to_string())
+    }
+
+    pub fn create_group(&self, name: &str) -> Result<ClipboardGroup, String> {
+        let (name, normalized_name) = normalize_group_name(name)?;
+        let id = Uuid::new_v4().to_string();
+        let now = current_millis();
+        let sort_order: i64 = self
+            .connection
+            .query_row(
+                "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM clipboard_groups",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|err| err.to_string())?;
+        self.connection
+            .execute(
+                "INSERT INTO clipboard_groups (id, name, normalized_name, sort_order, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+                params![id, name, normalized_name, sort_order, now],
+            )
+            .map_err(map_group_write_error)?;
+        Ok(ClipboardGroup {
+            id,
+            name,
+            sort_order,
+            created_at: now,
+            updated_at: now,
+        })
+    }
+
+    pub fn rename_group(&self, id: &str, name: &str) -> Result<ClipboardGroup, String> {
+        let (name, normalized_name) = normalize_group_name(name)?;
+        let now = current_millis();
+        let changed = self
+            .connection
+            .execute(
+                "UPDATE clipboard_groups
+                 SET name = ?2, normalized_name = ?3, updated_at = ?4
+                 WHERE id = ?1",
+                params![id, name, normalized_name, now],
+            )
+            .map_err(map_group_write_error)?;
+        if changed == 0 {
+            return Err("clipboard_group_not_found".to_string());
+        }
+        self.connection
+            .query_row(
+                "SELECT id, name, sort_order, created_at, updated_at
+                 FROM clipboard_groups WHERE id = ?1",
+                params![id],
+                |row| {
+                    Ok(ClipboardGroup {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        sort_order: row.get(2)?,
+                        created_at: row.get(3)?,
+                        updated_at: row.get(4)?,
+                    })
+                },
+            )
+            .map_err(|err| err.to_string())
+    }
+
+    pub fn delete_group(&self, id: &str) -> Result<(), String> {
+        self.connection
+            .execute_batch("BEGIN IMMEDIATE")
+            .map_err(|err| err.to_string())?;
+        let result = (|| {
+            self.connection
+                .execute(
+                    "UPDATE clipboard_items SET group_id = NULL WHERE group_id = ?1",
+                    params![id],
+                )
+                .map_err(|err| err.to_string())?;
+            let changed = self
+                .connection
+                .execute("DELETE FROM clipboard_groups WHERE id = ?1", params![id])
+                .map_err(|err| err.to_string())?;
+            if changed == 0 {
+                return Err("clipboard_group_not_found".to_string());
+            }
+            Ok(())
+        })();
+        finish_transaction(&self.connection, result)
+    }
+
+    pub fn move_items_to_group(
+        &self,
+        ids: &[String],
+        group_id: Option<&str>,
+    ) -> Result<(), String> {
+        let ids = unique_non_empty_ids(ids)?;
+        if let Some(group_id) = group_id {
+            let exists: i64 = self
+                .connection
+                .query_row(
+                    "SELECT COUNT(*) FROM clipboard_groups WHERE id = ?1",
+                    params![group_id],
+                    |row| row.get(0),
+                )
+                .map_err(|err| err.to_string())?;
+            if exists == 0 {
+                return Err("clipboard_group_not_found".to_string());
+            }
+        }
+        let placeholders = (2..=ids.len() + 1)
+            .map(|index| format!("?{index}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "UPDATE clipboard_items SET group_id = ?1 WHERE id IN ({placeholders})"
+        );
+        let mut values = Vec::with_capacity(ids.len() + 1);
+        values.push(group_id.map_or(Value::Null, |value| Value::Text(value.to_string())));
+        values.extend(ids.iter().cloned().map(Value::Text));
+        self.connection
+            .execute_batch("BEGIN IMMEDIATE")
+            .map_err(|err| err.to_string())?;
+        let result = self
+            .connection
+            .execute(&sql, params_from_iter(values))
+            .map_err(|err| err.to_string())
+            .and_then(|changed| {
+                if changed == ids.len() {
+                    Ok(())
+                } else {
+                    Err("clipboard_item_not_found".to_string())
+                }
+            });
+        finish_transaction(&self.connection, result)
+    }
+
+    pub fn set_items_pinned(&self, ids: &[String], is_pinned: bool) -> Result<(), String> {
+        let ids = unique_non_empty_ids(ids)?;
+        let placeholders = (3..=ids.len() + 2)
+            .map(|index| format!("?{index}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "UPDATE clipboard_items
+             SET is_pinned = ?1, pinned_at = ?2
+             WHERE id IN ({placeholders})"
+        );
+        let mut values = Vec::with_capacity(ids.len() + 2);
+        values.push(Value::Integer(if is_pinned { 1 } else { 0 }));
+        values.push(if is_pinned {
+            Value::Integer(current_millis())
+        } else {
+            Value::Null
+        });
+        values.extend(ids.iter().cloned().map(Value::Text));
+        self.connection
+            .execute_batch("BEGIN IMMEDIATE")
+            .map_err(|err| err.to_string())?;
+        let result = self
+            .connection
+            .execute(&sql, params_from_iter(values))
+            .map_err(|err| err.to_string())
+            .and_then(|changed| {
+                if changed == ids.len() {
+                    Ok(())
+                } else {
+                    Err("clipboard_item_not_found".to_string())
+                }
+            });
+        finish_transaction(&self.connection, result)
     }
 
     pub fn insert_html_item(&self, html: &str, markdown: &str) -> Result<String, String> {
@@ -824,6 +1019,52 @@ fn current_millis() -> i64 {
         .as_millis() as i64
 }
 
+fn normalize_group_name(name: &str) -> Result<(String, String), String> {
+    let trimmed = name.trim();
+    let length = trimmed.chars().count();
+    if !(1..=40).contains(&length) || trimmed.chars().any(char::is_control) {
+        return Err("clipboard_group_name_invalid".to_string());
+    }
+    Ok((trimmed.to_string(), trimmed.to_lowercase()))
+}
+
+fn map_group_write_error(error: rusqlite::Error) -> String {
+    if matches!(error, rusqlite::Error::SqliteFailure(_, Some(ref message)) if message.contains("clipboard_groups.normalized_name")) {
+        "clipboard_group_name_exists".to_string()
+    } else {
+        error.to_string()
+    }
+}
+
+fn unique_non_empty_ids(ids: &[String]) -> Result<Vec<String>, String> {
+    let mut ids = ids
+        .iter()
+        .filter(|id| !id.is_empty())
+        .cloned()
+        .collect::<Vec<_>>();
+    ids.sort();
+    ids.dedup();
+    if ids.is_empty() {
+        return Err("clipboard_item_ids_required".to_string());
+    }
+    Ok(ids)
+}
+
+fn finish_transaction<T>(connection: &Connection, result: Result<T, String>) -> Result<T, String> {
+    match result {
+        Ok(value) => {
+            connection
+                .execute_batch("COMMIT")
+                .map_err(|err| err.to_string())?;
+            Ok(value)
+        }
+        Err(error) => {
+            let _ = connection.execute_batch("ROLLBACK");
+            Err(error)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1073,6 +1314,90 @@ mod tests {
         assert_eq!(items[0].id, first_id);
         assert_eq!(items[1].id, second_id);
         assert!(items[0].last_used_at.is_some());
+    }
+
+    #[test]
+    fn creates_renames_and_rejects_duplicate_or_invalid_groups() {
+        let storage = ClipboardStorage::in_memory().unwrap();
+        storage.init().unwrap();
+
+        let group = storage.create_group("  Finance  ").unwrap();
+        assert_eq!(group.name, "Finance");
+        assert!(storage.create_group("finance").is_err());
+        assert!(storage.create_group("bad\nname").is_err());
+
+        let renamed = storage.rename_group(&group.id, "Reports").unwrap();
+        assert_eq!(renamed.name, "Reports");
+        assert_eq!(storage.list_groups().unwrap()[0].name, "Reports");
+    }
+
+    #[test]
+    fn moves_items_in_batch_and_deleting_group_returns_them_to_ungrouped() {
+        let storage = ClipboardStorage::in_memory().unwrap();
+        storage.init().unwrap();
+        let first = storage.insert_text_item("first", "first", None).unwrap();
+        let second = storage.insert_text_item("second", "second", None).unwrap();
+        let group = storage.create_group("Work").unwrap();
+
+        storage
+            .move_items_to_group(&[first.clone(), second.clone()], Some(&group.id))
+            .unwrap();
+        let mut grouped_query = query();
+        grouped_query.group_id = Some(group.id.clone());
+        assert_eq!(storage.list_items(&grouped_query).unwrap().len(), 2);
+
+        storage.delete_group(&group.id).unwrap();
+        let mut ungrouped_query = query();
+        ungrouped_query.group_id = Some("__ungrouped__".to_string());
+        let ungrouped = storage.list_items(&ungrouped_query).unwrap();
+        assert_eq!(ungrouped.len(), 2);
+        assert!(ungrouped.iter().all(|item| item.group_id.is_none()));
+        assert!(storage.list_groups().unwrap().is_empty());
+    }
+
+    #[test]
+    fn pins_items_with_stable_order_and_duplicate_capture_preserves_state() {
+        let storage = ClipboardStorage::in_memory().unwrap();
+        storage.init().unwrap();
+        let first = storage.insert_text_item("first", "first", None).unwrap();
+        let second = storage.insert_text_item("second", "second", None).unwrap();
+        let group = storage.create_group("Pinned").unwrap();
+        storage.move_items_to_group(&[first.clone()], Some(&group.id)).unwrap();
+
+        storage.set_items_pinned(&[first.clone()], true).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        storage.set_items_pinned(&[second.clone()], true).unwrap();
+        let duplicate = storage.insert_text_item("first", "first", None).unwrap();
+        let items = storage.list_items(&query()).unwrap();
+
+        assert_eq!(duplicate, first);
+        assert_eq!(items[0].id, second);
+        assert_eq!(items[1].id, first);
+        assert!(items[1].is_pinned);
+        assert_eq!(items[1].group_id.as_deref(), Some(group.id.as_str()));
+
+        storage.set_items_pinned(&[second], false).unwrap();
+        let items = storage.list_items(&query()).unwrap();
+        assert_eq!(items[0].id, first);
+        assert!(!items[1].is_pinned);
+        assert!(items[1].pinned_at.is_none());
+    }
+
+    #[test]
+    fn batch_updates_roll_back_when_any_item_is_missing() {
+        let storage = ClipboardStorage::in_memory().unwrap();
+        storage.init().unwrap();
+        let existing = storage.insert_text_item("existing", "existing", None).unwrap();
+        let group = storage.create_group("Safe").unwrap();
+        let ids = vec![existing.clone(), "missing".to_string()];
+
+        assert!(storage.move_items_to_group(&ids, Some(&group.id)).is_err());
+        assert!(storage.set_items_pinned(&ids, true).is_err());
+
+        let item = storage.get_item_summary(&existing).unwrap().unwrap();
+        assert!(item.group_id.is_none());
+        assert!(!item.is_pinned);
+        assert!(item.pinned_at.is_none());
     }
 
     #[test]

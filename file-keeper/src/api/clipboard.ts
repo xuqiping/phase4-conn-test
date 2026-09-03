@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type {
   ClipboardItemDetail,
+  ClipboardGroup,
   ClipboardItemSummary,
   ClipboardPasteFormat,
   ClipboardQuery,
@@ -51,6 +52,30 @@ export async function deleteClipboardItem(id: string): Promise<void> {
 
 export async function updateClipboardItemNote(id: string, note: string | null): Promise<string | null> {
   return await invoke<string | null>('update_clipboard_item_note', { id, note })
+}
+
+export async function getClipboardGroups(): Promise<ClipboardGroup[]> {
+  return invoke<ClipboardGroup[]>('get_clipboard_groups')
+}
+
+export async function createClipboardGroup(name: string): Promise<ClipboardGroup> {
+  return invoke<ClipboardGroup>('create_clipboard_group', { name })
+}
+
+export async function renameClipboardGroup(id: string, name: string): Promise<ClipboardGroup> {
+  return invoke<ClipboardGroup>('rename_clipboard_group', { id, name })
+}
+
+export async function deleteClipboardGroup(id: string): Promise<void> {
+  await invoke('delete_clipboard_group', { id })
+}
+
+export async function moveClipboardItems(ids: string[], groupId: string | null): Promise<void> {
+  await invoke('move_clipboard_items', { ids, groupId })
+}
+
+export async function setClipboardItemsPinned(ids: string[], isPinned: boolean): Promise<void> {
+  await invoke('set_clipboard_items_pinned', { ids, isPinned })
 }
 
 export async function listenClipboardChanged(handler: () => void): Promise<() => void> {

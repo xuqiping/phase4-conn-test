@@ -3,16 +3,22 @@ import { invoke } from '@tauri-apps/api/core'
 import {
   copyClipboardItem,
   copyClipboardItems,
+  createClipboardGroup,
+  deleteClipboardGroup,
   deleteClipboardItem,
   getClipboardItemDetail,
   getClipboardItems,
+  getClipboardGroups,
   getClipboardSettings,
   getClipboardStorageUsage,
   pasteClipboardItem,
   rememberClipboardTargetWindow,
+  moveClipboardItems,
+  renameClipboardGroup,
   searchClipboardItems,
   startClipboardMonitor,
   stopClipboardMonitor,
+  setClipboardItemsPinned,
   updateClipboardItemNote,
   updateClipboardSettings
 } from '../clipboard'
@@ -109,6 +115,28 @@ describe('clipboard api', () => {
 
     expect(mockedInvoke).toHaveBeenNthCalledWith(1, 'update_clipboard_item_note', { id: 'item-1', note: 'important' })
     expect(mockedInvoke).toHaveBeenNthCalledWith(2, 'update_clipboard_item_note', { id: 'item-1', note: null })
+  })
+
+  it('manages groups and batch item state through one command per action', async () => {
+    mockedInvoke
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce({ id: 'group-1', name: 'Work' })
+      .mockResolvedValueOnce({ id: 'group-1', name: 'Reports' })
+      .mockResolvedValue(undefined)
+
+    await getClipboardGroups()
+    await createClipboardGroup('Work')
+    await renameClipboardGroup('group-1', 'Reports')
+    await moveClipboardItems(['item-1', 'item-2'], 'group-1')
+    await setClipboardItemsPinned(['item-1', 'item-2'], true)
+    await deleteClipboardGroup('group-1')
+
+    expect(mockedInvoke).toHaveBeenNthCalledWith(1, 'get_clipboard_groups')
+    expect(mockedInvoke).toHaveBeenNthCalledWith(2, 'create_clipboard_group', { name: 'Work' })
+    expect(mockedInvoke).toHaveBeenNthCalledWith(3, 'rename_clipboard_group', { id: 'group-1', name: 'Reports' })
+    expect(mockedInvoke).toHaveBeenNthCalledWith(4, 'move_clipboard_items', { ids: ['item-1', 'item-2'], groupId: 'group-1' })
+    expect(mockedInvoke).toHaveBeenNthCalledWith(5, 'set_clipboard_items_pinned', { ids: ['item-1', 'item-2'], isPinned: true })
+    expect(mockedInvoke).toHaveBeenNthCalledWith(6, 'delete_clipboard_group', { id: 'group-1' })
   })
 
   it('starts and stops monitor', async () => {

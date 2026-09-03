@@ -112,6 +112,51 @@ describe('clipboardStore', () => {
     expect(store.items[0].title).toBe('world')
   })
 
+  it('adds the selected custom or ungrouped filter to list queries', async () => {
+    mockedApi.getClipboardItems.mockResolvedValue([])
+    const store = useClipboardStore()
+
+    store.groupFilter = 'group-1'
+    await store.loadItems()
+    store.groupFilter = 'ungrouped'
+    await store.loadItems()
+
+    expect(mockedApi.getClipboardItems).toHaveBeenNthCalledWith(1, expect.objectContaining({ groupId: 'group-1' }))
+    expect(mockedApi.getClipboardItems).toHaveBeenNthCalledWith(2, expect.objectContaining({ groupId: '__ungrouped__' }))
+  })
+
+  it('loads and mutates clipboard groups through the data chain', async () => {
+    const work = { id: 'group-1', name: 'Work', sortOrder: 0, createdAt: 1, updatedAt: 1 }
+    const reports = { ...work, name: 'Reports', updatedAt: 2 }
+    mockedApi.getClipboardGroups.mockResolvedValueOnce([work])
+    mockedApi.createClipboardGroup.mockResolvedValueOnce(work)
+    mockedApi.renameClipboardGroup.mockResolvedValueOnce(reports)
+    mockedApi.deleteClipboardGroup.mockResolvedValueOnce()
+    const store = useClipboardStore()
+
+    await store.loadGroups()
+    await store.createGroup('Work')
+    await store.renameGroup('group-1', 'Reports')
+    store.groupFilter = 'group-1'
+    await store.deleteGroup('group-1')
+
+    expect(store.groups).toEqual([])
+    expect(store.groupFilter).toBe('ungrouped')
+  })
+
+  it('submits pin and move batches in single API calls', async () => {
+    mockedApi.moveClipboardItems.mockResolvedValueOnce()
+    mockedApi.setClipboardItemsPinned.mockResolvedValueOnce()
+    mockedApi.getClipboardItems.mockResolvedValue([])
+    const store = useClipboardStore()
+
+    await store.moveItems(['1', '2'], 'group-1')
+    await store.setItemsPinned(['1', '2'], true)
+
+    expect(mockedApi.moveClipboardItems).toHaveBeenCalledWith(['1', '2'], 'group-1')
+    expect(mockedApi.setClipboardItemsPinned).toHaveBeenCalledWith(['1', '2'], true)
+  })
+
   it('copies and pastes selected item', async () => {
     mockedApi.copyClipboardItem.mockResolvedValueOnce()
     mockedApi.pasteClipboardItem.mockResolvedValueOnce()

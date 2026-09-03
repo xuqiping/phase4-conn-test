@@ -83,6 +83,52 @@ impl ClipboardService {
             .get_item_summary(id)
     }
 
+    pub fn list_groups(&self) -> Result<Vec<ClipboardGroup>, String> {
+        self.storage
+            .lock()
+            .map_err(|err| err.to_string())?
+            .list_groups()
+    }
+
+    pub fn create_group(&self, name: &str) -> Result<ClipboardGroup, String> {
+        self.storage
+            .lock()
+            .map_err(|err| err.to_string())?
+            .create_group(name)
+    }
+
+    pub fn rename_group(&self, id: &str, name: &str) -> Result<ClipboardGroup, String> {
+        self.storage
+            .lock()
+            .map_err(|err| err.to_string())?
+            .rename_group(id, name)
+    }
+
+    pub fn delete_group(&self, id: &str) -> Result<(), String> {
+        self.storage
+            .lock()
+            .map_err(|err| err.to_string())?
+            .delete_group(id)
+    }
+
+    pub fn move_items_to_group(
+        &self,
+        ids: &[String],
+        group_id: Option<&str>,
+    ) -> Result<(), String> {
+        self.storage
+            .lock()
+            .map_err(|err| err.to_string())?
+            .move_items_to_group(ids, group_id)
+    }
+
+    pub fn set_items_pinned(&self, ids: &[String], is_pinned: bool) -> Result<(), String> {
+        self.storage
+            .lock()
+            .map_err(|err| err.to_string())?
+            .set_items_pinned(ids, is_pinned)
+    }
+
     pub fn collect_text_snapshot(
         &self,
         text: &str,

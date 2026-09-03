@@ -3,22 +3,29 @@ import { computed, ref } from 'vue'
 import {
   copyClipboardItem,
   copyClipboardItems,
+  createClipboardGroup,
+  deleteClipboardGroup,
   deleteClipboardItem,
   getClipboardItemDetail,
   getClipboardItems,
+  getClipboardGroups,
   getClipboardSettings,
   getClipboardStorageUsage,
   listenClipboardChanged,
   pasteClipboardItem,
   rememberClipboardTargetWindow,
+  moveClipboardItems,
+  renameClipboardGroup,
   searchClipboardItems,
   startClipboardMonitor,
   stopClipboardMonitor,
+  setClipboardItemsPinned,
   updateClipboardItemNote,
   updateClipboardSettings
 } from '../api/clipboard'
 import type {
   ClipboardDateRangePreset,
+  ClipboardGroup,
   ClipboardItemDetail,
   ClipboardItemSummary,
   ClipboardKind,
@@ -54,6 +61,8 @@ export const useClipboardStore = defineStore('clipboard', () => {
   const customStartDate = ref('')
   const customEndDate = ref('')
   const favoriteOnly = ref(false)
+  const groups = ref<ClipboardGroup[]>([])
+  const groupFilter = ref('all')
   const isQuickPanelOpen = ref(false)
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -66,10 +75,16 @@ export const useClipboardStore = defineStore('clipboard', () => {
   const selectedItem = computed(() => items.value.find(item => item.id === selectedItemId.value) ?? null)
 
   function buildQuery() {
+    const groupId = groupFilter.value === 'all'
+      ? undefined
+      : groupFilter.value === 'ungrouped'
+        ? '__ungrouped__'
+        : groupFilter.value
     return {
       query: searchQuery.value,
       kind: kindFilter.value,
       favoriteOnly: favoriteOnly.value,
+      ...(groupId ? { groupId } : {}),
       ...dateRangeMillis(),
       limit: 100,
       offset: 0
@@ -227,6 +242,43 @@ export const useClipboardStore = defineStore('clipboard', () => {
     return normalizedNote
   }
 
+  async function loadGroups() {
+    groups.value = await getClipboardGroups()
+  }
+
+  async function createGroup(name: string) {
+    const group = await createClipboardGroup(name)
+    groups.value = [...groups.value, group]
+      .sort((left, right) => left.sortOrder - right.sortOrder || left.createdAt - right.createdAt)
+    return group
+  }
+
+  async function renameGroup(id: string, name: string) {
+    const group = await renameClipboardGroup(id, name)
+    groups.value = groups.value.map(item => item.id === id ? group : item)
+    return group
+  }
+
+  async function deleteGroup(id: string) {
+    await deleteClipboardGroup(id)
+    groups.value = groups.value.filter(group => group.id !== id)
+    if (groupFilter.value === id) {
+      groupFilter.value = 'ungrouped'
+    }
+  }
+
+  async function moveItems(ids: string[], groupId: string | null) {
+    if (ids.length === 0) return
+    await moveClipboardItems(ids, groupId)
+    await loadItems()
+  }
+
+  async function setItemsPinned(ids: string[], isPinned: boolean) {
+    if (ids.length === 0) return
+    await setClipboardItemsPinned(ids, isPinned)
+    await loadItems()
+  }
+
   function clearSelectedItem() {
     selectedItemId.value = null
     selectedDetail.value = null
@@ -323,6 +375,8 @@ export const useClipboardStore = defineStore('clipboard', () => {
     customStartDate,
     customEndDate,
     favoriteOnly,
+    groups,
+    groupFilter,
     isQuickPanelOpen,
     loading,
     error,
@@ -340,6 +394,12 @@ export const useClipboardStore = defineStore('clipboard', () => {
     deleteItem,
     deleteSelectedItems,
     updateItemNote,
+    loadGroups,
+    createGroup,
+    renameGroup,
+    deleteGroup,
+    moveItems,
+    setItemsPinned,
     clearSelectedItem,
     toggleSelected,
     selectedIdsForAction,
