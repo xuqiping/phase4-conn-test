@@ -42,11 +42,12 @@ created-date: 2026-09-03
   - **依赖**：Step 1（trace 表已有）｜**验证**：构造共召回数据→建议生成→采纳→边出现→建议消失
   - **实现注**（偏离 3 处，详见开发进度）：①采纳后建议不物理删——置 ADOPTED/IGNORED 状态位占住 uq_kdrs(kb,a,b)，worker 据此不重提（用户已裁决的对不再打扰），等价防重且留审计痕迹；②采纳不直接写边表——委托 `DocumentRelationService.create` 复用六路校验（建议流不能绕过建边不变式），建议生成后用户手动建过边 → 采纳遇「已存在」按成功收口；③trace 读侧零新 Mapper——复用 `RagRetrievalLogMapper.selectList`（cursor 分批 LIMIT 500）；Controller 实为 `KnowledgeRelationController` 扩展（GET /suggestions + POST /{id}/adopt + /{id}/ignore）。测试 18/18（worker 9 + service 9）✅
 
-- [ ] **Step 4：C1 前端**
+- [x] **Step 4：C1 前端**
   - **目标**：关联可管理、可见、可追溯
   - **动作**：①`DocumentRelationPanel.vue`：文档抽屉新 Tab（出边/入边列表+类型徽标+删除+添加弹窗=同库文档选择器+四选一+备注）；②建议列表页（采纳/忽略）；③`RetrievalDebugPanel.vue`：证据 injectedBy 徽标「🔗 关联带出」、MAY_BE_CITED 反读「相关文档」尾区；④api/knowledge.ts 扩接口
   - **文件**：`DocumentRelationPanel.vue`（新）、`DocumentManager.vue`（挂 Tab）、`RetrievalDebugPanel.vue`、`src/api/knowledge.ts`、Test ×1
   - **依赖**：Step 1-3｜**验证**：vitest 装配+权限显隐（无 canManage 无添加钮）；手测建边→检索带出
+  - **实现注**（偏离 1 处）：「文档抽屉新 Tab」实为 `DocumentRelationModal.vue` 行级弹窗（模块无抽屉容器，版本弹窗即先例）；建议页=`DocumentRelationSuggestionModal.vue`（DocumentManager 工具区「关联建议」入口，仅 canManage）。行级「关联」钮成员可见（看边列表理解 🔗 证据来源），建/删边弹窗内 canManage 显隐。测试 10/10（modal 8 + manager 扩 2）；手测剧本（建边→检索带出/旧缓存 miss）留 Phase4 统一跑
 
 - [ ] **Step 5：C2 ATTACHMENT 模式入库**
   - **目标**：附件型上传：整件入库不切片，描述必填

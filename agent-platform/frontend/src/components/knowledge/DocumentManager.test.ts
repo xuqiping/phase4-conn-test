@@ -26,7 +26,13 @@ vi.mock('@/api/knowledge', () => ({
     revokeVersion: vi.fn(),
     deleteDocument: vi.fn(),
     unquarantineDocument: vi.fn(),
-    updateDocumentMetadata: vi.fn()
+    updateDocumentMetadata: vi.fn(),
+    listRelations: vi.fn(),
+    createRelation: vi.fn(),
+    deleteRelation: vi.fn(),
+    listRelationSuggestions: vi.fn(),
+    adoptRelationSuggestion: vi.fn(),
+    ignoreRelationSuggestion: vi.fn()
   }
 }))
 
@@ -123,6 +129,25 @@ describe('DocumentManager · 14x#2 per-KB 按钮显隐', () => {
     mgr2.openVersions(mkDoc(1))
     await flushPromises()
     expect(document.body.querySelector('.doc-manager__version-upload')).not.toBeNull()
+  })
+})
+
+describe('DocumentManager · C1 关联入口显隐', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    document.body.innerHTML = ''
+  })
+
+  it('只读成员：行级「关联」钮可见（成员可看边列表）；「关联建议」入口不出现（治理视图）', async () => {
+    const wrapper = await mountManager(false, false)
+    const text = wrapper.text()
+    expect(text).toContain('关联')
+    expect(text).not.toContain('关联建议')
+  })
+
+  it('canManage：「关联建议」入口出现（共召回统计治理入口）', async () => {
+    const wrapper = await mountManager(true, true)
+    expect(wrapper.text()).toContain('关联建议')
   })
 })
 

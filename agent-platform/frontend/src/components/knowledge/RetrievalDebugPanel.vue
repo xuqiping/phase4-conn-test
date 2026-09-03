@@ -95,6 +95,16 @@
           <n-data-table :columns="l2Cols" :data="result.evidenceL2" :pagination="false" size="small" />
         </div>
 
+        <!-- C1：MAY_BE_CITED 反读的相关文档（仅推荐区，不进证据/引用） -->
+        <div v-if="result.relatedDocs?.length" class="rag-debug__section">
+          <h4 class="rag-debug__section-title">相关文档（关联推荐，未注入证据）</h4>
+          <div class="rag-debug__budget">
+            <span v-for="d in result.relatedDocs" :key="d.documentId">
+              🔗 <b>{{ d.title }}</b>（{{ relationLabel(d.relationType) }}）
+            </span>
+          </div>
+        </div>
+
         <div class="rag-debug__section">
           <h4 class="rag-debug__section-title">Token 预算</h4>
           <div class="rag-debug__budget">
@@ -234,10 +244,26 @@ const l2Cols: DataTableColumns<RagEvidence> = [
   { title: '节点ID', key: 'nodeId', width: 90 },
   { title: '标题', key: 'title', ellipsis: { tooltip: true } },
   { title: '类型', key: 'docType', width: 80 },
+  {
+    // C1 step6.5：关联图带出标记（RELATION_MUST=必须引用带出 / RELATION_MAY=按需引用带出）
+    title: '带出', key: 'injectedBy', width: 90,
+    render: r => r.injectedBy === 'RELATION_MUST'
+      ? h('span', { class: 'rag-debug__rel-badge rag-debug__rel-badge--must', title: '必须引用边带出（优先保序）' }, '🔗 必带')
+      : r.injectedBy === 'RELATION_MAY'
+        ? h('span', { class: 'rag-debug__rel-badge', title: '按需引用边带出（重打分过阈）' }, '🔗 关联带出')
+        : '-'
+  },
   { title: 'rerank', key: 'rerankScore', width: 90, render: r => r.rerankScore.toFixed(4) },
   { title: '内容', key: 'content', ellipsis: { tooltip: true }, render: r => r.content },
   { title: '来源', key: 'fileRef', width: 110, render: r => renderAssetCell(r) }
 ]
+
+/** C1：相关文档区关系类型短标签 */
+function relationLabel(t: string): string {
+  if (t === 'MUST_BE_CITED') return '随场必现'
+  if (t === 'MAY_BE_CITED') return '相关推荐'
+  return t
+}
 
 async function run() {
   if (!canRun.value) return
@@ -343,6 +369,18 @@ async function run() {
   color: var(--color-text-secondary);
   font-size: 13px;
   b { color: var(--color-text-primary); }
+}
+.rag-debug__rel-badge {
+  padding: 1px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+.rag-debug__rel-badge--must {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 @media (max-width: 768px) {

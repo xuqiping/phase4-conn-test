@@ -260,6 +260,8 @@ export interface RagEvidence {
   originalName: string | null
   citationIndex: number
   rerankScore: number
+  /** C1 step6.5：RELATION_MUST（必须引用带出）/ RELATION_MAY（按需引用带出）；null/undefined=常规命中 */
+  injectedBy?: string | null
 }
 
 export interface RagTokenBudget {
@@ -268,6 +270,60 @@ export interface RagTokenBudget {
   answerTokenReserve: number
   effectiveContextCap: number
   promptTokens: number
+}
+
+/** C1 相关文档（MAY_BE_CITED 反读，检索结果尾部推荐区） */
+export interface RagRelatedDoc {
+  documentId: number
+  title: string
+  relationType: string
+}
+
+/** C1 关系类型（规格 §3.1；后端 KnowledgeDocumentRelation 常量） */
+export type RelationType = 'MUST_CITE' | 'MAY_CITE' | 'MUST_BE_CITED' | 'MAY_BE_CITED'
+
+/** C1 关系边（单文档视角，对应后端 KnowledgeRelationVO）。direction=OUT 出边 / IN 入边（按反向语义读）。 */
+export interface KnowledgeRelation {
+  id: number
+  kbId: number
+  direction: 'OUT' | 'IN'
+  relationType: RelationType
+  otherDocId: number
+  otherDocTitle: string
+  note: string | null
+  createdBy: number | null
+  createdAt: string
+}
+
+/** C1 建边请求（对应后端 KnowledgeRelationRequest） */
+export interface KnowledgeRelationCreateRequest {
+  kbId: number
+  docId: number
+  relatedDocId: number
+  relationType: RelationType
+  note?: string
+}
+
+/** C1 关联建议（对应后端 KnowledgeRelationSuggestionVO；两端恒 docIdA<docIdB，采纳时定方向） */
+export interface KnowledgeRelationSuggestion {
+  id: number
+  kbId: number
+  docIdA: number
+  docIdB: number
+  docTitleA: string
+  docTitleB: string
+  coRecallCount: number
+  sampleQueryHash: string
+  status: string
+  lastSeenAt: string
+  createdAt: string
+}
+
+/** C1 采纳建议请求（对应后端 RelationSuggestionAdoptRequest） */
+export interface RelationSuggestionAdoptRequest {
+  fromDocId?: number
+  relationType: RelationType
+  note?: string
 }
 
 /** 检索调试响应（对应后端 RagRetrieveVO） */
@@ -286,6 +342,8 @@ export interface RagRetrieveVO {
   /** 进入 topK 的纯 BM25 候选（bm25Fallback=false 时为空） */
   candidatesBm25: RagBm25Hit[]
   evidenceL2: RagEvidence[]
+  /** C1：MAY_BE_CITED 反读的相关文档（仅尾部推荐区，不进证据/引用） */
+  relatedDocs?: RagRelatedDoc[]
   tokenBudget: RagTokenBudget
   latencyMs: number
   retrievalTimeline?: Array<{ stage: string; configuredMode?: string; effectiveMode?: string; model?: string | null; candidateCount: number; latencyMs: number; status: string }>
@@ -595,6 +653,28 @@ export const knowledgeApi = {
   /** GET /api/knowledge/documents/{docId}/nodes — 文档目录树/原文节点（knowledge:read） */
   listDocumentNodes(docId: number) {
     return request.get<ApiResponse<KnowledgeNode[]>>(`/knowledge/documents/${docId}/nodes`)
+  },
+
+  // ---- 文档关联（C1，knowledge:read 列表 / knowledge:write 建删·建议）----
+  /** GET /api/knowledge/relations?kbId=&docId= — 单文档出入边（成员可读） */
+  listRelations(kbId: number, docId: number) {
+    return request.get<ApiResponse<KnowledgeRelation[]>>('/knowledge/relations', { params: { kbId, docId } })
+  },
+  createRelation(data: KnowledgeRelationCreateRequest) {
+    return request.post<ApiResponse<KnowledgeRelation>>('/knowledge/relations', data)
+  },
+  deleteRelation(id: number) {
+    return request.delete<ApiResponse<void>>(`/knowledge/relations/${id}`)
+  },
+  /** GET /api/knowledge/relations/suggestions?kbId= — 待裁决关联建议（仅 canManage） */
+  listRelationSuggestions(kbId: number) {
+    return request.get<ApiResponse<KnowledgeRelationSuggestion[]>>('/knowledge/relations/suggestions', { params: { kbId } })
+  },
+  adoptRelationSuggestion(id: number, data: RelationSuggestionAdoptRequest) {
+    return request.post<ApiResponse<void>>(`/knowledge/relations/suggestions/${id}/adopt`, data)
+  },
+  ignoreRelationSuggestion(id: number) {
+    return request.post<ApiResponse<void>>(`/knowledge/relations/suggestions/${id}/ignore`)
   },
 
   // ---- 权限 ----

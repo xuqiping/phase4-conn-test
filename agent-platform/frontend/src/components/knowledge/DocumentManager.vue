@@ -28,6 +28,15 @@
       <span class="doc-manager__hint doc-manager__hint--sub">无需文件，粘贴/手写内容直接进知识库（≤4000 字）</span>
     </div>
 
+    <!-- C1：关联建议入口（仅 canManage——建议页是治理视图） -->
+    <div v-if="canManage" class="doc-manager__inline-entry">
+      <n-button size="small" @click="suggestionModalShow = true">
+        <template #icon><n-icon :component="LinkOutline" /></template>
+        关联建议
+      </n-button>
+      <span class="doc-manager__hint doc-manager__hint--sub">共召回统计自动发现「总被一起查」的文档对，采纳后命中即带出</span>
+    </div>
+
     <!-- 文档表 -->
     <n-data-table
       :columns="columns"
@@ -91,6 +100,20 @@
         </n-space>
       </n-space>
     </n-modal>
+
+    <!-- C1：单文档关联管理（成员可读边列表；建/删边 canManage） -->
+    <DocumentRelationModal
+      v-model:show="relationModalShow"
+      :kb-id="kbId"
+      :doc="activeRelationDoc"
+      :can-manage="!!props.canManage"
+    />
+
+    <!-- C1：关联建议（共召回统计→采纳/忽略，仅 canManage） -->
+    <DocumentRelationSuggestionModal
+      v-model:show="suggestionModalShow"
+      :kb-id="kbId"
+    />
   </div>
 </template>
 
@@ -100,7 +123,7 @@ import {
   NButton, NDataTable, NIcon, NInput, NModal, NSpace, NTag, NUpload, NUploadDragger, useMessage
 } from 'naive-ui'
 import type { DataTableColumns, UploadCustomRequestOptions } from 'naive-ui'
-import { CloudUploadOutline, CreateOutline } from '@vicons/ionicons5'
+import { CloudUploadOutline, CreateOutline, LinkOutline } from '@vicons/ionicons5'
 import { useKnowledgeStore } from '@/stores/knowledge'
 import InkEmptyState from '@/components/InkEmptyState.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -108,6 +131,8 @@ import { knowledgeApi } from '@/api/knowledge'
 import type { KnowledgeDocument, KnowledgeDocumentMetadataUpdate, KnowledgeDocumentVersion, KnowledgeNode, SheetPreview, UploadOptions } from '@/api/knowledge'
 import DocumentOptionsModal from './DocumentOptionsModal.vue'
 import DocumentMetadataModal from './DocumentMetadataModal.vue'
+import DocumentRelationModal from './DocumentRelationModal.vue'
+import DocumentRelationSuggestionModal from './DocumentRelationSuggestionModal.vue'
 
 const props = defineProps<{
   kbId: number
@@ -137,6 +162,11 @@ const versionChangeNote = ref('')
 const metadataModalShow = ref(false)
 const metadataSaving = ref(false)
 const activeMetadataDoc = ref<KnowledgeDocument | null>(null)
+
+// C1：单文档关联弹窗 + 库级关联建议弹窗
+const relationModalShow = ref(false)
+const activeRelationDoc = ref<KnowledgeDocument | null>(null)
+const suggestionModalShow = ref(false)
 
 // 展开行：查看文档拆分节点（L0 摘要 + L2 原文）。按 docId 缓存，懒加载。
 const expandedRowKeys = ref<number[]>([])
@@ -270,9 +300,11 @@ const columns: DataTableColumns<KnowledgeDocument> = [
     render: r => new Date(r.createdAt).toLocaleString('zh-CN')
   },
   {
-    title: '操作', key: 'actions', width: 250, fixed: 'right',
+    title: '操作', key: 'actions', width: 290, fixed: 'right',
     render: r => h('div', { style: 'display:flex;gap:6px' }, [
       h(NButton, { size: 'small', quaternary: true, onClick: () => openVersions(r) }, () => '版本'),
+      // C1：关联边查看（成员可读）；建/删边在弹窗内按 canManage 显隐
+      h(NButton, { size: 'small', quaternary: true, onClick: () => openRelations(r) }, () => '关联'),
       // 14x#2：治理/隔离/删除为 canManage 门（写授权不再放行治理动作）
       props.canManage
         ? h(NButton, { size: 'small', quaternary: true, onClick: () => openMetadata(r) }, () => '治理')
@@ -291,6 +323,12 @@ const columns: DataTableColumns<KnowledgeDocument> = [
 function openMetadata(doc: KnowledgeDocument) {
   activeMetadataDoc.value = doc
   metadataModalShow.value = true
+}
+
+/** C1：打开单文档关联弹窗（成员可看边列表，理解「🔗 关联带出」证据来源） */
+function openRelations(doc: KnowledgeDocument) {
+  activeRelationDoc.value = doc
+  relationModalShow.value = true
 }
 
 async function saveMetadata(payload: KnowledgeDocumentMetadataUpdate) {
