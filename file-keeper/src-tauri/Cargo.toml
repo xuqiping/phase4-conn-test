@@ -1,5 +1,6 @@
 [package]
 name = "file-keeper"
+default-run = "file-keeper"
 version = "0.1.0"
 description = "轻量级跨平台文件收藏管理器 - 快速访问常用文件的可视化工具"
 authors = ["File Keeper Team"]
