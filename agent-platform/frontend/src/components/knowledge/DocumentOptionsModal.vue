@@ -20,14 +20,18 @@
           <n-space>
             <n-radio value="AUTO">AUTO 自动抽取</n-radio>
             <n-radio value="MANUAL">MANUAL 手动给索引文本</n-radio>
+            <n-radio value="ATTACHMENT">附件模式</n-radio>
           </n-space>
         </n-radio-group>
         <p class="dom__hint">
           <span v-if="form.indexMode === 'AUTO'">
             {{ autoHint }}
           </span>
-          <span v-else>
+          <span v-else-if="form.indexMode === 'MANUAL'">
             用你填的文字建索引向量化；原件仍保留供回显。
+          </span>
+          <span v-else>
+            整件入库不切片：靠你写的描述建索引，检索命中后把原件内容（文本全文/图片实时识图）注入回答。
           </span>
         </p>
       </div>
@@ -45,8 +49,31 @@
         />
       </div>
 
-      <div v-if="form.docType === 'IMAGE' && form.indexMode === 'AUTO'">
-        <p class="dom__label">视觉模型<span class="dom__req">*</span>（识图生成索引文本）</p>
+      <template v-if="form.indexMode === 'ATTACHMENT'">
+        <div>
+          <p class="dom__label">附件描述<span class="dom__req">*</span>（≤4000 字，检索命中靠它）</p>
+          <n-input
+            v-model:value="form.manualIndexText"
+            type="textarea"
+            :rows="5"
+            :maxlength="4000"
+            show-count
+            placeholder="例：产品部署架构图：左侧是网关集群，中间三个微服务，右侧 PostgreSQL 主从……"
+            :disabled="loading"
+          />
+        </div>
+        <div>
+          <p class="dom__label">关键词（可选，逗号分隔，提升描述召回）</p>
+          <n-input
+            v-model:value="form.attachmentKeywords"
+            placeholder="例：架构,部署,网关"
+            :disabled="loading"
+          />
+        </div>
+      </template>
+
+      <div v-if="form.docType === 'IMAGE' && (form.indexMode === 'AUTO' || form.indexMode === 'ATTACHMENT')">
+        <p class="dom__label">视觉模型<span class="dom__req">*</span>（{{ form.indexMode === 'AUTO' ? '识图生成索引文本' : '检索命中时实时识图注入内容' }}）</p>
         <ModelSelector v-model="form.visionModel" />
         <p class="dom__hint">选支持视觉的对话模型（如 glm-5.1）；embedding 模型不可识图。</p>
       </div>
@@ -104,8 +131,9 @@ const docTypeOptions = [
 
 const form = reactive({
   docType: 'TEXT',
-  indexMode: 'AUTO' as 'AUTO' | 'MANUAL',
+  indexMode: 'AUTO' as 'AUTO' | 'MANUAL' | 'ATTACHMENT',
   manualIndexText: '',
+  attachmentKeywords: '',
   visionModel: '',
   selectedSheets: [] as string[]
 })
@@ -132,11 +160,12 @@ const autoHint = computed(() => {
 })
 
 const canConfirm = computed(() => {
-  if (form.indexMode === 'MANUAL') {
-    return form.manualIndexText.trim().length > 0
+  if (form.indexMode === 'MANUAL' || form.indexMode === 'ATTACHMENT') {
+    // MANUAL=索引文本 / ATTACHMENT=附件描述，同门必填 ≤4000（后端 validateIndexText 同口径）
+    if (form.manualIndexText.trim().length === 0) return false
   }
-  // AUTO：IMAGE+AUTO 需选视觉模型
-  if (form.docType === 'IMAGE') {
+  // IMAGE：AUTO 识图建索引 / ATTACHMENT 检索时实时识图，都需要视觉模型
+  if (form.docType === 'IMAGE' && (form.indexMode === 'AUTO' || form.indexMode === 'ATTACHMENT')) {
     return form.visionModel.trim().length > 0
   }
   return true
@@ -149,6 +178,7 @@ watch(
       form.docType = inferDocType(props.fileName)
       form.indexMode = 'AUTO'
       form.manualIndexText = ''
+      form.attachmentKeywords = ''
       form.visionModel = ''
       form.selectedSheets = []
     }
@@ -158,7 +188,12 @@ watch(
 function onConfirm() {
   if (!canConfirm.value) return
   const opts: UploadOptions = { docType: form.docType, indexMode: form.indexMode }
-  if (form.indexMode === 'MANUAL') opts.manualIndexText = form.manualIndexText.trim()
+  if (form.indexMode === 'MANUAL' || form.indexMode === 'ATTACHMENT') {
+    opts.manualIndexText = form.manualIndexText.trim()
+  }
+  if (form.indexMode === 'ATTACHMENT' && form.attachmentKeywords.trim()) {
+    opts.attachmentKeywords = form.attachmentKeywords.trim()
+  }
   if (form.visionModel.trim()) opts.visionModel = form.visionModel.trim()
   emit('confirm', { ...opts, selectedSheets: form.selectedSheets })
 }

@@ -137,9 +137,12 @@ export interface KnowledgeDocument {
 /** 图片/文件知识库上传选项（空=后端按后缀推断 docType + AUTO 默认）。 */
 export interface UploadOptions {
   docType?: string
-  indexMode?: 'MANUAL' | 'AUTO'
+  indexMode?: 'MANUAL' | 'AUTO' | 'ATTACHMENT'
+  /** MANUAL=索引文本 / ATTACHMENT=附件描述（必填 ≤4000） */
   manualIndexText?: string
   visionModel?: string
+  /** ATTACHMENT 可选关键词（逗号分隔，进索引提升描述召回） */
+  attachmentKeywords?: string
 }
 
 /** Excel sheet 预读结果（阶段1 picker）。tempFileRef 阶段2 upload 复用，零重传。 */
@@ -215,6 +218,8 @@ export interface RagCitation {
   bbox?: string | null
   /** 14x#3：引用来自保密库且当前用户非 owner/admin → 隐藏缩略图/下载入口（后端 asset 403 兜底） */
   confidential?: boolean
+  /** C2：附件型文档（ATTACHMENT 模式）→ 📎 徽标（证据已注入原件内容或描述） */
+  attachment?: boolean
 }
 
 export interface RagRecallHit {
@@ -262,6 +267,8 @@ export interface RagEvidence {
   rerankScore: number
   /** C1 step6.5：RELATION_MUST（必须引用带出）/ RELATION_MAY（按需引用带出）；null/undefined=常规命中 */
   injectedBy?: string | null
+  /** C2：附件型证据 → 📎 徽标；content 已含注入块（[附件 xx] 内容：…） */
+  attachment?: boolean
 }
 
 export interface RagTokenBudget {
@@ -476,6 +483,7 @@ function appendUploadOptions(fd: FormData, opts?: UploadOptions) {
   if (opts.indexMode) fd.append('indexMode', opts.indexMode)
   if (opts.manualIndexText && opts.manualIndexText.trim()) fd.append('manualIndexText', opts.manualIndexText.trim())
   if (opts.visionModel) fd.append('visionModel', opts.visionModel)
+  if (opts.attachmentKeywords && opts.attachmentKeywords.trim()) fd.append('attachmentKeywords', opts.attachmentKeywords.trim())
 }
 
 export const knowledgeApi = {

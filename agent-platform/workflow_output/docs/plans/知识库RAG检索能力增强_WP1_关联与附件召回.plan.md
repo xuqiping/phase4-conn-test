@@ -63,11 +63,12 @@ created-date: 2026-09-03
   - **依赖**：Step 5｜**验证**：单测——三型注入分流/超时降级/缓存命中不调 VLM（gateway 计数）/保密库附件 fileRef 403 但注入正常；手测：传架构图问图中内容
   - **实现注**（偏离 3 处，详见开发进度3）：①缓存失效（④项）不动 AnswerCacheService——沿用 Step2 的 `computeKnowledgeSnapshot` 双聚合口径：附件换版 → 节点重建（新 id/新 content_hash）→ 快照变 → 旧缓存自然 miss，AnswerCache 零改动；VLM 识图文本只在 Redis（TTL 30d），不入 DB 快照——识图文案变化不触发答案重算（可接受：答案缓存本身有 TTL）；②注入点在 `step8LoadEvidence`（I3 复校后）——两条检索路径（/retrieve 调试 + 聊天 EvidenceResult）共用，parseEvidencePrompt/toEvidencePreview 构造点补 `attachment=false`；📎 标志独立于注入成败（kill switch 关/文档已删/降级 → 标志保留，内容仅描述）；③保密库注入用例并入 AttachmentContentInjectorTest——注入器以 docOwner 身份服务端读原件（fileStorageService.load(fileId, createdBy, false)），请求者 fileRef 403 与注入正交，单测验「计费归户 owner」等价覆盖。CitationVO/EvidenceVO/CachedPayload.CitationRef 三处 +`attachment` 布尔（缓存命中回放徽标不丢；旧缓存条目缺字段反序列化=false 属预期）。kill switch `rag.recall.attachment.enabled` + 5 旋钮（maxInjectChars/visionTimeoutMs/visionMaxTokens/visionCacheTtlDays/visionPromptVersion）。测试 11/11（injector 9 + service 2：管道接线注入+标志透传 / kill switch 标志保留零注入）
 
-- [ ] **Step 7：C2 前端**
+- [x] **Step 7：C2 前端**
   - **目标**：上传三选+附件标识+调试预览
   - **动作**：①上传弹窗 indexMode 三选（智能解析/手动索引/附件模式），ATTACHMENT 表单=描述必填+关键词可选；②文档列表「📎」徽标；③检索调试附件型证据显示注入内容预览（截断）
   - **文件**：上传组件（`DocumentManager.vue` 或独立 UploadModal）、`RetrievalDebugPanel.vue`、Test ×1
   - **依赖**：Step 5-6｜**验证**：vitest 表单校验分支；手测三选切换表单联动
+  - **实现注**：上传弹窗=既有 `DocumentOptionsModal.vue` 扩三选（非新建组件）；描述复用 manualIndexText 字段传输（后端 ATTACHMENT 同参接收）+ 新 attachmentKeywords form 参；IMAGE+ATTACHMENT 视觉模型必选（检索时实时识图依赖 parse_options.visionModel）；③注入内容预览=调试面板证据「内容」列直显 evidence content（后端已拼注入块，ellipsis+tooltip 即截断预览）+「带出」列扩 📎 徽标；另补 MessageBubble 引用卡「📎 附件」chip（CitationVO.attachment）。api/knowledge.ts：UploadOptions 扩 ATTACHMENT/attachmentKeywords，RagCitation/RagEvidence +attachment。测试 6/6（三选齐备/附件表单+空描述禁存/payload 三参/MANUAL 无关键词/图片+附件视觉模型必选/文本+附件无视觉模型）；手测三选联动留 Phase4。
 
 ## 联动点（WP1 专属细化）
 

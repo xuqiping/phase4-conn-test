@@ -95,6 +95,12 @@
             :title="c.url"
           >🌐 {{ c.title || c.url }}</a>
           <span v-else class="message-bubble__citation-title">{{ c.title || c.originalName || `文档 ${c.documentId}` }}</span>
+          <!-- C2：附件型文档引用（原件内容已注入证据，回答基于真实内容） -->
+          <span
+            v-if="!c.url && c.attachment"
+            class="message-bubble__citation-attach"
+            title="附件模式文档：原件内容已注入证据"
+          >📎 附件</span>
           <!-- IMAGE：内联缩略图（14x#3：保密库引用不回显原件入口） -->
           <img
             v-if="!c.url && !c.confidential && c.docType === 'IMAGE' && c.fileRef && c.documentId"
@@ -227,6 +233,8 @@ interface Citation {
   snippet?: string
   /** 14x#3：引用来自保密库且当前用户非 owner/admin → 隐藏缩略图/下载入口（后端 asset 403 兜底）。 */
   confidential?: boolean
+  /** C2：附件型文档（ATTACHMENT 模式）→ 📎 附件徽标。 */
+  attachment?: boolean
 }
 const citations = computed<Citation[]>(() => {
   if (!props.message.metadata) return []
@@ -484,6 +492,15 @@ async function downloadAttachment(a: { fileId: string; name: string }) {
 
 .message-bubble__citation-title {
   word-break: break-word;
+}
+
+.message-bubble__citation-attach {
+  flex-shrink: 0;
+  font-size: var(--font-size-xs, 12px);
+  color: var(--color-text-tertiary);
+  border: 1px solid var(--color-border, #ccc);
+  border-radius: 4px;
+  padding: 0 4px;
 }
 
 .message-bubble__citation-link {

@@ -246,12 +246,18 @@ const l2Cols: DataTableColumns<RagEvidence> = [
   { title: '类型', key: 'docType', width: 80 },
   {
     // C1 step6.5：关联图带出标记（RELATION_MUST=必须引用带出 / RELATION_MAY=按需引用带出）
-    title: '带出', key: 'injectedBy', width: 90,
-    render: r => r.injectedBy === 'RELATION_MUST'
-      ? h('span', { class: 'rag-debug__rel-badge rag-debug__rel-badge--must', title: '必须引用边带出（优先保序）' }, '🔗 必带')
-      : r.injectedBy === 'RELATION_MAY'
-        ? h('span', { class: 'rag-debug__rel-badge', title: '按需引用边带出（重打分过阈）' }, '🔗 关联带出')
-        : '-'
+    // C2 Step6：📎=附件型证据（content 已含注入块——文本全文/图片识图/「原件内容暂缺」降级标注）
+    title: '带出', key: 'injectedBy', width: 120,
+    render: r => h('span', { style: 'display:inline-flex;align-items:center;gap:4px' }, [
+      r.attachment
+        ? h('span', { class: 'rag-debug__rel-badge', title: '附件型证据：内容含注入的原件内容/描述' }, '📎')
+        : null,
+      r.injectedBy === 'RELATION_MUST'
+        ? h('span', { class: 'rag-debug__rel-badge rag-debug__rel-badge--must', title: '必须引用边带出（优先保序）' }, '🔗 必带')
+        : r.injectedBy === 'RELATION_MAY'
+          ? h('span', { class: 'rag-debug__rel-badge', title: '按需引用边带出（重打分过阈）' }, '🔗 关联带出')
+          : null
+    ])
   },
   { title: 'rerank', key: 'rerankScore', width: 90, render: r => r.rerankScore.toFixed(4) },
   { title: '内容', key: 'content', ellipsis: { tooltip: true }, render: r => r.content },
