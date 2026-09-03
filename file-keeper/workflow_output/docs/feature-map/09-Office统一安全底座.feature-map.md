@@ -49,4 +49,4 @@ OfficeTaskWizard
 - 新处理器必须消费 `PublicationReceipt` 完成任务，禁止直接写成功状态。
 - 新问题码同时更新 Rust、TypeScript、中文和英文文案。
 - 任何密码 UI 只能临时持有，不进入 Pinia、localStorage、日志或错误。
-- Phase 4 必须迁移旧状态机测试到真实输出事务凭证流程。
+- 旧状态机测试已迁移到真实 `OutputTransaction → PublicationReceipt` 流程；Windows 磁盘匹配会先去除规范化路径的 `\\?\` 前缀。

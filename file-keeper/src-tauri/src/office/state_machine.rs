@@ -111,7 +111,7 @@ impl OfficeTaskStateMachine {
     }
 }
 
-fn derive_completion_status(
+pub(super) fn derive_completion_status(
     output_policy: OutputPolicy,
     summary: OutputSummary,
 ) -> Result<OfficeTaskStatus, DomainError> {

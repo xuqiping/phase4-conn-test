@@ -4,6 +4,7 @@
 
 - Vue/Vitest：向导状态、额度提示、字段映射、宏/链接冲突、范围说明、键盘和无障碍属性。
 - Rust 单测：路径校验、任务状态机、SQLite、输出事务、Worker 协议、取消和清理。
+- 状态机完成测试必须消费 `OutputTransaction.finalize()` 产生的 `PublicationReceipt`；计数边界可直接测试内部状态推导函数，禁止为测试恢复裸 `OutputSummary` 完成入口。
 - Worker 契约测试：固定 JSON Lines 请求/响应、错误码、心跳和超时。
 - Spring/JUnit：Office Pro 实时校验、管理员授予、AI 预扣/结算/释放、幂等、限流和审计。
 - 集成测试：桌面创建任务 → Worker 模拟执行 → 校验 → 发布 → 历史报告。

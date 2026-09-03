@@ -402,9 +402,12 @@ fn ensure_available_space(
 ) -> Result<(), OutputTransactionError> {
     let required = required_disk_space(estimated_output_bytes)?;
     let disks = Disks::new_with_refreshed_list();
+    let comparable_output_directory = comparable_disk_path(output_directory);
     let available = disks
         .iter()
-        .filter(|disk| output_directory.starts_with(disk.mount_point()))
+        .filter(|disk| {
+            comparable_output_directory.starts_with(comparable_disk_path(disk.mount_point()))
+        })
         .max_by_key(|disk| disk.mount_point().components().count())
         .map(|disk| disk.available_space())
         .ok_or(OutputTransactionError::DiskSpaceUnavailable)?;
@@ -412,6 +415,23 @@ fn ensure_available_space(
         return Err(OutputTransactionError::InsufficientDiskSpace);
     }
     Ok(())
+}
+
+#[cfg(windows)]
+fn comparable_disk_path(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    if let Some(unc_path) = text.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{unc_path}"));
+    }
+    if let Some(local_path) = text.strip_prefix(r"\\?\") {
+        return PathBuf::from(local_path);
+    }
+    path.to_path_buf()
+}
+
+#[cfg(not(windows))]
+fn comparable_disk_path(path: &Path) -> PathBuf {
+    path.to_path_buf()
 }
 
 fn validate_output_id(output_id: &str) -> Result<(), OutputTransactionError> {

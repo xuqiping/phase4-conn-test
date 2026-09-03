@@ -1,10 +1,12 @@
-use super::state_machine::{OfficeTaskStateMachine, TaskEvent};
+use super::output::{OutputTransaction, PublicationReceipt};
+use super::state_machine::{derive_completion_status, OfficeTaskStateMachine, TaskEvent};
 use super::types::{
     DomainErrorCode, OfficeInput, OfficeIssue, OfficeIssueScope, OfficeIssueSeverity, OfficeOutput,
     OfficeOutputStatus, OfficeRequestId, OfficeTask, OfficeTaskId, OfficeTaskStatus,
     OfficeTaskType, OutputPolicy, OutputSummary, RequestedSourceAccess, SourceAccess,
     JS_SAFE_INTEGER_MAX,
 };
+use std::fs;
 
 fn task_id() -> OfficeTaskId {
     OfficeTaskId::parse("00000000-0000-4000-8000-000000000001").unwrap()
@@ -12,6 +14,43 @@ fn task_id() -> OfficeTaskId {
 
 fn request_id() -> OfficeRequestId {
     OfficeRequestId::parse("00000000-0000-4000-8000-000000000002").unwrap()
+}
+
+fn other_task_id() -> OfficeTaskId {
+    OfficeTaskId::parse("00000000-0000-4000-8000-000000000003").unwrap()
+}
+
+fn publication_receipt(
+    receipt_task_id: OfficeTaskId,
+    output_policy: OutputPolicy,
+    summary: OutputSummary,
+) -> PublicationReceipt {
+    let root = std::env::temp_dir().join(format!(
+        "file-keeper-state-machine-test-{}",
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let mut transaction =
+        OutputTransaction::start(receipt_task_id, output_policy, &root, 1, summary.expected)
+            .unwrap();
+
+    for index in 0..summary.published {
+        let output_id = format!("published-{index}");
+        let staged = transaction.stage(&output_id).unwrap();
+        fs::write(staged.path(), b"test-output").unwrap();
+        transaction
+            .publish(staged, &format!("output-{index}.csv"), |_| Ok(()))
+            .unwrap();
+    }
+    for index in 0..summary.failed {
+        transaction
+            .record_failure(&format!("failed-{index}"))
+            .unwrap();
+    }
+
+    let receipt = transaction.finalize().unwrap();
+    fs::remove_dir_all(root).unwrap();
+    receipt
 }
 
 fn single_output_task() -> OfficeTaskStateMachine {
@@ -71,7 +110,11 @@ fn preflight_can_fail_and_failed_task_cannot_be_published() {
 
     assert_eq!(task.status(), OfficeTaskStatus::Failed);
     let error = task
-        .complete_with_validated_summary(OutputSummary::new(1, 1, 0))
+        .complete_with_publication(publication_receipt(
+            task_id(),
+            OutputPolicy::SingleAtomic,
+            OutputSummary::new(1, 1, 0),
+        ))
         .unwrap_err();
     assert_eq!(error.code(), DomainErrorCode::InvalidStateTransition);
 }
@@ -117,8 +160,12 @@ fn confirmation_and_running_stages_can_be_cancelled() {
 fn terminal_states_reject_all_further_transitions() {
     let mut task = single_output_task();
     advance_to_running(&mut task);
-    task.complete_with_validated_summary(OutputSummary::new(1, 1, 0))
-        .unwrap();
+    task.complete_with_publication(publication_receipt(
+        task_id(),
+        OutputPolicy::SingleAtomic,
+        OutputSummary::new(1, 1, 0),
+    ))
+    .unwrap();
 
     let error = task.transition(TaskEvent::Cancel).unwrap_err();
 
@@ -156,8 +203,12 @@ fn single_output_succeeds_only_when_the_one_output_is_published() {
     let mut task = single_output_task();
     advance_to_running(&mut task);
 
-    task.complete_with_validated_summary(OutputSummary::new(1, 1, 0))
-        .unwrap();
+    task.complete_with_publication(publication_receipt(
+        task_id(),
+        OutputPolicy::SingleAtomic,
+        OutputSummary::new(1, 1, 0),
+    ))
+    .unwrap();
 
     assert_eq!(task.status(), OfficeTaskStatus::Succeeded);
 }
@@ -167,32 +218,27 @@ fn single_output_failure_never_becomes_partial_success() {
     let mut task = single_output_task();
     advance_to_running(&mut task);
 
-    task.complete_with_validated_summary(OutputSummary::new(1, 0, 1))
-        .unwrap();
+    task.complete_with_publication(publication_receipt(
+        task_id(),
+        OutputPolicy::SingleAtomic,
+        OutputSummary::new(1, 0, 1),
+    ))
+    .unwrap();
 
     assert_eq!(task.status(), OfficeTaskStatus::Failed);
 }
 
 #[test]
-fn single_output_rejects_a_summary_that_claims_published_and_failed_results() {
-    let mut task = single_output_task();
-    advance_to_running(&mut task);
-
-    let error = task
-        .complete_with_validated_summary(OutputSummary::new(1, 1, 1))
+fn single_output_derivation_rejects_published_and_failed_results() {
+    let error = derive_completion_status(OutputPolicy::SingleAtomic, OutputSummary::new(1, 1, 1))
         .unwrap_err();
 
     assert_eq!(error.code(), DomainErrorCode::OutputSummaryInconsistent);
-    assert_eq!(task.status(), OfficeTaskStatus::Running);
 }
 
 #[test]
-fn single_output_rejects_more_than_one_expected_output() {
-    let mut task = single_output_task();
-    advance_to_running(&mut task);
-
-    let error = task
-        .complete_with_validated_summary(OutputSummary::new(2, 2, 0))
+fn single_output_derivation_rejects_more_than_one_expected_output() {
+    let error = derive_completion_status(OutputPolicy::SingleAtomic, OutputSummary::new(2, 2, 0))
         .unwrap_err();
 
     assert_eq!(
@@ -214,7 +260,12 @@ fn multi_output_derives_success_partial_success_and_failure() {
         let mut task =
             OfficeTaskStateMachine::new(task_id(), None, OutputPolicy::MultipleIndependent);
         advance_to_running(&mut task);
-        task.complete_with_validated_summary(summary).unwrap();
+        task.complete_with_publication(publication_receipt(
+            task_id(),
+            OutputPolicy::MultipleIndependent,
+            summary,
+        ))
+        .unwrap();
         assert_eq!(task.status(), expected_status);
     }
 }
@@ -235,12 +286,9 @@ fn completion_rejects_zero_expected_outputs_and_non_conserving_counts() {
             DomainErrorCode::JsSafeIntegerExceeded,
         ),
     ] {
-        let mut task =
-            OfficeTaskStateMachine::new(task_id(), None, OutputPolicy::MultipleIndependent);
-        advance_to_running(&mut task);
-        let error = task.complete_with_validated_summary(summary).unwrap_err();
+        let error =
+            derive_completion_status(OutputPolicy::MultipleIndependent, summary).unwrap_err();
         assert_eq!(error.code(), expected_error);
-        assert_eq!(task.status(), OfficeTaskStatus::Running);
     }
 }
 
@@ -248,14 +296,42 @@ fn completion_rejects_zero_expected_outputs_and_non_conserving_counts() {
 fn completion_is_only_allowed_once() {
     let mut task = single_output_task();
     advance_to_running(&mut task);
-    task.complete_with_validated_summary(OutputSummary::new(1, 1, 0))
-        .unwrap();
+    task.complete_with_publication(publication_receipt(
+        task_id(),
+        OutputPolicy::SingleAtomic,
+        OutputSummary::new(1, 1, 0),
+    ))
+    .unwrap();
 
     let error = task
-        .complete_with_validated_summary(OutputSummary::new(1, 1, 0))
+        .complete_with_publication(publication_receipt(
+            task_id(),
+            OutputPolicy::SingleAtomic,
+            OutputSummary::new(1, 1, 0),
+        ))
         .unwrap_err();
 
     assert_eq!(error.code(), DomainErrorCode::InvalidStateTransition);
+}
+
+#[test]
+fn completion_rejects_a_publication_receipt_for_another_task() {
+    let mut task = single_output_task();
+    advance_to_running(&mut task);
+
+    let error = task
+        .complete_with_publication(publication_receipt(
+            other_task_id(),
+            OutputPolicy::SingleAtomic,
+            OutputSummary::new(1, 1, 0),
+        ))
+        .unwrap_err();
+
+    assert_eq!(
+        error.code(),
+        DomainErrorCode::PublicationReceiptTaskMismatch
+    );
+    assert_eq!(task.status(), OfficeTaskStatus::Running);
 }
 
 #[test]
