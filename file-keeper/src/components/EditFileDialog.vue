@@ -68,6 +68,35 @@
             </div>
           </div>
 
+          <div>
+            <label for="favorite-shortcut" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              {{ t('file.favoriteShortcut') }}
+            </label>
+            <div class="flex items-center space-x-2">
+              <input
+                id="favorite-shortcut"
+                v-model="editShortcut"
+                data-test="favorite-shortcut"
+                type="text"
+                readonly
+                :placeholder="t('file.favoriteShortcutPlaceholder')"
+                class="flex-1 px-3 py-2 bg-gray-100 dark:bg-dark-hover border border-gray-200 dark:border-dark-border focus:border-primary rounded-md outline-none text-sm"
+                @keydown="handleShortcutKeydown"
+              />
+              <button
+                type="button"
+                class="px-3 py-2 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-dark-hover rounded-md"
+                @click="editShortcut = ''"
+              >
+                {{ t('file.clearShortcut') }}
+              </button>
+            </div>
+            <p class="mt-1 text-xs text-gray-500">{{ t('file.favoriteShortcutHint') }}</p>
+            <p v-if="shortcutError" role="alert" class="mt-2 text-sm text-red-600 dark:text-red-300">
+              {{ shortcutError }}
+            </p>
+          </div>
+
           <!-- Tags -->
           <div>
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">标签</label>
@@ -128,10 +157,12 @@
             取消
           </button>
           <button
+            data-test="save-file"
+            :disabled="saving"
             @click="handleSave"
-            class="px-4 py-2 text-sm bg-primary hover:bg-[#369b6e] text-white rounded-md transition-colors font-medium shadow-sm shadow-primary/20"
+            class="px-4 py-2 text-sm bg-primary hover:bg-[#369b6e] text-white rounded-md transition-colors font-medium shadow-sm shadow-primary/20 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            保存
+            {{ saving ? t('common.saving') : t('common.save') }}
           </button>
         </div>
       </div>
@@ -144,10 +175,14 @@ import { ref, watch, nextTick } from 'vue'
 import { X, Lock, Plus, FileText, Folder, Image, Code, Box } from 'lucide-vue-next'
 import { useGroupStore } from '../stores/groupStore'
 import type { FileItem } from '../types/file'
+import { useI18n } from '../composables/useI18n'
+import { normalizeShortcut } from '../utils/shortcut'
 
 const props = defineProps<{
   visible: boolean
   file: FileItem
+  saving: boolean
+  shortcutError: string
 }>()
 
 const emit = defineEmits<{
@@ -156,6 +191,7 @@ const emit = defineEmits<{
 }>()
 
 const groupStore = useGroupStore()
+const { t } = useI18n()
 
 const iconOptions = [
   { value: 'file', label: '文件', icon: FileText },
@@ -170,6 +206,7 @@ const selectedIcon = ref(props.file.icon || 'file')
 const editName = ref(props.file.name)
 const editTags = ref<string[]>([...props.file.tags])
 const selectedGroupId = ref(props.file.groupId)
+const editShortcut = ref(props.file.shortcut || '')
 
 // Tag input
 const showTagInput = ref(false)
@@ -182,6 +219,7 @@ watch(() => props.file.id, () => {
   editName.value = props.file.name
   editTags.value = [...props.file.tags]
   selectedGroupId.value = props.file.groupId
+  editShortcut.value = props.file.shortcut || ''
   showTagInput.value = false
   newTagValue.value = ''
 })
@@ -212,6 +250,19 @@ function removeTag(index: number) {
   editTags.value.splice(index, 1)
 }
 
+function handleShortcutKeydown(event: KeyboardEvent) {
+  event.preventDefault()
+  const parts: string[] = []
+  if (event.ctrlKey || event.metaKey) parts.push('CommandOrControl')
+  if (event.altKey) parts.push('Alt')
+  if (event.shiftKey) parts.push('Shift')
+  if (event.key && !['Control', 'Alt', 'Shift', 'Meta'].includes(event.key)) {
+    parts.push(event.key)
+  }
+  const shortcut = normalizeShortcut(parts.join('+'))
+  if (shortcut) editShortcut.value = shortcut
+}
+
 function handleSave() {
   if (!editName.value.trim()) return
 
@@ -219,9 +270,9 @@ function handleSave() {
     icon: selectedIcon.value,
     name: editName.value.trim(),
     tags: [...editTags.value],
-    groupId: selectedGroupId.value
+    groupId: selectedGroupId.value,
+    shortcut: editShortcut.value || undefined
   })
-  emit('close')
 }
 
 function handleCancel() {

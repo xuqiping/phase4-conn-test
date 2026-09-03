@@ -47,7 +47,15 @@ export default {
     moveToGroup: 'Move to Group',
     newGroup: 'New Group',
     manageGroups: 'Manage Groups',
-    totalItems: '{count} items total'
+    totalItems: '{count} items total',
+    favoriteShortcut: 'Favorite shortcut',
+    favoriteShortcutPlaceholder: 'Press a shortcut combination',
+    favoriteShortcutHint: 'Open this favorite even while the app is in the background.',
+    clearShortcut: 'Clear',
+    shortcutConflict: 'This shortcut is already used by “{label}”.',
+    shortcutRegisterFailed: 'Shortcut registration failed. The previous shortcut is still active: {error}',
+    shortcutRestoreFailed: 'These favorite shortcuts could not be restored:\n{items}',
+    shortcutRemoveFailed: 'The shortcut could not be released, so the favorite was not removed: {error}'
   },
   process: {
     title: 'Process Management',

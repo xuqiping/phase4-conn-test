@@ -776,6 +776,8 @@
       v-if="editingFile"
       :visible="!!editingFile"
       :file="editingFile"
+      :saving="fileEditSaving"
+      :shortcut-error="fileEditShortcutError"
       @close="editingFile = null"
       @saved="handleFileSaved"
     />
@@ -836,7 +838,7 @@ import { useRecentStore } from './stores/recentStore'
 import { useClipboardStore } from './stores/clipboardStore'
 import { useAuthStore } from './stores/authStore'
 import { useI18n } from './composables/useI18n'
-import { openFile, showInFolder } from './api/files'
+import { openFile, showInFolder, validatePath } from './api/files'
 import { findFileProcesses, closeProcess } from './api/processes'
 import { captureScreenshotRegion } from './api/screenshot'
 import { closeScreenshotOverlayWindow, openScreenshotOverlayWindow } from './api/screenshotOverlay'
@@ -858,6 +860,11 @@ import { useVirtualScroll } from './composables/useVirtualScroll'
 import type { FileItem } from './types/file'
 import type { ProcessInfo } from './types/process'
 import type { ScreenshotRegion } from './types/screenshot'
+import {
+  createFavoriteShortcutCoordinator,
+  replaceShortcutRegistration
+} from './composables/useFavoriteShortcuts'
+import { findShortcutConflict, normalizeShortcut } from './utils/shortcut'
 
 const fileStore = useFileStore()
 const groupStore = useGroupStore()
@@ -868,6 +875,10 @@ const clipboardStore = useClipboardStore()
 const authStore = useAuthStore()
 const { t, locale, toggleLocale } = useI18n()
 const commercialServerUrl = import.meta.env.VITE_FILE_KEEPER_SERVER_URL || 'http://localhost:8088'
+const favoriteShortcutCoordinator = createFavoriteShortcutCoordinator({
+  register: registerGlobalShortcut,
+  unregister: unregisterGlobalShortcut
+})
 
 // Current tab state
 type AppTab = 'files' | 'processes' | 'clipboard' | 'office' | 'work-report'
@@ -1095,12 +1106,27 @@ function handleBatchOpen() {
   selectionStore.clearSelection()
 }
 
-function handleBatchDelete() {
+async function handleBatchDelete() {
   const ids = Array.from(selectionStore.selectedIds)
   const confirmed = confirm(`确定删除选中的 ${ids.length} 个项目？`)
   if (confirmed) {
-    fileStore.batchDelete(ids)
+    const removableIds: string[] = []
+    const failures: string[] = []
+    for (const id of ids) {
+      const file = fileStore.files.find(item => item.id === id)
+      if (!file) continue
+      try {
+        await favoriteShortcutCoordinator.unregister(file.id, file.shortcut)
+        removableIds.push(file.id)
+      } catch (error) {
+        failures.push(`${file.name}: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+    fileStore.batchDelete(removableIds)
     selectionStore.clearSelection()
+    if (failures.length > 0) {
+      alert(t('file.shortcutRemoveFailed', { error: failures.join('\n') }))
+    }
   }
 }
 
@@ -1316,14 +1342,43 @@ async function closeWindow() {
 }
 
 async function handleSaveSettings(settings: { globalShortcut: string; clipboardShortcut: string; screenshotShortcut: string; minimizeToTray: boolean; theme: 'light' | 'dark' | 'auto' }) {
+  const proposed = {
+    globalShortcut: normalizeShortcut(settings.globalShortcut),
+    clipboardShortcut: normalizeShortcut(settings.clipboardShortcut),
+    screenshotShortcut: normalizeShortcut(settings.screenshotShortcut)
+  }
+  const candidates = [
+    ['main', proposed.globalShortcut],
+    ['clipboard', proposed.clipboardShortcut],
+    ['screenshot', proposed.screenshotShortcut]
+  ] as const
+  for (const [id, shortcut] of candidates) {
+    const conflict = findShortcutConflict(shortcut, {
+      settings: proposed,
+      files: fileStore.files,
+      excludeApplicationId: id
+    })
+    if (conflict) {
+      alert(t('file.shortcutConflict', { label: conflict.label }))
+      return
+    }
+  }
+
   settingsStore.updateSettings({
     minimizeToTray: settings.minimizeToTray,
     theme: settings.theme,
   })
 
-  await updateGlobalShortcut(settings.globalShortcut)
-  await updateClipboardShortcut(settings.clipboardShortcut)
-  await updateScreenshotShortcut(settings.screenshotShortcut)
+  try {
+    await updateGlobalShortcut(proposed.globalShortcut)
+    await updateClipboardShortcut(proposed.clipboardShortcut)
+    await updateScreenshotShortcut(proposed.screenshotShortcut)
+  } catch (error) {
+    alert(t('file.shortcutRegisterFailed', {
+      error: error instanceof Error ? error.message : String(error)
+    }))
+    return
+  }
 
   showSettings.value = false
 }
@@ -1432,96 +1487,36 @@ async function handleScreenshotCapture(region: ScreenshotRegion) {
 }
 
 async function updateGlobalShortcut(desired: string) {
-  if (desired === registeredShortcut) {
-    settingsStore.updateSettings({ globalShortcut: desired })
-    return
-  }
-
-  if (registeredShortcut) {
-    try {
-      await unregisterGlobalShortcut(registeredShortcut)
-    } catch (error) {
-      console.warn(`Failed to unregister "${registeredShortcut}", continuing:`, error)
-    }
-    registeredShortcut = null
-  }
-
-  if (desired) {
-    try {
-      await registerGlobalShortcut(desired, handleGlobalShortcut)
-      registeredShortcut = desired
-      settingsStore.updateSettings({ globalShortcut: desired })
-      console.log(`Global shortcut updated: ${desired}`)
-    } catch (error) {
-      console.error('Failed to register new shortcut:', error)
-      settingsStore.updateSettings({ globalShortcut: desired })
-      alert(`主窗口快捷键注册失败（可能与系统其他程序冲突）：${error}\n\n请尝试更换其他组合。`)
-    }
-  } else {
-    settingsStore.updateSettings({ globalShortcut: '' })
-  }
+  const replaced = await replaceShortcutRegistration(
+    { register: registerGlobalShortcut, unregister: unregisterGlobalShortcut },
+    registeredShortcut ?? '',
+    desired,
+    handleGlobalShortcut
+  )
+  registeredShortcut = replaced || null
+  settingsStore.updateSettings({ globalShortcut: replaced })
 }
 
 async function updateClipboardShortcut(desired: string) {
-  if (desired === registeredClipboardShortcut) {
-    settingsStore.updateSettings({ clipboardShortcut: desired })
-    return
-  }
-
-  if (registeredClipboardShortcut) {
-    try {
-      await unregisterGlobalShortcut(registeredClipboardShortcut)
-    } catch (error) {
-      console.warn(`Failed to unregister "${registeredClipboardShortcut}", continuing:`, error)
-    }
-    registeredClipboardShortcut = null
-  }
-
-  if (desired) {
-    try {
-      await registerGlobalShortcut(desired, handleClipboardShortcut)
-      registeredClipboardShortcut = desired
-      settingsStore.updateSettings({ clipboardShortcut: desired })
-      console.log(`Clipboard shortcut updated: ${desired}`)
-    } catch (error) {
-      console.error('Failed to register clipboard shortcut:', error)
-      settingsStore.updateSettings({ clipboardShortcut: desired })
-      alert(`剪贴板面板快捷键注册失败（可能与系统其他程序冲突）：${error}\n\n请尝试更换其他组合。`)
-    }
-  } else {
-    settingsStore.updateSettings({ clipboardShortcut: '' })
-  }
+  const replaced = await replaceShortcutRegistration(
+    { register: registerGlobalShortcut, unregister: unregisterGlobalShortcut },
+    registeredClipboardShortcut ?? '',
+    desired,
+    handleClipboardShortcut
+  )
+  registeredClipboardShortcut = replaced || null
+  settingsStore.updateSettings({ clipboardShortcut: replaced })
 }
 
 async function updateScreenshotShortcut(desired: string) {
-  if (desired === registeredScreenshotShortcut) {
-    settingsStore.updateSettings({ screenshotShortcut: desired })
-    return
-  }
-
-  if (registeredScreenshotShortcut) {
-    try {
-      await unregisterGlobalShortcut(registeredScreenshotShortcut)
-    } catch (error) {
-      console.warn(`Failed to unregister "${registeredScreenshotShortcut}", continuing:`, error)
-    }
-    registeredScreenshotShortcut = null
-  }
-
-  if (desired) {
-    try {
-      await registerGlobalShortcut(desired, handleScreenshotShortcut)
-      registeredScreenshotShortcut = desired
-      settingsStore.updateSettings({ screenshotShortcut: desired })
-      console.log(`Screenshot shortcut updated: ${desired}`)
-    } catch (error) {
-      console.error('Failed to register screenshot shortcut:', error)
-      settingsStore.updateSettings({ screenshotShortcut: desired })
-      alert(`截图快捷键注册失败（可能与系统其他程序冲突）：${error}\n\n请尝试更换其他组合。`)
-    }
-  } else {
-    settingsStore.updateSettings({ screenshotShortcut: '' })
-  }
+  const replaced = await replaceShortcutRegistration(
+    { register: registerGlobalShortcut, unregister: unregisterGlobalShortcut },
+    registeredScreenshotShortcut ?? '',
+    desired,
+    handleScreenshotShortcut
+  )
+  registeredScreenshotShortcut = replaced || null
+  settingsStore.updateSettings({ screenshotShortcut: replaced })
 }
 
 let tokenRefreshInterval: number | null = null
@@ -1588,6 +1583,23 @@ onMounted(async () => {
       console.error('Failed to register screenshot shortcut on startup:', error)
     }
   }
+
+  void (fileStore as { $persistReady?: Promise<void> }).$persistReady?.then(async () => {
+    const failures = await favoriteShortcutCoordinator.restore(
+      fileStore.files,
+      id => () => { void openFavoriteById(id) },
+      4
+    )
+    if (failures.length > 0) {
+      const items = failures.map(failure => {
+        const file = fileStore.files.find(item => item.id === failure.id)
+        return `${file?.name ?? failure.id}: ${failure.error}`
+      }).join('\n')
+      alert(t('file.shortcutRestoreFailed', { items }))
+    }
+  }).catch(error => {
+    console.error('Failed to restore favorite shortcuts:', error)
+  })
 
   // Tauri native drag-drop (provides real file paths)
   try {
@@ -1670,6 +1682,11 @@ onUnmounted(async () => {
     }
   }
 
+  const favoriteReleaseFailures = await favoriteShortcutCoordinator.dispose()
+  if (favoriteReleaseFailures.length > 0) {
+    console.warn(`Failed to release ${favoriteReleaseFailures.length} favorite shortcuts on unmount`)
+  }
+
   if (registeredShortcut) {
     try {
       await unregisterGlobalShortcut(registeredShortcut)
@@ -1745,6 +1762,8 @@ onKeyStroke('Delete', () => {
 
 // File Operations
 const editingFile = ref<FileItem | null>(null)
+const fileEditSaving = ref(false)
+const fileEditShortcutError = ref('')
 
 // Process Management
 const showProcessManager = ref(false)
@@ -1762,6 +1781,17 @@ async function handleFileClick(file: FileItem) {
     console.error(`打开失败: ${error}`)
     alert(`打开失败: ${error}`)
   }
+}
+
+async function openFavoriteById(id: string) {
+  const file = fileStore.files.find(item => item.id === id)
+  if (!file) return
+  if (!await validatePath(file.path)) {
+    console.warn(`Favorite shortcut target is unavailable: ${file.id}`)
+    return
+  }
+
+  await handleFileClick(file)
 }
 
 function handleCardClick(event: MouseEvent, file: FileItem) {
@@ -1824,10 +1854,36 @@ function closeContextMenu() {
   showMoveToGroupSubmenu.value = false
 }
 
-function handleFileSaved(updates: Partial<FileItem>) {
-  if (editingFile.value) {
-    fileStore.updateFile(editingFile.value.id, updates)
+async function handleFileSaved(updates: Partial<FileItem>) {
+  const file = editingFile.value
+  if (!file || fileEditSaving.value) return
+  fileEditSaving.value = true
+  fileEditShortcutError.value = ''
+  try {
+    const desiredShortcut = normalizeShortcut(updates.shortcut ?? '')
+    const conflict = findShortcutConflict(desiredShortcut, {
+      settings: settingsStore.settings,
+      files: fileStore.files,
+      excludeFileId: file.id
+    })
+    if (conflict) {
+      fileEditShortcutError.value = t('file.shortcutConflict', { label: conflict.label })
+      return
+    }
+    const shortcut = await favoriteShortcutCoordinator.replace(
+      file.id,
+      file.shortcut,
+      desiredShortcut,
+      () => { void openFavoriteById(file.id) }
+    )
+    fileStore.updateFile(file.id, { ...updates, shortcut: shortcut || undefined })
     editingFile.value = null
+  } catch (error) {
+    fileEditShortcutError.value = t('file.shortcutRegisterFailed', {
+      error: error instanceof Error ? error.message : String(error)
+    })
+  } finally {
+    fileEditSaving.value = false
   }
 }
 
@@ -1930,9 +1986,16 @@ async function handleCloseProcess(windowHandle: number, pid: number) {
   }
 }
 
-function handleRemoveFile(file: FileItem) {
-  fileStore.removeFile(file.id)
-  console.log(`已移除: ${file.name}`)
+async function handleRemoveFile(file: FileItem) {
+  try {
+    await favoriteShortcutCoordinator.unregister(file.id, file.shortcut)
+    fileStore.removeFile(file.id)
+    console.log(`已移除收藏项: ${file.id}`)
+  } catch (error) {
+    alert(t('file.shortcutRemoveFailed', {
+      error: error instanceof Error ? error.message : String(error)
+    }))
+  }
 }
 
 // Group Management

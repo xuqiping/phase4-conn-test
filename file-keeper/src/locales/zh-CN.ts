@@ -47,7 +47,15 @@ export default {
     moveToGroup: '移动到分组',
     newGroup: '新建分组',
     manageGroups: '管理分组',
-    totalItems: '共 {count} 个项目'
+    totalItems: '共 {count} 个项目',
+    favoriteShortcut: '收藏项快捷键',
+    favoriteShortcutPlaceholder: '按下快捷键组合',
+    favoriteShortcutHint: '应用不在前台时也可直接打开该收藏项。',
+    clearShortcut: '清除',
+    shortcutConflict: '该快捷键已被“{label}”占用。',
+    shortcutRegisterFailed: '快捷键注册失败，原快捷键仍然有效：{error}',
+    shortcutRestoreFailed: '以下收藏项快捷键恢复失败：\n{items}',
+    shortcutRemoveFailed: '快捷键注销失败，收藏项未移除：{error}'
   },
   process: {
     title: '进程管理',

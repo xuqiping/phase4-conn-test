@@ -48,6 +48,7 @@
             </label>
           <div class="flex items-center space-x-2">
            <input
+            data-test="main-shortcut"
             v-model="localShortcut"
               @keydown="handleMainShortcutKeydown"
                 placeholder="按下快捷键组合..."
@@ -73,6 +74,7 @@
             </label>
             <div class="flex items-center space-x-2">
               <input
+                data-test="clipboard-shortcut"
                 v-model="localClipboardShortcut"
                 @keydown="handleClipboardShortcutKeydown"
                 placeholder="按下快捷键组合..."
@@ -90,6 +92,10 @@
               用于快速打开剪贴板历史面板（默认 Ctrl+Shift+V）
             </p>
           </div>
+
+          <p v-if="shortcutError" role="alert" class="text-sm text-red-600 dark:text-red-300">
+            {{ shortcutError }}
+          </p>
 
           <!-- Screenshot Shortcut -->
           <div>
@@ -242,7 +248,9 @@ import { ref, watch, computed } from 'vue'
 import { X } from 'lucide-vue-next'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useAuthStore } from '../stores/authStore'
+import { useFileStore } from '../stores/fileStore'
 import { useI18n } from '../composables/useI18n'
+import { findShortcutConflict, normalizeShortcut } from '../utils/shortcut'
 import AiConfigSettings from './AiConfigSettings.vue'
 
 const props = defineProps<{
@@ -257,6 +265,7 @@ const emit = defineEmits<{
 
 const settingsStore = useSettingsStore()
 const authStore = useAuthStore()
+const fileStore = useFileStore()
 const { t } = useI18n()
 
 const activeTab = ref('general')
@@ -273,6 +282,7 @@ const localClipboardShortcut = ref(settingsStore.settings.clipboardShortcut)
 const localScreenshotShortcut = ref(settingsStore.settings.screenshotShortcut)
 const localMinimizeToTray = ref(settingsStore.settings.minimizeToTray)
 const localTheme = ref(settingsStore.settings.theme)
+const shortcutError = ref('')
 
 // Reset local values when dialog opens
 watch(() => props.show, (newShow) => {
@@ -283,6 +293,7 @@ watch(() => props.show, (newShow) => {
     localScreenshotShortcut.value = settingsStore.settings.screenshotShortcut
     localMinimizeToTray.value = settingsStore.settings.minimizeToTray
     localTheme.value = settingsStore.settings.theme
+    shortcutError.value = ''
   }
 })
 
@@ -346,10 +357,30 @@ function clearScreenshotShortcut() {
 }
 
 function handleSave() {
+  shortcutError.value = ''
+  const proposed = {
+    globalShortcut: normalizeShortcut(localShortcut.value),
+    clipboardShortcut: normalizeShortcut(localClipboardShortcut.value),
+    screenshotShortcut: normalizeShortcut(localScreenshotShortcut.value)
+  }
+  const candidates = [
+    ['main', proposed.globalShortcut],
+    ['clipboard', proposed.clipboardShortcut],
+    ['screenshot', proposed.screenshotShortcut]
+  ] as const
+  for (const [id, shortcut] of candidates) {
+    const conflict = findShortcutConflict(shortcut, {
+      settings: proposed,
+      files: fileStore.files,
+      excludeApplicationId: id
+    })
+    if (conflict) {
+      shortcutError.value = t('file.shortcutConflict', { label: conflict.label })
+      return
+    }
+  }
   emit('save', {
-    globalShortcut: localShortcut.value,
-    clipboardShortcut: localClipboardShortcut.value,
-    screenshotShortcut: localScreenshotShortcut.value,
+    ...proposed,
     minimizeToTray: localMinimizeToTray.value,
     theme: localTheme.value
   })
