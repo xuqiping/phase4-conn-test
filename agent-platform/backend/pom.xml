@@ -188,6 +188,31 @@
             <version>1.18.3</version>
         </dependency>
 
+        <!-- AWS SDK v2 S3（WP6 Step2 S3Connector）：仅 sync client + url-connection 传输
+             （不引 apache/netty client，树最小化）。S3 兼容（MinIO/OSS/COS）经 endpointOverride+
+             pathStyle 支持。CVE 复核：2.54.11 为 2026-09 当前稳定线（引入前/升级时再核，
+             过 deps-check profile 全量门禁见 scripts/security）。 -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>s3</artifactId>
+            <version>2.54.11</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>software.amazon.awssdk</groupId>
+                    <artifactId>apache-client</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>software.amazon.awssdk</groupId>
+                    <artifactId>netty-nio-client</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>url-connection-client</artifactId>
+            <version>2.54.11</version>
+        </dependency>
+
         <!-- javacv：画布视频抽帧/截取（plan C11/C12 R-2，VideoFrameService 唯一调用方）。
              sidecar 禁 subprocess（AGENTS），故走后端纯 Java。CVE 复核：1.5.13 为 2025 稳定线，引入前/升级时再核。
              瘦身三招（avoid ffmpeg-platform 全平台 ~500MB 撑爆磁盘/镜像）：
