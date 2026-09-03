@@ -83,7 +83,7 @@ class GlobalAnswerStrategyTest {
                 .thenReturn(resp("批C要点"))
                 .thenReturn(resp("库内主要覆盖差旅与报销 [1]，其中 [3] 规定了审批权限。"));
 
-        GlobalAnswerStrategy.GlobalResult r = strategy.answer(kb, "总结全库主题", 9L, true, List.of(), false);
+        GlobalAnswerStrategy.GlobalResult r = strategy.answer(kb, "总结全库主题", 9L, true, List.of(), false, List.of());
 
         assertThat(r.degraded()).isFalse();
         assertThat(r.docs()).hasSize(40);
@@ -112,7 +112,7 @@ class GlobalAnswerStrategyTest {
                 .thenReturn(resp("引用了不存在的 [99] 文档"))                // 首次越界
                 .thenReturn(resp("还是越界 [98]"));                          // 重生成仍越界
 
-        GlobalAnswerStrategy.GlobalResult r = strategy.answer(kb, "总结全库", 9L, true, List.of(), false);
+        GlobalAnswerStrategy.GlobalResult r = strategy.answer(kb, "总结全库", 9L, true, List.of(), false, List.of());
 
         assertThat(r.degraded()).isTrue();
         assertThat(r.cited()).isEmpty();
@@ -132,7 +132,7 @@ class GlobalAnswerStrategyTest {
                 .thenReturn(resp("越界 [88]"))
                 .thenReturn(resp("正确引用 [2]"));
 
-        GlobalAnswerStrategy.GlobalResult r = strategy.answer(kb, "总结全库", 9L, true, List.of(), false);
+        GlobalAnswerStrategy.GlobalResult r = strategy.answer(kb, "总结全库", 9L, true, List.of(), false, List.of());
 
         assertThat(r.degraded()).as("重生成成功不降级").isFalse();
         assertThat(r.cited()).containsExactly(2);
@@ -152,7 +152,7 @@ class GlobalAnswerStrategyTest {
             return resp("太晚的要点");
         });
 
-        GlobalAnswerStrategy.GlobalResult r = strategy.answer(kb, "总结全库", 9L, true, List.of(), false);
+        GlobalAnswerStrategy.GlobalResult r = strategy.answer(kb, "总结全库", 9L, true, List.of(), false, List.of());
 
         assertThat(r.degraded()).isTrue();
         assertThat(r.answer())
@@ -171,7 +171,7 @@ class GlobalAnswerStrategyTest {
                 .thenReturn(resp("基于 [2]"));
 
         GlobalAnswerStrategy.GlobalResult r =
-                strategy.answer(kb, "总结全库", 9L, false, List.of(101L, 103L), false);
+                strategy.answer(kb, "总结全库", 9L, false, List.of(101L, 103L), false, List.of());
 
         // 纯 Mockito 不执行 SQL → 验证 wrapper：非 allDocs 时必须带 IN(可见 docIds)
         @SuppressWarnings("unchecked")
@@ -187,7 +187,7 @@ class GlobalAnswerStrategyTest {
 
     @Test
     void emptyVisibleSet_degradesWithoutLlm() {
-        GlobalAnswerStrategy.GlobalResult r = strategy.answer(kb, "总结全库", 9L, false, List.of(), false);
+        GlobalAnswerStrategy.GlobalResult r = strategy.answer(kb, "总结全库", 9L, false, List.of(), false, List.of());
 
         assertThat(r.degraded()).isTrue();
         assertThat(r.answer()).contains("暂无可用的文档摘要");
@@ -205,7 +205,7 @@ class GlobalAnswerStrategyTest {
                 .thenReturn(resp("要点 [1]"));
 
         GlobalAnswerStrategy.GlobalResult r =
-                strategy.answer(kb, "总结全库", 9L, true, List.of(), true);
+                strategy.answer(kb, "总结全库", 9L, true, List.of(), true, List.of());
 
         assertThat(r.answer()).contains("已仅对首个知识库《制度库》生成全局概览");
     }
@@ -213,7 +213,7 @@ class GlobalAnswerStrategyTest {
     @Test
     void killSwitchOff_returnsNull() {
         props.setEnabled(false);
-        assertThat(strategy.answer(kb, "总结全库", 9L, true, List.of(), false)).isNull();
+        assertThat(strategy.answer(kb, "总结全库", 9L, true, List.of(), false, List.of())).isNull();
         verify(llmGateway, never()).chat(any(), anyLong());
     }
 
@@ -229,6 +229,38 @@ class GlobalAnswerStrategyTest {
         assertThat(insp.batchCount()).isEqualTo(3);
         assertThat(insp.overviewReady()).isTrue();
         verify(llmGateway, never()).chat(any(), anyLong());
+    }
+
+    // ---- WP4 Step3 混合跟进：必达子意图缺失检测 ----
+
+    @Test
+    void missingSubIntents_uncoveredAnchorsReportedForFollowUp() {
+        when(documentMapper.selectList(any())).thenReturn(docs(2));
+        when(summaryMapper.selectOne(any())).thenReturn(null);
+        // map 要点含「差旅」，reduce 综述含 [1]——均不含 V2.1/第十条
+        when(llmGateway.chat(any(LlmRequest.class), eq(9L)))
+                .thenReturn(resp("[1]《文档0》：差旅与报销规定。"))
+                .thenReturn(resp("综述：覆盖差旅 [1]。"));
+
+        GlobalAnswerStrategy.GlobalResult r = strategy.answer(kb, "总结全库，V2.1第十条原文是什么",
+                9L, true, List.of(), false, List.of("V2.1", "第十条", "差旅"));
+
+        assertThat(r.degraded()).isFalse();
+        assertThat(r.missingSubIntents()).containsExactlyInAnyOrder("V2.1", "第十条");   // 「差旅」已覆盖不报
+    }
+
+    @Test
+    void missingSubIntents_emptyWhenAllCovered() {
+        when(documentMapper.selectList(any())).thenReturn(docs(2));
+        when(summaryMapper.selectOne(any())).thenReturn(readyOverview());
+        when(llmGateway.chat(any(LlmRequest.class), eq(9L)))
+                .thenReturn(resp("要点含 V2.1 与 第十条"))
+                .thenReturn(resp("综述 [1]"));   // 全覆盖
+
+        GlobalAnswerStrategy.GlobalResult r = strategy.answer(kb, "总结全库，V2.1第十条原文",
+                9L, true, List.of(), false, List.of("V2.1", "第十条"));
+
+        assertThat(r.missingSubIntents()).isEmpty();
     }
 
     // ---- 夹具 ----

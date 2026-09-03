@@ -10,7 +10,9 @@ import java.util.regex.Pattern;
 
 @Service
 public class QueryPlanner {
-    private static final Pattern VERSION = Pattern.compile("(?i)\\bV?\\d+(?:\\.\\d+)+\\b");
+    /** 版本号边界用显式环视而非 \b：JDK 的 \b 按 Unicode 判词——「V2.1第十条」的 1 与 第 均为词字符，
+     *  无边界致版本锚点漏提（WP4 Step3 混合跟进依赖锚点 filter）；环视口径=不以字母/数字/点衔接。 */
+    private static final Pattern VERSION = Pattern.compile("(?i)(?<![0-9A-Za-z.])V?\\d+(?:\\.\\d+)+(?![0-9.])");
     private static final Pattern DATE = Pattern.compile("\\b\\d{4}[-年/]\\d{1,2}[-月/]\\d{1,2}日?\\b");
     private static final Pattern ARTICLE = Pattern.compile("第[一二三四五六七八九十百千万0-9]+条");
     /** C7 GLOBAL（WP4 Step2）：库级范围信号——须与聚合/概览意图词同时出现，
@@ -34,15 +36,16 @@ public class QueryPlanner {
             return new QueryPlan("COMPARISON", "MULTI_EVIDENCE", filters,
                     List.of("EXACT", "SPARSE", "DENSE"), true, false, false);
         }
-        if (!filters.isEmpty() || q.matches(".*[“\"].+[”\"].*")) {
-            return new QueryPlan("EXACT", "DIRECT", filters,
-                    List.of("EXACT", "SPARSE"), false, false, false);
-        }
-        // GLOBAL 置于 EXACT 之后：带版本/日期/条号锚点的具体问题先走精确检索；
-        // 置于 PROCEDURE/LIST 之前：「列出全库文档的主题」的库级聚合意图优先于清单式局部检索
+        // GLOBAL 置于 EXACT 之前：范围词+意图词双命中即库级聚合主意图——混合问题
+        // （「总结全库，并给出V2.1第十条原文」）以 GLOBAL 为主分支，锚点 filters 保留在
+        // plan 里作为细节跟进轮的「必达子意图」（WP4 Step3）；纯锚点问题（无意图词）仍走 EXACT。
         if (GLOBAL_SCOPE.matcher(q).matches() && GLOBAL_INTENT.matcher(q).matches()) {
             return new QueryPlan("GLOBAL", "OVERVIEW", filters,
                     List.of("SPARSE", "DENSE"), true, false, true);
+        }
+        if (!filters.isEmpty() || q.matches(".*[“\"].+[”\"].*")) {
+            return new QueryPlan("EXACT", "DIRECT", filters,
+                    List.of("EXACT", "SPARSE"), false, false, false);
         }
         if (q.matches(".*(步骤|流程|如何|怎么办|先.*再).*")) {
             return new QueryPlan("PROCEDURE", "ORDERED_STEPS", filters,

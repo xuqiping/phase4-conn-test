@@ -37,9 +37,19 @@ class QueryPlannerTest {
         assertNotEquals("GLOBAL", planner.plan("这个方案的要点是什么").queryType());
     }
 
-    @Test void exactAnchorBeatsGlobal() {
-        // 版本/条号锚点先走精确检索（GLOBAL 置于 EXACT 之后）
+    @Test void exactAnchorWithoutIntentStillExact() {
+        // 锚点问题无聚合意图词（「说了什么」不在意图词表）→ 仍走精确检索
         QueryPlan plan = planner.plan("全库中V2.1文档的第十条说了什么");
         assertEquals("EXACT", plan.queryType());
+    }
+
+    // ---- WP4 Step3：混合问题（范围词+意图词+锚点）→ GLOBAL 主分支，锚点留 filters ----
+
+    @Test void hybridGlobalPlusAnchorGlobalWithFiltersRetained() {
+        QueryPlan plan = planner.plan("总结全库，V2.1第十条原文是什么");
+        assertEquals("GLOBAL", plan.queryType());
+        // 锚点不丢：作为细节跟进轮的「必达子意图」保留在 filters
+        assertEquals("V2.1", plan.filters().get("version"));
+        assertEquals("第十条", plan.filters().get("article"));
     }
 }

@@ -57,7 +57,7 @@ public class RagRetrieveVO {
     }
 
     @Data
-    @Builder
+    @Builder(toBuilder = true)   // toBuilder：GLOBAL 细节段引用编号整体偏移复用（WP4 Step3）
     public static class CitationVO {
         private int index;
         private Long documentId;

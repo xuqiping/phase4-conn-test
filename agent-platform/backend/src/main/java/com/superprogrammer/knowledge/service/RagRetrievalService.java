@@ -87,6 +87,9 @@ public class RagRetrievalService {
     private final com.superprogrammer.knowledge.context.EvidencePolicyService evidencePolicyService;
     private final com.superprogrammer.knowledge.answer.GroundedAnswerService groundedAnswerService;
     private final com.superprogrammer.knowledge.global.GlobalAnswerStrategy globalAnswerStrategy;
+    /** C3/WP4 覆盖判定（纯逻辑类，直接持有）。 */
+    private final com.superprogrammer.knowledge.context.CoverageVerifier coverageVerifier =
+            new com.superprogrammer.knowledge.context.CoverageVerifier();
 
     /** 安全体系 S3 · LLM01 围栏（横切可选依赖：测试/切片无 bean 时降级直通，沿用 2026-08-12 范式）。 */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -233,7 +236,8 @@ public class RagRetrievalService {
             // 全局 map-reduce 不需要 query embedding，省一次向量调用）。
             // 调试模式（generateAnswer=false）走零 LLM 勘察；开关关（answer 返回 null）回落常规管道。
             if ("GLOBAL".equals(queryPlan.queryType())) {
-                RagRetrieveVO globalVo = answerGlobalSingleKb(trace, budget, t0, req, kb, userId, vs);
+                RagRetrieveVO globalVo = answerGlobalSingleKb(trace, budget, t0, req, kb, userId, vs,
+                        answerModel, queryPlan, llmSubIntents);
                 if (globalVo != null) {
                     return globalVo;
                 }
@@ -1368,7 +1372,7 @@ public class RagRetrievalService {
         com.superprogrammer.knowledge.query.LlmQueryPlanner.PlanOutcome planned =
                 llmQueryPlanner.planWithFallback(query, userId);
         if ("GLOBAL".equals(planned.plan().queryType())) {
-            GroundedAskResult global = answerGlobalGrounded(effectiveKbs, query, userId, admin);
+            GroundedAskResult global = answerGlobalGrounded(effectiveKbs, query, userId, admin, planned);
             if (global != null) {
                 return global;
             }
@@ -1403,11 +1407,13 @@ public class RagRetrievalService {
 
     // ============================ C7 GLOBAL 分支（WP4 Step2） ============================
 
-    /** GLOBAL 单库路径（检索调试接口）：generateAnswer=false 零 LLM 勘察；true 走 map-reduce。
-     *  null=开关关/常规管道（调用方继续 step3-8）。 */
+    /** GLOBAL 单库路径（检索调试接口）：generateAnswer=false 零 LLM 勘察；true 走 map-reduce
+     *  （+混合问题细节跟进轮）。null=开关关/常规管道（调用方继续 step3-8）。 */
     private RagRetrieveVO answerGlobalSingleKb(RagRetrievalLog trace, RagRetrieveVO.TokenBudgetVO budget,
                                                long t0, RagRetrieveRequest req, KnowledgeBase kb, Long userId,
-                                               VisibleSet vs) {
+                                               VisibleSet vs, String answerModel,
+                                               com.superprogrammer.knowledge.query.QueryPlan queryPlan,
+                                               List<String> llmSubIntents) {
         if (!req.isGenerateAnswer()) {
             // 勘察模式：调试面板只见分支标识+参与文档数+批数（不烧 LLM）
             com.superprogrammer.knowledge.global.GlobalAnswerStrategy.Inspection insp =
@@ -1426,14 +1432,25 @@ public class RagRetrievalService {
             return vo;
         }
         com.superprogrammer.knowledge.global.GlobalAnswerStrategy.GlobalResult gr =
-                globalAnswerStrategy.answer(kb, req.getQuery(), userId, vs.allDocs(), vs.docIds(), false);
+                globalAnswerStrategy.answer(kb, req.getQuery(), userId, vs.allDocs(), vs.docIds(), false,
+                        coverageVerifier.requiredFrom(queryPlan, llmSubIntents));
         if (gr == null) {
             return null;   // kill switch 关 → 常规管道
         }
+        String answer = gr.answer();
+        List<RagRetrieveVO.CitationVO> citations = docCitationVOs(gr);
+        // WP4 Step3 混合跟进：必达子意图（锚点 filters+LLM 子意图）未被 map 要点覆盖 → 补一轮局部检索
+        GlobalDetailFollowUp detail = detailFollowUpIfMissing(gr, kb, req.getQuery(), userId, vs,
+                answerModel, queryPlan, llmSubIntents);
+        if (detail.used()) {
+            answer = answer + "\n\n【细节补充】\n" + detail.segment();
+            citations = new ArrayList<>(citations);
+            citations.addAll(detail.citations());
+        }
         RagRetrieveVO vo = RagRetrieveVO.builder()
                 .traceId(trace.getTraceId()).abstained(false)
-                .answer(gr.answer())
-                .citations(docCitationVOs(gr))
+                .answer(answer)
+                .citations(citations)
                 .candidatesL0(List.of()).candidatesL1(List.of())
                 .bm25Fallback(false).candidatesBm25(List.of()).evidenceL2(List.of())
                 .tokenBudget(budget).latencyMs(System.currentTimeMillis() - t0)
@@ -1448,10 +1465,11 @@ public class RagRetrievalService {
         return vo;
     }
 
-    /** GLOBAL /ask 路径：首库 map-reduce + 文档级引用 + 多库取首库提示（规格 §9.3 单库生效）。
-     *  null=开关关/无权限回落常规多库管道。 */
+    /** GLOBAL /ask 路径：首库 map-reduce + 文档级引用 + 多库取首库提示（规格 §9.3 单库生效）
+     *  +混合问题细节跟进轮。null=开关关/无权限回落常规多库管道。 */
     private GroundedAskResult answerGlobalGrounded(List<Long> effectiveKbs, String query,
-                                                    Long userId, boolean admin) {
+                                                    Long userId, boolean admin,
+                                                    com.superprogrammer.knowledge.query.LlmQueryPlanner.PlanOutcome planned) {
         long t0 = System.currentTimeMillis();
         String traceId = UUID.randomUUID().toString().replace("-", "");
         KnowledgeBase kb = knowledgeBaseService.ensure(effectiveKbs.get(0));
@@ -1463,19 +1481,31 @@ public class RagRetrievalService {
         VisibleSet vs = step1VisibleSet(kb, userId, admin);
         boolean multiKb = effectiveKbs.size() > 1;
         com.superprogrammer.knowledge.global.GlobalAnswerStrategy.GlobalResult gr =
-                globalAnswerStrategy.answer(kb, query, userId, vs.allDocs(), vs.docIds(), multiKb);
+                globalAnswerStrategy.answer(kb, query, userId, vs.allDocs(), vs.docIds(), multiKb,
+                        coverageVerifier.requiredFrom(planned.plan(), planned.subIntents()));
         if (gr == null) {
             return null;   // kill switch 关 → 常规多库检索
         }
+        String answer = gr.answer();
+        List<RagRetrieveVO.CitationVO> citations = docCitationVOs(gr);
         Set<Integer> injected = new HashSet<>();
         for (int i = 1; i <= gr.docs().size(); i++) {
             injected.add(i);
         }
+        // 14x#1：细节段问答模型同首库口径
+        GlobalDetailFollowUp detail = detailFollowUpIfMissing(gr, kb, query, userId, vs,
+                knowledgeBaseService.resolveAnswerModel(kb), planned.plan(), planned.subIntents());
+        if (detail.used()) {
+            answer = answer + "\n\n【细节补充】\n" + detail.segment();
+            citations = new ArrayList<>(citations);
+            citations.addAll(detail.citations());
+            injected.addAll(detail.extraIndexes());
+        }
         com.superprogrammer.knowledge.dto.EvidenceResult evidence =
                 com.superprogrammer.knowledge.dto.EvidenceResult.builder()
                         .injectedIndexes(injected)
-                        .citations(docCitationVOs(gr))
-                        .abstained(false).answer(gr.answer()).traceId(traceId)
+                        .citations(citations)
+                        .abstained(false).answer(answer).traceId(traceId)
                         .globalMode(true).globalDocCount(gr.docs().size())
                         .globalBatches(gr.batchCount()).globalDegraded(gr.degraded())
                         .build();
@@ -1483,7 +1513,93 @@ public class RagRetrievalService {
         trace.setL2LexicalFallback(false);
         writeTraceGlobal(trace, gr.degraded() ? "GLOBAL_DEGRADED" : "GLOBAL_SUPPORTED", t0,
                 gr.docs(), gr.batchCount(), gr.degraded());
-        return new GroundedAskResult(evidence, gr.answer(), gr.degraded() ? "PARTIAL" : "SUPPORTED");
+        return new GroundedAskResult(evidence, answer, gr.degraded() ? "PARTIAL" : "SUPPORTED");
+    }
+
+    /** 混合跟进轮入口：缺失必达子意图非空且非降级 → 现有管道补一轮局部检索（首库），失败静默跳过
+     *  （全局主体已是完整答案，细节段是增益不是依赖）。 */
+    private GlobalDetailFollowUp detailFollowUpIfMissing(
+            com.superprogrammer.knowledge.global.GlobalAnswerStrategy.GlobalResult gr,
+            KnowledgeBase kb, String query, Long userId, VisibleSet vs, String answerModel,
+            com.superprogrammer.knowledge.query.QueryPlan queryPlan, List<String> llmSubIntents) {
+        if (gr.degraded() || gr.missingSubIntents().isEmpty()) {
+            return GlobalDetailFollowUp.UNUSED;
+        }
+        try {
+            // 现有管道（缓存/多轮/关系全量复用），范围=首库；规划复用防二次 LLM 规划
+            com.superprogrammer.knowledge.query.LlmQueryPlanner.PlanOutcome planned =
+                    new com.superprogrammer.knowledge.query.LlmQueryPlanner.PlanOutcome(
+                            queryPlan, llmSubIntents == null ? List.of() : llmSubIntents, false);
+            com.superprogrammer.knowledge.dto.EvidenceResult detail =
+                    retrieveEvidence(List.of(kb.getId()), query, userId, false, planned);
+            return detailFollowUp(gr.missingSubIntents(), query, userId, detail,
+                    gr.docs().size(), answerModel);
+        } catch (Exception e) {
+            log.info("[GLOBAL] 混合跟进轮失败（细节段跳过，全局主体不受影响）: {}", e.getMessage());
+            return GlobalDetailFollowUp.UNUSED;
+        }
+    }
+
+    /** 细节段产物：segment=LLM 合成文本（引用已偏移）；citations/extraIndexes 编号续 global 文档序之后。 */
+    record GlobalDetailFollowUp(boolean used, String segment,
+                                List<RagRetrieveVO.CitationVO> citations, Set<Integer> extraIndexes) {
+        static final GlobalDetailFollowUp UNUSED =
+                new GlobalDetailFollowUp(false, null, List.of(), Set.of());
+    }
+
+    /** 细节段合成（包级可见供单测）：detail 证据重编号 offset+1.. → grounded 事实 → 合成引用校验。
+     *  任一环失败返回 UNUSED（调用方答案保持两段结构）。 */
+    GlobalDetailFollowUp detailFollowUp(List<String> missing, String query, Long userId,
+                                        com.superprogrammer.knowledge.dto.EvidenceResult detail,
+                                        int offset, String answerModel) {
+        try {
+            if (detail == null || detail.isAbstained() || detail.getSystemPrompt() == null) {
+                return GlobalDetailFollowUp.UNUSED;
+            }
+            List<Evidence> parsed = parseEvidencePrompt(detail.getSystemPrompt());
+            if (parsed.isEmpty()) {
+                return GlobalDetailFollowUp.UNUSED;
+            }
+            // 引用编号续 global 文档序（global [1..offset] → 细节 [offset+1..]）
+            List<com.superprogrammer.knowledge.answer.GroundedAnswerService.Evidence> renumbered = parsed.stream()
+                    .map(e -> new com.superprogrammer.knowledge.answer.GroundedAnswerService.Evidence(
+                            e.citationIndex() + offset, e.content()))
+                    .toList();
+            com.superprogrammer.knowledge.answer.GroundedAnswerService.Result grounded =
+                    groundedAnswerService.synthesize(renumbered,
+                            Math.max(1, Math.min(5, renumbered.size())),
+                            batch -> extractGroundedFacts(batch, userId, answerModel));
+            if (grounded.facts().isEmpty()) {
+                return GlobalDetailFollowUp.UNUSED;
+            }
+            String detailQuery = query + "（重点覆盖：" + String.join("；", missing) + "）";
+            String segment = composeGroundedAnswer(detailQuery, grounded, userId, false, answerModel);
+            Set<Integer> whitelist = new HashSet<>();
+            for (int i = 1; i <= parsed.size(); i++) {
+                whitelist.add(offset + i);
+            }
+            List<Integer> cited = citationChecker.extractAndCheck(segment, whitelist);
+            if (cited == null) {
+                segment = composeGroundedAnswer(detailQuery, grounded, userId, true, answerModel);
+                cited = citationChecker.extractAndCheck(segment, whitelist);
+                if (cited == null) {
+                    log.warn("[GLOBAL] 细节段引用越界重生成仍失败，跳过细节段");
+                    return GlobalDetailFollowUp.UNUSED;
+                }
+            }
+            List<RagRetrieveVO.CitationVO> citations = detail.getCitations() == null ? List.of()
+                    : detail.getCitations().stream()
+                            .map(c -> c.toBuilder().index(c.getIndex() + offset).build())
+                            .toList();
+            Set<Integer> extra = new HashSet<>();
+            for (int i = 1; i <= parsed.size(); i++) {
+                extra.add(offset + i);
+            }
+            return new GlobalDetailFollowUp(true, segment, citations, extra);
+        } catch (Exception e) {
+            log.info("[GLOBAL] 细节段合成失败（跳过）: {}", e.getMessage());
+            return GlobalDetailFollowUp.UNUSED;
+        }
     }
 
     /** GLOBAL 文档级引用（[n]《标题》，nodeId=null 无段落锚点；documentId 供前端跳文档）。 */

@@ -571,4 +571,60 @@ class RagRetrievalServiceTest {
         verify(queryMapper, never()).fetchSiblingRows(anyList());
         assertEquals(1, vo.getEvidenceL2().size());
     }
+
+    // ---- WP4 Step3：GLOBAL 混合跟进细节段（包级缝 detailFollowUp 直测）----
+
+    @Test
+    void detailFollowUp_renumbersCitationsAfterGlobalOffset() {
+        // 局部检索证据 [1]《差旅制度 V2.1》→ global 文档已占 [1..3]，细节段偏移为 [4]
+        com.superprogrammer.knowledge.dto.EvidenceResult detail =
+                com.superprogrammer.knowledge.dto.EvidenceResult.builder()
+                        .abstained(false)
+                        .systemPrompt("[1] 《差旅制度 V2.1》\n第十条：出差需审批。")
+                        .citations(List.of(RagRetrieveVO.CitationVO.builder()
+                                .index(1).documentId(55L).title("差旅制度 V2.1").build()))
+                        .build();
+        when(groundedAnswerService.synthesize(anyList(), anyInt(), any())).thenReturn(
+                new com.superprogrammer.knowledge.answer.GroundedAnswerService.Result(
+                        List.of(new com.superprogrammer.knowledge.answer.GroundedAnswerService.Fact(
+                                "第十条", "出差需审批", List.of(4))), false));
+        when(groundedAnswerService.renderFacts(anyList())).thenReturn("- 第十条：出差需审批 [4]");
+        when(llmGateway.chat(any(), eq(7L))).thenReturn(
+                LlmResponse.builder().content("第十条原文：出差需审批 [4]").build());
+
+        RagRetrievalService.GlobalDetailFollowUp r = service.detailFollowUp(
+                List.of("V2.1", "第十条"), "总结全库，V2.1第十条原文", 7L, detail, 3, "m");
+
+        assertTrue(r.used());
+        assertTrue(r.segment().contains("第十条原文"));
+        // 细节段引用续 global 之后：证据编号 1+3=4；VO 同步偏移
+        assertEquals(4, r.citations().get(0).getIndex());
+        assertEquals(55L, r.citations().get(0).getDocumentId());
+        assertEquals(java.util.Set.of(4), r.extraIndexes());
+    }
+
+    @Test
+    void detailFollowUp_citationOutOfRangeSkipsSegment() {
+        // 合成引用 [9] 越界（白名单仅 {4}）且重生成仍越界 → 细节段整体跳过，全局主体不受影响
+        com.superprogrammer.knowledge.dto.EvidenceResult detail =
+                com.superprogrammer.knowledge.dto.EvidenceResult.builder()
+                        .abstained(false)
+                        .systemPrompt("[1] 《差旅制度 V2.1》\n第十条：出差需审批。")
+                        .citations(List.of())
+                        .build();
+        when(groundedAnswerService.synthesize(anyList(), anyInt(), any())).thenReturn(
+                new com.superprogrammer.knowledge.answer.GroundedAnswerService.Result(
+                        List.of(new com.superprogrammer.knowledge.answer.GroundedAnswerService.Fact(
+                                "第十条", "出差需审批", List.of(9))), false));
+        when(groundedAnswerService.renderFacts(anyList())).thenReturn("- 第十条：出差需审批 [9]");
+        when(llmGateway.chat(any(), eq(7L))).thenReturn(
+                LlmResponse.builder().content("引用了不存在的 [9]").build());
+
+        RagRetrievalService.GlobalDetailFollowUp r = service.detailFollowUp(
+                List.of("V2.1", "第十条"), "总结全库，V2.1第十条原文", 7L, detail, 3, "m");
+
+        assertFalse(r.used());
+        // 首答越界 → 重生成一次仍越界 → 放弃（两次合成调用）
+        verify(llmGateway, times(2)).chat(any(), eq(7L));
+    }
 }

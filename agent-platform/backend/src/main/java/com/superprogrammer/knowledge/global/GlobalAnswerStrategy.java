@@ -69,15 +69,19 @@ public class GlobalAnswerStrategy {
     private final GlobalAnswerProperties props;
     private final CitationChecker citationChecker;
     private final ObjectMapper objectMapper;
+    /** 覆盖判定（WP2 设施复用；纯逻辑类无需注入容器）。 */
+    private final com.superprogrammer.knowledge.context.CoverageVerifier coverageVerifier =
+            new com.superprogrammer.knowledge.context.CoverageVerifier();
 
     /** 参与 map 的文档（引用白名单基础；ordinal=列表序号+1，答案 [n] 与此对应）。 */
     public record GlobalDoc(Long docId, String title, String l1Summary) {
     }
 
-    /** 全局回答产物：answer 已含概览段拼接；cited=通过文档级校验的引用序号。 */
+    /** 全局回答产物：answer 已含概览段拼接；cited=通过文档级校验的引用序号；
+     *  missingSubIntents=必达子意图未被 map 要点覆盖者（WP4 Step3 混合跟进轮供给面）。 */
     public record GlobalResult(String answer, List<GlobalDoc> docs, List<Integer> cited,
                                int batchCount, boolean degraded, boolean overviewUsed,
-                               String overviewGeneratedAt) {
+                               String overviewGeneratedAt, List<String> missingSubIntents) {
     }
 
     /** 轻量勘察（调试面板 GLOBAL 分支标识：零 LLM，只数文档和批数）。 */
@@ -93,10 +97,13 @@ public class GlobalAnswerStrategy {
     /**
      * 全局回答主入口。
      *
+     * @param requiredSubIntents 必达子意图（规则 filter 值+LLM 子意图，CoverageVerifier.requiredFrom 产物）——
+     *                           map 要点未覆盖者经 {@link GlobalResult#missingSubIntents} 供给调用方补局部检索轮
      * @return null=开关关闭（调用方回落常规检索管道）；degraded=true 表示降级产物（仅概览+提示）
      */
     public GlobalResult answer(KnowledgeBase kb, String query, Long userId,
-                               boolean allDocs, List<Long> visibleDocIds, boolean multiKbNarrowed) {
+                               boolean allDocs, List<Long> visibleDocIds, boolean multiKbNarrowed,
+                               List<String> requiredSubIntents) {
         if (!props.isEnabled()) {
             return null;
         }
@@ -107,6 +114,7 @@ public class GlobalAnswerStrategy {
 
         String body = null;
         List<Integer> cited = List.of();
+        List<String> missing = List.of();
         boolean degraded;
         if (docs.isEmpty()) {
             degraded = true;   // 无可用 L1 → 直接降级（零 LLM 调用）
@@ -127,6 +135,16 @@ public class GlobalAnswerStrategy {
                         degraded = true;
                     }
                 }
+                // WP4 Step3 混合跟进：必达子意图未被 map 要点+综述覆盖 → 交调用方补局部检索轮
+                if (!degraded && requiredSubIntents != null && !requiredSubIntents.isEmpty()) {
+                    List<String> coverage = new ArrayList<>(mapOutputs);
+                    coverage.add(body);
+                    missing = coverageVerifier.missing(requiredSubIntents,
+                            coverageVerifier.coveredBy(coverage.stream()
+                                    .map(t -> (com.superprogrammer.knowledge.context.CoverageVerifier.CandidateText)
+                                            new CoverageText(t))
+                                    .toList(), requiredSubIntents));
+                }
             } catch (TimeoutException e) {
                 log.warn("[GLOBAL] map-reduce 超时（>{}ms）kbId={} docs={}", props.getTimeoutMs(), kb.getId(), docs.size());
                 degraded = true;
@@ -139,7 +157,15 @@ public class GlobalAnswerStrategy {
                 cited = List.of();
             }
         }
-        return compose(kb, docs, body, cited, batches, degraded, overview, multiKbNarrowed);
+        return compose(kb, docs, body, cited, batches, degraded, overview, multiKbNarrowed, missing);
+    }
+
+    /** 覆盖判定候选文本（title 空——map 要点是纯内容流）。 */
+    private record CoverageText(String content) implements com.superprogrammer.knowledge.context.CoverageVerifier.CandidateText {
+        @Override
+        public String title() {
+            return "";
+        }
     }
 
     // ---- map（批间并行 ≤2，总预算内） ----
@@ -208,7 +234,7 @@ public class GlobalAnswerStrategy {
 
     private GlobalResult compose(KnowledgeBase kb, List<GlobalDoc> docs, String body, List<Integer> cited,
                                  int batchCount, boolean degraded, KnowledgeBaseSummary overview,
-                                 boolean multiKbNarrowed) {
+                                 boolean multiKbNarrowed, List<String> missingSubIntents) {
         StringBuilder answer = new StringBuilder();
         String overviewGeneratedAt = null;
         if (overview != null && overview.getSummary() != null && !overview.getSummary().isBlank()) {
@@ -232,7 +258,7 @@ public class GlobalAnswerStrategy {
                     .append("》生成全局概览；如需其他库请单独选择。");
         }
         return new GlobalResult(answer.toString(), docs, cited, batchCount, degraded,
-                overviewGeneratedAt != null, overviewGeneratedAt);
+                overviewGeneratedAt != null, overviewGeneratedAt, missingSubIntents);
     }
 
     // ---- 查询与小工具 ----
