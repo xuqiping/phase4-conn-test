@@ -27,11 +27,12 @@ created-date: 2026-09-03
   - **依赖**：无（L1 现状已有）｜**验证**：单测——触发矩阵/分批/重试上限/无 L1 文档库跳过；API 层无暴露 ✅（KbSummaryWorkerTest 3 例）
   - **实现注（偏离）**：表加 status 列（READY/ERROR——计划动作③要求 ERROR 态而规格 DDL 未列，小偏离已注）；实体独立不继承 BaseEntity（本表无 deleted 列且 version 为业务版本，继承带 @TableLogic 会拼 deleted=0 炸 SQL）；重试=整体生成重试（map+reduce 一体计一次 attempt）
 
-- [ ] **Step 2：GLOBAL 分类与 map-reduce 分支**
+- [x] **Step 2：GLOBAL 分类与 map-reduce 分支**（commit 66107aeb，2860/2860）
   - **目标**：「总结全库」类问题走全局回答
   - **动作**：①`QueryPlanner` 增 GLOBAL 分类（规则词表；LLM 规划器开时优先其结果）；②`global/GlobalAnswerStrategy.java`：取该库 L1 全集分批 ≤15 → map 提要点（每批一次 LLM）→ reduce 合成答案；答案开头 L-KB 概览段（标注来源不占引用编号）；③引用降文档级：CitationChecker 增文档级模式（白名单=参与 map 的 docId）；④kbIds 多选取首库+提示；⑤批间并行 ≤2、30s 超时降级；⑥trace 记 global 分支与批数
   - **文件**：`query/QueryPlanner.java`、`global/GlobalAnswerStrategy.java`（新）、`RagRetrievalService.java`（分支挂接）、`service/internal/CitationChecker.java`、Test ×2
-  - **依赖**：Step 1｜**验证**：单测——GLOBAL 分类/引用白名单/越界拒/多库提示/超时降级；黄金集普通问题不进 GLOBAL
+  - **依赖**：Step 1｜**验证**：单测——GLOBAL 分类/引用白名单/越界拒/多库提示/超时降级；黄金集普通问题不进 GLOBAL ✅（Test ×13 实际）
+  - **实现注（偏离）**：规则 GLOBAL 用双词表门（范围词+意图词同时命中）防「总结报销流程」误入——比计划单列词表更严；/ask 新增 retrieveEvidence(prePlanned) 重载防 GLOBAL 预判导致的双重 LLM 规划（chat 路径不变）；并行用静态 2 线程守护池（计划「≤2」落为常量而非配置项）；黄金集回归=既有 RagBaselineRegressionGateTest 不受扰（GLOBAL 不改常规管道路径）
 
 - [ ] **Step 3：混合问题跟进轮**
   - **目标**：全局+细节混合问题两类证据齐答
