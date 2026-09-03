@@ -84,7 +84,7 @@ class KnowledgeConfidentialGuardTest {
     }
 
     private KnowledgeDocumentService docService() {
-        return new KnowledgeDocumentService(documentMapper, nodeMapper, null, null, knowledgeBaseService,
+        return new KnowledgeDocumentService(documentMapper, nodeMapper, null, null, null, knowledgeBaseService,
                 fileStorageService, null, null, null, null, null);
     }
 

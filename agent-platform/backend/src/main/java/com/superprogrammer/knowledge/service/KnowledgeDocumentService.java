@@ -53,6 +53,7 @@ public class KnowledgeDocumentService {
     private final KnowledgeNodeMapper nodeMapper;
     private final KnowledgeEmbeddingMapper embeddingMapper;
     private final KnowledgeDocEmbeddingMapper docEmbeddingMapper;
+    private final com.superprogrammer.knowledge.mapper.KnowledgeImageEmbeddingMapper imageEmbeddingMapper;
     private final KnowledgeBaseService knowledgeBaseService;
     private final FileStorageService fileStorageService;
     private final ApplicationEventPublisher applicationEventPublisher;
@@ -449,6 +450,7 @@ public class KnowledgeDocumentService {
                 .eq(KnowledgeNode::getDocumentId, id));
         embeddingMapper.deleteByDocument(id);
         docEmbeddingMapper.deleteByDocument(id);   // Phase3：清 L1 文档向量（doc 软删→L1 向量同步硬删）
+        imageEmbeddingMapper.deleteByDocument(id); // WP5：清图片文档向量（同硬删语义）
         // 修 orphan 文件泄漏：删文档同步删磁盘字节 + stored_files 行
         if (doc.getFileRef() != null) {
             fileStorageService.delete(stripFileRef(doc.getFileRef()));

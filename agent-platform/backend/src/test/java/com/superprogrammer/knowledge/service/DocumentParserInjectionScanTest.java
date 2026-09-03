@@ -73,6 +73,7 @@ class DocumentParserInjectionScanTest {
                 nodeMapper,
                 embeddingMapper,
                 docEmbeddingMapper,
+                mock(com.superprogrammer.knowledge.mapper.KnowledgeImageEmbeddingMapper.class),
                 mock(LlmContextualizer.class));
         ReflectionTestUtils.setField(service, "securityEventPublisher", publisher);
         ReflectionTestUtils.setField(service, "bizMetrics", mock(BizMetrics.class));

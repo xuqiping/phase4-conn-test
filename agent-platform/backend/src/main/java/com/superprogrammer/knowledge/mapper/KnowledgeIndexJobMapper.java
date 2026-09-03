@@ -157,4 +157,21 @@ public interface KnowledgeIndexJobMapper extends BaseMapper<KnowledgeIndexJob> {
             ON CONFLICT (idempotency_key) DO NOTHING
             """)
     int insertL1JobIgnoreConflict(@Param("j") com.superprogrammer.knowledge.entity.KnowledgeIndexJob j);
+
+    /**
+     * 入 UPSERT_IMAGE job（WP5 Step2，doc 级图片向量），幂等：idempotency_key UNIQUE
+     * （sha256(docId:fileRefHash:versionId:model:pipeline:UPSERT_IMAGE)），ON CONFLICT DO NOTHING
+     * 保证同 doc+同原件不重复入队（重解析未换图→跳过；换图→新 hash 新 job 接管）。
+     * node_id=NULL（doc 级 job），document_id 锚定文档。返回 1=新入队，0=已存在跳过。
+     */
+    @org.apache.ibatis.annotations.Insert("""
+            INSERT INTO knowledge_index_jobs
+                (node_id, document_id, kb_id, job_type, content_hash, version_id, parser_version,
+                 chunker_version, embedding_model, pipeline_version, idempotency_key, created_at, updated_at)
+            VALUES
+                (NULL, #{j.documentId}, #{j.kbId}, 'UPSERT_IMAGE', #{j.contentHash}, #{j.versionId}, #{j.parserVersion},
+                 #{j.chunkerVersion}, #{j.embeddingModel}, #{j.pipelineVersion}, #{j.idempotencyKey}, now(), now())
+            ON CONFLICT (idempotency_key) DO NOTHING
+            """)
+    int insertImageJobIgnoreConflict(@Param("j") com.superprogrammer.knowledge.entity.KnowledgeIndexJob j);
 }

@@ -28,7 +28,7 @@ public class KnowledgeIndexJob {
     /** UPSERT_L1（doc 级）job 用：node_id 为空时由此锚定文档。V36 新增。 */
     private Long documentId;
 
-    /** UPSERT / DELETE / REINDEX / UPSERT_L1 */
+    /** UPSERT / DELETE / REINDEX / UPSERT_L1 / UPSERT_IMAGE（后两者 doc 级，document_id 锚定） */
     private String jobType;
 
     private String contentHash;

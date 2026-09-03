@@ -46,6 +46,7 @@ public class IndexJobTxService {
     private final KnowledgeIndexJobMapper indexJobMapper;
     private final KnowledgeEmbeddingMapper embeddingMapper;
     private final KnowledgeDocEmbeddingMapper docEmbeddingMapper;
+    private final com.superprogrammer.knowledge.mapper.KnowledgeImageEmbeddingMapper imageEmbeddingMapper;
     private final KnowledgeNodeMapper nodeMapper;
     private final KnowledgeDocumentMapper documentMapper;
     private final ObjectMapper objectMapper;
@@ -62,7 +63,7 @@ public class IndexJobTxService {
         LambdaQueryWrapper<KnowledgeIndexJob> w = new LambdaQueryWrapper<>();
         w.and(q -> q.eq(KnowledgeIndexJob::getStatus, "PENDING")
                         .or().eq(KnowledgeIndexJob::getStatus, "RUNNING"))
-                .in(KnowledgeIndexJob::getJobType, List.of("UPSERT", "REINDEX", "UPSERT_L1"))
+                .in(KnowledgeIndexJob::getJobType, List.of("UPSERT", "REINDEX", "UPSERT_L1", "UPSERT_IMAGE"))
                 .and(q -> q.isNull(KnowledgeIndexJob::getLockedUntil)
                         .or().lt(KnowledgeIndexJob::getLockedUntil, now))
                 .last("LIMIT " + limit + " FOR UPDATE SKIP LOCKED");
@@ -90,7 +91,7 @@ public class IndexJobTxService {
         LambdaQueryWrapper<KnowledgeIndexJob> w = new LambdaQueryWrapper<>();
         w.and(q -> q.eq(KnowledgeIndexJob::getStatus, "PENDING")
                         .or().eq(KnowledgeIndexJob::getStatus, "RUNNING"))
-                .in(KnowledgeIndexJob::getJobType, List.of("UPSERT", "REINDEX", "UPSERT_L1"))
+                .in(KnowledgeIndexJob::getJobType, List.of("UPSERT", "REINDEX", "UPSERT_L1", "UPSERT_IMAGE"))
                 .and(q -> q.isNull(KnowledgeIndexJob::getLockedUntil)
                         .or().lt(KnowledgeIndexJob::getLockedUntil, now));
         Long n = indexJobMapper.selectCount(w);
@@ -154,6 +155,37 @@ public class IndexJobTxService {
             return null;
         }
         docEmbeddingMapper.upsert(documentId, TENANT_ID, kbId, embeddingModel, halfvec, contentHash);
+
+        LambdaUpdateWrapper<KnowledgeIndexJob> ju = new LambdaUpdateWrapper<>();
+        ju.eq(KnowledgeIndexJob::getId, jobId)
+                .set(KnowledgeIndexJob::getStatus, "DONE")
+                .set(KnowledgeIndexJob::getLockedUntil, null)
+                .set(KnowledgeIndexJob::getLastError, null);
+        indexJobMapper.update(null, ju);
+
+        return markDocIndexedIfDone(documentId);
+    }
+
+    /**
+     * 完成一个 UPSERT_IMAGE job（WP5 Step2，doc 级图片向量）：tx 内复校 doc（存在 + IMAGE + fileRef 未换）
+     * → upsert 图片向量行 → job DONE → doc 可能 INDEXED。
+     * contentHash = 原件字节 sha256（worker embed 时算）；复校 fileRef 与 job.contentHash 比对口径不同：
+     * job.contentHash=入队时 fileRef 指纹，此处比对 doc.fileRef 原串（防 embed 期间换图/换文件）。
+     * 复校发现 doc 删/换图/非 IMAGE → voidJob（新版本 job 接管）。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public IndexedDoc completeUpsertImage(Long jobId, Long documentId, Long kbId,
+                                     String embeddingModel, String halfvec, String byteHash, String fileRefAtEnqueue) {
+        KnowledgeDocument doc = documentMapper.selectById(documentId);
+        if (doc == null || !"IMAGE".equals(doc.getDocType())) {
+            voidJob(jobId, "完成前文档已删除或非 IMAGE，图片向量 job 作废");
+            return null;
+        }
+        if (fileRefAtEnqueue != null && !eq(doc.getFileRef(), fileRefAtEnqueue)) {
+            voidJob(jobId, "完成前文档已换图（fileRef 变更），图片向量 job 作废（新版本 job 接管）");
+            return null;
+        }
+        imageEmbeddingMapper.upsert(documentId, TENANT_ID, kbId, embeddingModel, halfvec, byteHash);
 
         LambdaUpdateWrapper<KnowledgeIndexJob> ju = new LambdaUpdateWrapper<>();
         ju.eq(KnowledgeIndexJob::getId, jobId)

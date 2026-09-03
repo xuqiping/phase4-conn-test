@@ -118,6 +118,7 @@ public class DocumentParserService {
     private final KnowledgeNodeMapper nodeMapper;
     private final KnowledgeEmbeddingMapper embeddingMapper;
     private final KnowledgeDocEmbeddingMapper docEmbeddingMapper;
+    private final com.superprogrammer.knowledge.mapper.KnowledgeImageEmbeddingMapper imageEmbeddingMapper;
     private final LlmContextualizer llmContextualizer;
 
     /** 监听器入口。宽 catch 有意：LlmGateway 抛裸 RuntimeException、Tika 抛 IOException/TikaException，均汇入 markFailed。 */
@@ -210,6 +211,7 @@ public class DocumentParserService {
                 .eq(KnowledgeNode::getDocumentId, documentId));
         embeddingMapper.deleteByDocument(documentId);
         docEmbeddingMapper.deleteByDocument(documentId);
+        imageEmbeddingMapper.deleteByDocument(documentId);   // WP5：清图片向量（隔离→重解析时新 job 重建）
         log.warn("KB 文档注入隔离 docId={} kbId={} hit={}", documentId, doc.getKbId(), hit);
         if (securityEventPublisher != null) {
             Long actor = operatorId != null ? operatorId : doc.getCreatedBy();

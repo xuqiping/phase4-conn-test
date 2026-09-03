@@ -293,6 +293,74 @@ class KnowledgeNodeWriterStructuredMetadataTest {
                         .assertThat(job.getPipelineVersion()).isEqualTo("CTX_LLM_V1"));
     }
 
+    // ---- WP5 Step2：IMAGE 文档 doc 级图片向量 job 入队（TEXT 存量默认不建） ----
+
+    @Test
+    void imageDoc_enqueuesDocLevelImageJob() {
+        MapperBuilderAssistant assistant = new MapperBuilderAssistant(new MybatisConfiguration(), "test-wp5-image");
+        assistant.setCurrentNamespace("test-wp5-image");
+        TableInfoHelper.initTableInfo(assistant, KnowledgeDocument.class);
+        KnowledgeIndexJobMapper jobMapper = mock(KnowledgeIndexJobMapper.class);
+        ObjectMapper objectMapper = new ObjectMapper();
+        KnowledgeNodeWriter writer = new KnowledgeNodeWriter(mock(KnowledgeDocumentMapper.class),
+                nodeMapperWithIds(60), jobMapper, objectMapper, ChunkFactory.defaults(),
+                mock(BizMetrics.class), kbService(), new Contextualizer(objectMapper));
+        KnowledgeDocument doc = new KnowledgeDocument();
+        doc.setId(7L); doc.setKbId(8L); doc.setCurrentVersionId(9L); doc.setCreatedBy(3L);
+        doc.setDocType("IMAGE");
+        doc.setFileRef("/api/files/img-9");
+        Section section = Section.builder().sectionId("sec-img").nodeType("SECTION")
+                .title("识图描述").content("一张部署架构图").ordinal(0).build();
+
+        writer.writeNodes(doc, 3L, ExtractedDocument.builder().sections(List.of(section)).build(),
+                null, List.of("识图摘要"), "{}");
+
+        ArgumentCaptor<KnowledgeIndexJob> captor = ArgumentCaptor.forClass(KnowledgeIndexJob.class);
+        verify(jobMapper).insertImageJobIgnoreConflict(captor.capture());
+        KnowledgeIndexJob imageJob = captor.getValue();
+        assertThat(imageJob.getJobType()).isEqualTo("UPSERT_IMAGE");
+        assertThat(imageJob.getDocumentId()).isEqualTo(7L);
+        assertThat(imageJob.getNodeId()).isNull();                       // doc 级 job，无 node 锚定
+        assertThat(imageJob.getContentHash()).isEqualTo(                 // 原件指纹=fileRef sha256（换图→新 job 接管）
+                com.superprogrammer.knowledge.util.HashUtil.sha256("/api/files/img-9"));
+        assertThat(imageJob.getEmbeddingModel()).isEqualTo("test-embedding-model");
+        assertThat(imageJob.getIdempotencyKey()).isEqualTo(com.superprogrammer.knowledge.util.HashUtil.sha256(
+                "7:" + imageJob.getContentHash() + ":9:" + imageJob.getEmbeddingModel() + ":"
+                        + imageJob.getPipelineVersion() + ":UPSERT_IMAGE"));
+    }
+
+    @Test
+    void textDoc_neverEnqueuesImageJob() {
+        MapperBuilderAssistant assistant = new MapperBuilderAssistant(new MybatisConfiguration(), "test-wp5-text");
+        assistant.setCurrentNamespace("test-wp5-text");
+        TableInfoHelper.initTableInfo(assistant, KnowledgeDocument.class);
+        KnowledgeIndexJobMapper jobMapper = mock(KnowledgeIndexJobMapper.class);
+        ObjectMapper objectMapper = new ObjectMapper();
+        KnowledgeNodeWriter writer = new KnowledgeNodeWriter(mock(KnowledgeDocumentMapper.class),
+                nodeMapperWithIds(70), jobMapper, objectMapper, ChunkFactory.defaults(),
+                mock(BizMetrics.class), kbService(), new Contextualizer(objectMapper));
+        KnowledgeDocument doc = new KnowledgeDocument();
+        doc.setId(7L); doc.setKbId(8L); doc.setCurrentVersionId(9L); doc.setCreatedBy(3L);
+        doc.setDocType("TEXT");   // 存量文本文档：仅文本向量，无图片向量 job
+        Section section = Section.builder().sectionId("sec-txt").nodeType("SECTION")
+                .title("正文").content("普通文本内容").ordinal(0).build();
+
+        writer.writeNodes(doc, 3L, ExtractedDocument.builder().sections(List.of(section)).build(),
+                null, List.of("文本摘要"), "{}");
+
+        verify(jobMapper, org.mockito.Mockito.never()).insertImageJobIgnoreConflict(any(KnowledgeIndexJob.class));
+    }
+
+    private KnowledgeNodeMapper nodeMapperWithIds(long seed) {
+        KnowledgeNodeMapper nodeMapper = mock(KnowledgeNodeMapper.class);
+        AtomicLong ids = new AtomicLong(seed);
+        doAnswer(invocation -> {
+            invocation.<KnowledgeNode>getArgument(0).setId(ids.incrementAndGet());
+            return 1;
+        }).when(nodeMapper).insert(any(KnowledgeNode.class));
+        return nodeMapper;
+    }
+
     private KnowledgeBaseService kbService() {
         KnowledgeBaseService service = mock(KnowledgeBaseService.class);
         KnowledgeBase kb = new KnowledgeBase();

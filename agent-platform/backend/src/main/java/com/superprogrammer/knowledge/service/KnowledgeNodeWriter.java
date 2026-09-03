@@ -94,6 +94,12 @@ public class KnowledgeNodeWriter {
             indexJobMapper.insertL1JobIgnoreConflict(buildL1UpsertJob(doc, doc.getKbId(), l1Json));
         }
 
+        // WP5 Step2：IMAGE 文档追加 doc 级图片向量 job（原件 bytes→多模态 embed，V173 通道）。
+        // 幂等键含 fileRef 指纹：重解析未换图→跳过；换图→新 hash 新 job 接管。TEXT/FILE/ATTACHMENT 不建（存量默认仅文本向量）。
+        if ("IMAGE".equals(doc.getDocType()) && doc.getFileRef() != null && !doc.getFileRef().isBlank()) {
+            indexJobMapper.insertImageJobIgnoreConflict(buildImageUpsertJob(doc, doc.getKbId()));
+        }
+
         List<Section> sections = extracted.getSections();
         if (sections == null || sections.isEmpty()) {
             // 退化：0 section，不产节点（doc 已 EMBEDDING，worker 无 job 可消费）
@@ -345,5 +351,25 @@ public class KnowledgeNodeWriter {
 
     private Long nullSafe(Long v) {
         return v == null ? 0L : v;
+    }
+
+    /**
+     * UPSERT_IMAGE job：doc 级图片向量（WP5 Step2，V173）。
+     * idempotency_key=sha256(docId:fileRefHash:versionId:model:pipeline:UPSERT_IMAGE)（I4），
+     * fileRefHash=sha256(fileRef)（原件指纹——worker 消费时重算比对，换图即作废由新 job 接管）。
+     * 图片向量与识图文本向量同用 kb.embeddingModel（协议分派在 provider 侧按端点标记，
+     * 模型不支持图输入时 worker void+WARN，文本通道不受影响）。
+     */
+    private KnowledgeIndexJob buildImageUpsertJob(KnowledgeDocument doc, Long kbId) {
+        KnowledgeIndexJob job = new KnowledgeIndexJob();
+        job.setDocumentId(doc.getId());
+        job.setKbId(kbId);
+        job.setJobType("UPSERT_IMAGE");
+        job.setContentHash(HashUtil.sha256(doc.getFileRef()));
+        fillVersionFingerprint(job, doc.getCurrentVersionId(), null, kbId, null);   // 图片向量无 parser/chunk，恒默认管线
+        job.setIdempotencyKey(HashUtil.sha256(doc.getId() + ":" + job.getContentHash() + ":"
+                + doc.getCurrentVersionId() + ":" + job.getEmbeddingModel() + ":"
+                + job.getPipelineVersion() + ":UPSERT_IMAGE"));
+        return job;
     }
 }

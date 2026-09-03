@@ -41,7 +41,7 @@ class OpenSearchChunkWriterTest {
     private static OpenSearchChunkDocument document(long nodeId) {
         return new OpenSearchChunkDocument(1L, 42L, 5L, 9L, nodeId,
                 List.of("tenant:1", "kb:42"), "ACTIVE", "content-hash", "context-hash",
-                "第1章 定位语", "pipeline-v2", "context content", new float[]{0.1f, 0.2f});
+                "第1章 定位语", "TEXT", "pipeline-v2", "context content", new float[]{0.1f, 0.2f});
     }
 
     private static class RecordingBulkGateway implements OpenSearchChunkWriter.BulkGateway {

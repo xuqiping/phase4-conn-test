@@ -14,6 +14,7 @@ import com.superprogrammer.knowledge.util.HashUtil;
 import com.superprogrammer.knowledge.util.L1EmbedText;
 import com.superprogrammer.file.service.FileStorageService;
 import com.superprogrammer.llm.LlmGateway;
+import com.superprogrammer.llm.dto.EmbedContentPart;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -21,6 +22,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.Executor;
 
@@ -114,6 +116,11 @@ public class IndexJobWorker {
                 processUpsertL1(job);
                 return;
             }
+            // WP5 Step2：doc 级图片向量 job（无 node）独立分支
+            if ("UPSERT_IMAGE".equals(job.getJobType())) {
+                processUpsertImage(job);
+                return;
+            }
             // I2 re-check（embed 前）：node 存在/ACTIVE/hash 一致
             KnowledgeNode node = nodeMapper.selectById(job.getNodeId());
             if (node == null
@@ -166,7 +173,7 @@ public class IndexJobWorker {
                         List.of(new com.superprogrammer.knowledge.opensearch.OpenSearchChunkDocument(
                                 node.getTenantId(), job.getKbId(), node.getDocumentId(), node.getVersionId(), node.getId(),
                                 List.of("tenant:" + node.getTenantId(), "kb:" + job.getKbId()), node.getStatus(),
-                                node.getContentHash(), contextHash, node.getContextualText(),
+                                node.getContentHash(), contextHash, node.getContextualText(), node.getModality(),
                                 job.getPipelineVersion(), embedText, vector)));
             }
 
@@ -234,6 +241,78 @@ public class IndexJobWorker {
             log.info("L1 索引完成 docId={} kbId={} model={}", job.getDocumentId(), job.getKbId(), embeddingModel);
         } catch (Exception e) {
             log.error("索引 job 处理失败 jobId={}: {}", job.getId(), e.getMessage(), e);
+            txService.failJob(job.getId(), truncate(e.getMessage(), MAX_ERROR_LEN));
+            bizMetrics.indexed(com.superprogrammer.common.metrics.BizMetrics.INDEX_FAIL);
+        }
+    }
+
+    /**
+     * UPSERT_IMAGE（WP5 Step2，doc 级图片向量）：读 IMAGE 文档原件 bytes → Base64 →
+     * embedMultimodal（裸 Base64，DashScope 口径）→ completeUpsertImage（tx 内复校 fileRef 未换 + upsert）。
+     * 失败关闭语义：模型/provider 不支持图输入（UnsupportedOperation/IllegalArgument）或维度不符
+     * → voidJob 作废 + WARN（本库 IMAGE 通道自然禁用=无向量行，检索侧 Step3 无图可召回，文本通道不受影响）；
+     * 暂态异常（网络/熔断中）→ failJob 指数退避重试。
+     * doc 删/非 IMAGE/无原件/换图（fileRef 漂移，入队指纹=sha256(fileRef)）→ voidJob。
+     */
+    private void processUpsertImage(KnowledgeIndexJob job) {
+        try {
+            KnowledgeDocument doc = documentMapper.selectById(job.getDocumentId());
+            String fileRef = doc == null ? null : doc.getFileRef();
+            if (doc == null || !"IMAGE".equals(doc.getDocType()) || !hasText(fileRef)) {
+                txService.voidJob(job.getId(), "文档已删除/非 IMAGE/无原件，图片向量 job 作废");
+                bizMetrics.indexed(com.superprogrammer.common.metrics.BizMetrics.INDEX_VOID);
+                return;
+            }
+            // I2 风格漂移复校：换图（fileRef 变）→ 本 job 作废，重解析的新 job 接管
+            if (!eq(HashUtil.sha256(fileRef), job.getContentHash())) {
+                txService.voidJob(job.getId(), "原件已更换（fileRef 漂移），图片向量 job 作废（新版本 job 接管）");
+                bizMetrics.indexed(com.superprogrammer.common.metrics.BizMetrics.INDEX_VOID);
+                return;
+            }
+
+            String embeddingModel = job.getEmbeddingModel();
+            if (!hasText(embeddingModel)) {
+                KnowledgeBase kb = knowledgeBaseService.ensure(job.getKbId());
+                embeddingModel = kb.getEmbeddingModel();
+            }
+            if (!hasText(embeddingModel)) {
+                throw new IllegalStateException("图片向量任务未配置可用 embedding 模型");
+            }
+
+            // 计费归户同 process/processUpsertL1 口径：按文档上传者（doc.createdBy）归户
+            String fileId = stripFileRef(fileRef);
+            byte[] bytes = java.nio.file.Files.readAllBytes(
+                    fileStorageService.loadPath(fileId, doc.getCreatedBy(), false));
+            String base64 = Base64.getEncoder().encodeToString(bytes);
+
+            float[] vector;
+            try {
+                vector = llmGateway.embedMultimodal(List.of(EmbedContentPart.ofImage(base64)),
+                        embeddingModel, doc.getCreatedBy());
+            } catch (UnsupportedOperationException | IllegalArgumentException e) {
+                txService.voidJob(job.getId(), "embedding 模型不支持图片输入，IMAGE 通道跳过: " + e.getMessage());
+                bizMetrics.indexed(com.superprogrammer.common.metrics.BizMetrics.INDEX_VOID);
+                log.warn("图片向量跳过（模型不支持图输入）docId={} kbId={} model={}: {}",
+                        job.getDocumentId(), job.getKbId(), embeddingModel, e.getMessage());
+                return;
+            }
+            if (vector.length != HalfVecUtil.DIM) {
+                txService.voidJob(job.getId(), "图片 embedding 维度不匹配 expected=" + HalfVecUtil.DIM
+                        + " actual=" + vector.length + "，IMAGE 通道跳过");
+                bizMetrics.indexed(com.superprogrammer.common.metrics.BizMetrics.INDEX_VOID);
+                log.warn("图片向量跳过（维度不符）docId={} kbId={} expected={} actual={}",
+                        job.getDocumentId(), job.getKbId(), HalfVecUtil.DIM, vector.length);
+                return;
+            }
+            String halfvec = HalfVecUtil.toHalfVec(vector);
+
+            IndexJobTxService.IndexedDoc indexed = txService.completeUpsertImage(job.getId(), job.getDocumentId(),
+                    job.getKbId(), embeddingModel, halfvec, HashUtil.sha256(base64), fileRef);
+            cleanOriginalFileAfterIndex(indexed);   // IMAGE docType → 内部跳过清理（值守日志），与 L1 同口径
+            bizMetrics.indexed(com.superprogrammer.common.metrics.BizMetrics.INDEX_SUCCESS);
+            log.info("图片向量索引完成 docId={} kbId={} model={}", job.getDocumentId(), job.getKbId(), embeddingModel);
+        } catch (Exception e) {
+            log.error("图片向量 job 处理失败 jobId={}: {}", job.getId(), e.getMessage(), e);
             txService.failJob(job.getId(), truncate(e.getMessage(), MAX_ERROR_LEN));
             bizMetrics.indexed(com.superprogrammer.common.metrics.BizMetrics.INDEX_FAIL);
         }

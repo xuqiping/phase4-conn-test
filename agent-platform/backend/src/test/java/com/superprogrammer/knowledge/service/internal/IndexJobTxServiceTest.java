@@ -37,6 +37,7 @@ class IndexJobTxServiceTest {
     @Mock private KnowledgeIndexJobMapper indexJobMapper;
     @Mock private KnowledgeEmbeddingMapper embeddingMapper;
     @Mock private KnowledgeDocEmbeddingMapper docEmbeddingMapper;
+    @Mock private com.superprogrammer.knowledge.mapper.KnowledgeImageEmbeddingMapper imageEmbeddingMapper;
     @Mock private KnowledgeNodeMapper nodeMapper;
     @Mock private KnowledgeDocumentMapper documentMapper;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -55,7 +56,7 @@ class IndexJobTxServiceTest {
     @org.junit.jupiter.api.BeforeEach
     void setUp() {
         service = new IndexJobTxService(indexJobMapper, embeddingMapper, docEmbeddingMapper,
-                nodeMapper, documentMapper, objectMapper);
+                imageEmbeddingMapper, nodeMapper, documentMapper, objectMapper);
     }
 
     // ============================ failJob 退避 ============================
@@ -256,6 +257,39 @@ class IndexJobTxServiceTest {
         service.completeUpsertL1(1L, 99L, 7L, "doubao", "[0.1]", "hash");
 
         verify(docEmbeddingMapper, never()).upsert(anyLong(), anyLong(), anyLong(), anyString(), anyString(), anyString());
+    }
+
+    // ============================ WP5 Step2 completeUpsertImage ============================
+
+    @Test
+    void completeImage_success_upsertsAndMayMarkIndexed() {
+        KnowledgeDocument doc = new KnowledgeDocument();
+        doc.setId(99L);
+        doc.setDocType("IMAGE");
+        doc.setFileRef("/api/files/img-1");
+        when(documentMapper.selectById(99L)).thenReturn(doc);
+        when(indexJobMapper.update(isNull(), any())).thenReturn(1);
+        when(indexJobMapper.countPendingRunningByDoc(99L)).thenReturn(0L);  // 文档全完成
+        when(documentMapper.update(isNull(), any())).thenReturn(1);
+
+        service.completeUpsertImage(1L, 99L, 7L, "mm-embed", "[0.2]", "byte-hash", "/api/files/img-1");
+
+        verify(imageEmbeddingMapper).upsert(eq(99L), eq(1L), eq(7L), eq("mm-embed"), eq("[0.2]"), eq("byte-hash"));
+        verify(documentMapper).update(isNull(), any());   // markDocIndexedIfDone → INDEXED
+    }
+
+    @Test
+    void completeImage_fileRefChanged_voidsNoUpsert() {
+        KnowledgeDocument doc = new KnowledgeDocument();
+        doc.setId(99L);
+        doc.setDocType("IMAGE");
+        doc.setFileRef("/api/files/img-2");   // embed 期间换图
+        when(documentMapper.selectById(99L)).thenReturn(doc);
+        when(indexJobMapper.update(isNull(), any())).thenReturn(1);   // voidJob 的 update
+
+        service.completeUpsertImage(1L, 99L, 7L, "mm-embed", "[0.2]", "byte-hash", "/api/files/img-1");
+
+        verify(imageEmbeddingMapper, never()).upsert(anyLong(), anyLong(), anyLong(), anyString(), anyString(), anyString());
     }
 
     // ============================ helpers ============================

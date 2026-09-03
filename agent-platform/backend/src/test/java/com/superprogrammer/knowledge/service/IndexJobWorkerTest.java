@@ -352,6 +352,112 @@ class IndexJobWorkerTest {
         verify(llmGateway, never()).embed(anyString(), anyString(), any());
     }
 
+    // ============================ WP5 Step2 UPSERT_IMAGE ============================
+
+    @Test
+    void upsertImage_success_completesImage() throws Exception {
+        byte[] bytes = "fake-png-bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        java.nio.file.Path temp = java.nio.file.Files.createTempFile("wp5-img", ".png");
+        java.nio.file.Files.write(temp, bytes);
+        String base64 = java.util.Base64.getEncoder().encodeToString(bytes);
+        KnowledgeIndexJob job = new KnowledgeIndexJob();
+        job.setId(1L);
+        job.setJobType("UPSERT_IMAGE");
+        job.setDocumentId(50L);
+        job.setKbId(7L);
+        job.setContentHash(HashUtil.sha256("/api/files/img-1"));   // 入队指纹=fileRef sha256
+        job.setEmbeddingModel("mm-embed");
+        when(txService.claimBatch(anyInt())).thenReturn(List.of(job));
+        KnowledgeDocument doc = new KnowledgeDocument();
+        doc.setId(50L);
+        doc.setDocType("IMAGE");
+        doc.setFileRef("/api/files/img-1");
+        doc.setCreatedBy(3L);
+        when(documentMapper.selectById(50L)).thenReturn(doc);
+        when(fileStorageService.loadPath("img-1", 3L, false)).thenReturn(temp);
+        when(llmGateway.embedMultimodal(anyList(), eq("mm-embed"), eq(3L)))
+                .thenReturn(new float[HalfVecUtil.DIM]);
+
+        worker.poll();
+
+        // 图片段=裸 Base64（DashScope 口径），无文本段
+        verify(llmGateway).embedMultimodal(org.mockito.ArgumentMatchers.<List<com.superprogrammer.llm.dto.EmbedContentPart>>argThat(
+                parts -> parts.size() == 1 && parts.get(0).text() == null
+                        && base64.equals(parts.get(0).image())), eq("mm-embed"), eq(3L));
+        verify(txService).completeUpsertImage(eq(1L), eq(50L), eq(7L), eq("mm-embed"),
+                anyString(), eq(HashUtil.sha256(base64)), eq("/api/files/img-1"));
+        verify(txService, never()).voidJob(anyLong(), anyString());
+        verify(txService, never()).failJob(anyLong(), anyString());
+    }
+
+    @Test
+    void upsertImage_modelUnsupported_voidsInsteadOfRetrying() throws Exception {
+        KnowledgeIndexJob job = imageJob();
+        when(txService.claimBatch(anyInt())).thenReturn(List.of(job));
+        when(documentMapper.selectById(50L)).thenReturn(imageDoc());
+        when(fileStorageService.loadPath("img-1", 3L, false))
+                .thenReturn(java.nio.file.Files.createTempFile("wp5-img", ".png"));
+        when(llmGateway.embedMultimodal(anyList(), eq("mm-embed"), eq(3L)))
+                .thenThrow(new UnsupportedOperationException("Provider 不支持多模态 embed"));
+
+        worker.poll();
+
+        // 失败关闭：能力缺失作废不重试（IMAGE 通道自然禁用，文本通道不受影响）
+        verify(txService).voidJob(eq(1L), contains("不支持图片输入"));
+        verify(txService, never()).completeUpsertImage(anyLong(), anyLong(), anyLong(), anyString(), anyString(), anyString(), anyString());
+        verify(txService, never()).failJob(anyLong(), anyString());
+    }
+
+    @Test
+    void upsertImage_dimMismatch_voidsInsteadOfRetrying() throws Exception {
+        KnowledgeIndexJob job = imageJob();
+        when(txService.claimBatch(anyInt())).thenReturn(List.of(job));
+        when(documentMapper.selectById(50L)).thenReturn(imageDoc());
+        when(fileStorageService.loadPath("img-1", 3L, false))
+                .thenReturn(java.nio.file.Files.createTempFile("wp5-img", ".png"));
+        when(llmGateway.embedMultimodal(anyList(), eq("mm-embed"), eq(3L)))
+                .thenReturn(new float[1024]);   // 错维度
+
+        worker.poll();
+
+        verify(txService).voidJob(eq(1L), contains("维度不匹配"));
+        verify(txService, never()).completeUpsertImage(anyLong(), anyLong(), anyLong(), anyString(), anyString(), anyString(), anyString());
+        verify(txService, never()).failJob(anyLong(), anyString());
+    }
+
+    @Test
+    void upsertImage_fileRefDrift_voidsWithoutEmbedding() {
+        KnowledgeIndexJob job = imageJob();
+        job.setContentHash("stale-fingerprint-not-matching");   // 入队后换图
+        when(txService.claimBatch(anyInt())).thenReturn(List.of(job));
+        when(documentMapper.selectById(50L)).thenReturn(imageDoc());
+
+        worker.poll();
+
+        verify(txService).voidJob(eq(1L), contains("fileRef 漂移"));
+        verify(llmGateway, never()).embedMultimodal(anyList(), anyString(), any());
+    }
+
+    private KnowledgeIndexJob imageJob() {
+        KnowledgeIndexJob j = new KnowledgeIndexJob();
+        j.setId(1L);
+        j.setJobType("UPSERT_IMAGE");
+        j.setDocumentId(50L);
+        j.setKbId(7L);
+        j.setContentHash(HashUtil.sha256("/api/files/img-1"));
+        j.setEmbeddingModel("mm-embed");
+        return j;
+    }
+
+    private KnowledgeDocument imageDoc() {
+        KnowledgeDocument doc = new KnowledgeDocument();
+        doc.setId(50L);
+        doc.setDocType("IMAGE");
+        doc.setFileRef("/api/files/img-1");
+        doc.setCreatedBy(3L);
+        return doc;
+    }
+
     private KnowledgeIndexJob job(Long nodeId, Long jobId, String contentHash) {
         KnowledgeIndexJob j = new KnowledgeIndexJob();
         j.setId(jobId);

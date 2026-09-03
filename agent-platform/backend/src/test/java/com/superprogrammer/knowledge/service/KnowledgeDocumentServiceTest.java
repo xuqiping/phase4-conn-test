@@ -40,6 +40,7 @@ class KnowledgeDocumentServiceTest {
     @Mock private KnowledgeNodeMapper nodeMapper;
     @Mock private KnowledgeEmbeddingMapper embeddingMapper;
     @Mock private KnowledgeDocEmbeddingMapper docEmbeddingMapper;
+    @Mock private com.superprogrammer.knowledge.mapper.KnowledgeImageEmbeddingMapper imageEmbeddingMapper;
     @Mock private KnowledgeBaseService knowledgeBaseService;
     @Mock private ApplicationEventPublisher applicationEventPublisher;
     @Mock private KnowledgeDocumentVersionService versionService;
@@ -63,6 +64,7 @@ class KnowledgeDocumentServiceTest {
         verify(nodeMapper).delete(any(Wrapper.class));
         verify(embeddingMapper).deleteByDocument(3L);
         verify(docEmbeddingMapper).deleteByDocument(3L);   // Phase3：L1 文档向量同步清
+        verify(imageEmbeddingMapper).deleteByDocument(3L); // WP5：图片文档向量同步清
         ArgumentCaptor<VisibilityInvalidationEvent> ev = ArgumentCaptor.forClass(VisibilityInvalidationEvent.class);
         verify(applicationEventPublisher).publishEvent(ev.capture());
         assertEquals(1L, ev.getValue().getKbId());

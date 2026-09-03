@@ -38,6 +38,7 @@ class KnowledgeDocumentMetadataGovernanceTest {
     @Mock private KnowledgeNodeMapper nodeMapper;
     @Mock private KnowledgeEmbeddingMapper embeddingMapper;
     @Mock private KnowledgeDocEmbeddingMapper docEmbeddingMapper;
+    @Mock private com.superprogrammer.knowledge.mapper.KnowledgeImageEmbeddingMapper imageEmbeddingMapper;
     @Mock private KnowledgeBaseService knowledgeBaseService;
     @Mock private FileStorageService fileStorageService;
     @Mock private ApplicationEventPublisher eventPublisher;
@@ -50,7 +51,7 @@ class KnowledgeDocumentMetadataGovernanceTest {
     @BeforeEach
     void setUp() {
         service = new KnowledgeDocumentService(documentMapper, nodeMapper, embeddingMapper,
-                docEmbeddingMapper, knowledgeBaseService, fileStorageService, eventPublisher,
+                docEmbeddingMapper, imageEmbeddingMapper, knowledgeBaseService, fileStorageService, eventPublisher,
                 new ObjectMapper(), excelSheetExtractor, systemSettingService, versionService);
     }
 
