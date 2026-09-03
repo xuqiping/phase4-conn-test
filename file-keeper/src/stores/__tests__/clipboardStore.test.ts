@@ -23,6 +23,16 @@ function item(id: string, title: string): ClipboardItemSummary {
   }
 }
 
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve
+    reject = nextReject
+  })
+  return { promise, resolve, reject }
+}
+
 function settings(): ClipboardSettings {
   return {
     monitorEnabled: true,
@@ -46,6 +56,7 @@ describe('clipboardStore', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.resetAllMocks()
+    localStorage.clear()
   })
 
   it('loads items with default query', async () => {
@@ -132,6 +143,7 @@ describe('clipboardStore', () => {
     mockedApi.createClipboardGroup.mockResolvedValueOnce(work)
     mockedApi.renameClipboardGroup.mockResolvedValueOnce(reports)
     mockedApi.deleteClipboardGroup.mockResolvedValueOnce()
+    mockedApi.getClipboardItems.mockResolvedValueOnce([])
     const store = useClipboardStore()
 
     await store.loadGroups()
@@ -155,6 +167,110 @@ describe('clipboardStore', () => {
 
     expect(mockedApi.moveClipboardItems).toHaveBeenCalledWith(['1', '2'], 'group-1')
     expect(mockedApi.setClipboardItemsPinned).toHaveBeenCalledWith(['1', '2'], true)
+  })
+
+  it('optimistically pins and sorts items before the API resolves', async () => {
+    const request = deferred()
+    mockedApi.setClipboardItemsPinned.mockReturnValueOnce(request.promise)
+    const store = useClipboardStore()
+    store.items = [
+      { ...item('1', 'older'), createdAt: 1 },
+      { ...item('2', 'newer'), createdAt: 2 }
+    ]
+
+    const pending = store.setItemsPinned(['1'], true)
+
+    expect(store.items.map(entry => entry.id)).toEqual(['1', '2'])
+    expect(store.items[0].isPinned).toBe(true)
+    request.resolve()
+    await pending
+  })
+
+  it('rolls back a failed optimistic pin operation', async () => {
+    mockedApi.setClipboardItemsPinned.mockRejectedValueOnce(new Error('PIN_FAILED'))
+    const store = useClipboardStore()
+    store.items = [{ ...item('1', 'hello'), createdAt: 1 }]
+
+    await expect(store.setItemsPinned(['1'], true)).rejects.toThrow('PIN_FAILED')
+
+    expect(store.items[0]).toMatchObject({ id: '1', isPinned: false })
+  })
+
+  it('does not let an older failed pin overwrite a newer successful pin state', async () => {
+    const older = deferred()
+    const newer = deferred()
+    mockedApi.setClipboardItemsPinned
+      .mockReturnValueOnce(older.promise)
+      .mockReturnValueOnce(newer.promise)
+    const store = useClipboardStore()
+    store.items = [item('1', 'hello')]
+
+    const oldPending = store.setItemsPinned(['1'], true)
+    const newPending = store.setItemsPinned(['1'], false)
+    newer.resolve()
+    await newPending
+    older.reject(new Error('OLD_FAILED'))
+    await expect(oldPending).rejects.toThrow('OLD_FAILED')
+
+    expect(store.items[0].isPinned).toBe(false)
+  })
+
+  it('optimistically moves items and removes them from a custom filtered list', async () => {
+    const request = deferred()
+    mockedApi.moveClipboardItems.mockReturnValueOnce(request.promise)
+    const store = useClipboardStore()
+    store.groupFilter = 'group-1'
+    store.items = [{ ...item('1', 'hello'), groupId: 'group-1' }]
+    store.selectedIds = new Set(['1'])
+
+    const pending = store.moveItems(['1'], 'group-2')
+
+    expect(store.items).toEqual([])
+    expect(store.selectedIds.size).toBe(0)
+    request.resolve()
+    await pending
+  })
+
+  it('restores items and selection when an optimistic move fails', async () => {
+    mockedApi.moveClipboardItems.mockRejectedValueOnce(new Error('MOVE_FAILED'))
+    const store = useClipboardStore()
+    store.groupFilter = 'group-1'
+    store.items = [{ ...item('1', 'hello'), groupId: 'group-1' }]
+    store.selectedIds = new Set(['1'])
+
+    await expect(store.moveItems(['1'], 'group-2')).rejects.toThrow('MOVE_FAILED')
+
+    expect(store.items[0]).toMatchObject({ id: '1', groupId: 'group-1' })
+    expect(store.selectedIds.has('1')).toBe(true)
+  })
+
+  it('persists the main-page group filter and restores it in a new store', async () => {
+    const store = useClipboardStore()
+    store.groupFilter = 'ungrouped'
+    await Promise.resolve()
+
+    setActivePinia(createPinia())
+    const restored = useClipboardStore()
+
+    expect(localStorage.getItem('file-keeper.clipboard.group-filter')).toBe('ungrouped')
+    expect(restored.groupFilter).toBe('ungrouped')
+  })
+
+  it('loads quick-panel results without the main-page group filter', async () => {
+    mockedApi.getClipboardItems.mockResolvedValueOnce([item('1', 'hello')])
+    const store = useClipboardStore()
+    store.groupFilter = 'group-1'
+
+    await store.loadQuickPanelItems()
+
+    expect(mockedApi.getClipboardItems).toHaveBeenCalledWith({
+      query: '',
+      kind: 'all',
+      favoriteOnly: false,
+      limit: 100,
+      offset: 0
+    })
+    expect(store.quickPanelItems[0].id).toBe('1')
   })
 
   it('copies and pastes selected item', async () => {

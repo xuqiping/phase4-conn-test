@@ -10,6 +10,7 @@
     @click="$emit('select', item.id)"
     @dblclick.stop="$emit('copy', item.id)"
     @contextmenu="$emit('contextmenu', $event)"
+    @keydown="handleKeydown"
   >
     <div class="flex items-start gap-3">
       <input
@@ -21,6 +22,7 @@
       <div class="min-w-0 flex-1">
         <div class="flex items-center gap-2">
           <span class="text-xs font-medium text-primary">{{ kindLabel }}</span>
+          <span v-if="item.isPinned" class="text-[11px] text-amber-600 dark:text-amber-300" :aria-label="t('clipboard.actions.pinned')">{{ t('clipboard.actions.pinned') }}</span>
           <span v-if="item.cacheState === 'cached'" class="text-[11px] text-green-600">{{ t('clipboard.cacheState.cached') }}</span>
           <span v-if="item.cacheState === 'reference_only'" class="text-[11px] text-amber-600">{{ t('clipboard.cacheState.referenceOnly') }}</span>
         </div>
@@ -52,11 +54,11 @@ const props = defineProps<{
   checked: boolean
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   select: [id: string]
   toggleSelected: [id: string]
   copy: [id: string]
-  contextmenu: [event: MouseEvent]
+  contextmenu: [event: MouseEvent | KeyboardEvent]
 }>()
 
 const isHighlighted = computed(() => props.checked)
@@ -67,5 +69,12 @@ const thumbnailSrc = computed(() => props.item.thumbnailPath ? convertLocalPath(
 function convertLocalPath(path: string) {
   if (/^(asset|https?|data|blob):/i.test(path)) return path
   return convertFileSrc(path)
+}
+
+function handleKeydown(event: KeyboardEvent) {
+  if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+    event.preventDefault()
+    emit('contextmenu', event)
+  }
 }
 </script>

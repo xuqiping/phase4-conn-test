@@ -5,6 +5,7 @@ import ClipboardManagement from '../ClipboardManagement.vue'
 import ClipboardItemRow from '../ClipboardItemRow.vue'
 import ClipboardPreview from '../ClipboardPreview.vue'
 import ClipboardList from '../ClipboardList.vue'
+import ClipboardGroupManager from '../ClipboardGroupManager.vue'
 import ClipboardToolbar from '../ClipboardToolbar.vue'
 import { useClipboardStore } from '../../stores/clipboardStore'
 import * as filesApi from '../../api/files'
@@ -372,6 +373,86 @@ describe('clipboard components', () => {
     await wrapper.findAll('button').find(button => button.text() === '编辑备注')?.trigger('click')
 
     expect(wrapper.emitted('editNote')?.[0]).toEqual(['item-1'])
+  })
+
+  it('emits pin and move actions from the context menu', async () => {
+    const wrapper = mount(ClipboardList, {
+      props: {
+        items: [item()],
+        groups: [{ id: 'group-1', name: '工作', sortOrder: 0, createdAt: 1, updatedAt: 1 }],
+        selectedItemId: null,
+        selectedIds: new Set<string>()
+      }
+    })
+
+    await wrapper.getComponent(ClipboardItemRow).trigger('contextmenu')
+    await wrapper.get('[data-test="context-pin"]').trigger('click')
+    await wrapper.getComponent(ClipboardItemRow).trigger('contextmenu')
+    await wrapper.get('[data-test="context-move-group-1"]').trigger('click')
+
+    expect(wrapper.emitted('setPinned')?.[0]).toEqual(['item-1', true])
+    expect(wrapper.emitted('moveToGroup')?.[0]).toEqual(['item-1', 'group-1'])
+  })
+
+  it('emits one batch request for pinning and moving selected ids', async () => {
+    const wrapper = mount(ClipboardList, {
+      props: {
+        items: [item()],
+        groups: [{ id: 'group-1', name: '工作', sortOrder: 0, createdAt: 1, updatedAt: 1 }],
+        selectedItemId: 'item-1',
+        selectedIds: new Set(['item-1'])
+      }
+    })
+
+    await wrapper.get('[data-test="batch-pin"]').trigger('click')
+    await wrapper.get('[data-test="batch-move"]').setValue('group-1')
+
+    expect(wrapper.emitted('setSelectedPinned')?.[0]).toEqual([true])
+    expect(wrapper.emitted('moveSelectedToGroup')?.[0]).toEqual(['group-1'])
+  })
+
+  it('marks the active clipboard group and switches filters', async () => {
+    const wrapper = mount(ClipboardManagement, {
+      global: {
+        plugins: [createTestingPinia({ createSpy: vi.fn })],
+        stubs: {
+          ClipboardToolbar: true,
+          ClipboardList: true,
+          ClipboardPreview: true,
+          ClipboardSettings: true,
+          ClipboardStorageUsage: true,
+          ClipboardSecurityEvents: true,
+          ClipboardGroupManager: true
+        }
+      }
+    })
+    const store = useClipboardStore()
+    store.groups = [{ id: 'group-1', name: '工作', sortOrder: 0, createdAt: 1, updatedAt: 1 }]
+    store.groupFilter = 'all'
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.get('[data-test="group-filter-all"]').attributes('aria-current')).toBe('page')
+    await wrapper.get('[data-test="group-filter-group-1"]').trigger('click')
+
+    expect(store.groupFilter).toBe('group-1')
+  })
+
+  it('creates, renames, and deletes groups through the manager', async () => {
+    const wrapper = mount(ClipboardGroupManager, {
+      props: {
+        groups: [{ id: 'group-1', name: '工作', sortOrder: 0, createdAt: 1, updatedAt: 1 }]
+      }
+    })
+
+    await wrapper.get('[data-test="group-name-input"]').setValue('资料')
+    await wrapper.get('[data-test="group-create"]').trigger('submit')
+    await wrapper.get('[data-test="group-rename-group-1"]').trigger('click')
+    await wrapper.get('[data-test="group-delete-group-1"]').trigger('click')
+    await wrapper.get('[data-test="group-confirm-delete-group-1"]').trigger('click')
+
+    expect(wrapper.emitted('create')?.[0]).toEqual(['资料'])
+    expect(wrapper.emitted('rename')?.[0]).toEqual(['group-1', '工作'])
+    expect(wrapper.emitted('delete')?.[0]).toEqual(['group-1'])
   })
 
   it('copies selected items from page-level ctrl c shortcut and shows success notice', async () => {

@@ -18,8 +18,8 @@ describe('ClipboardQuickPanel', () => {
       global: { plugins: [createTestingPinia({ createSpy: vi.fn, stubActions: false })] }
     })
     const store = useClipboardStore()
-    vi.spyOn(store, 'loadItems').mockResolvedValue()
-    store.items = [{
+    vi.spyOn(store, 'loadQuickPanelItems').mockResolvedValue()
+    store.quickPanelItems = [{
       id: '1',
       kind: 'text',
       title: 'hello',
@@ -43,8 +43,8 @@ describe('ClipboardQuickPanel', () => {
       global: { plugins: [createTestingPinia({ createSpy: vi.fn, stubActions: false })] }
     })
     const store = useClipboardStore()
-    vi.spyOn(store, 'loadItems').mockResolvedValue()
-    store.items = [{
+    vi.spyOn(store, 'loadQuickPanelItems').mockResolvedValue()
+    store.quickPanelItems = [{
       id: '1',
       kind: 'text',
       title: 'hello',
@@ -71,7 +71,7 @@ describe('ClipboardQuickPanel', () => {
       global: { plugins: [createTestingPinia({ createSpy: vi.fn, stubActions: false })] }
     })
     const store = useClipboardStore()
-    vi.spyOn(store, 'loadItems').mockResolvedValue()
+    vi.spyOn(store, 'loadQuickPanelItems').mockResolvedValue()
     store.isQuickPanelOpen = true
     await wrapper.vm.$nextTick()
 
@@ -85,8 +85,8 @@ describe('ClipboardQuickPanel', () => {
       global: { plugins: [createTestingPinia({ createSpy: vi.fn, stubActions: false })] }
     })
     const store = useClipboardStore()
-    vi.spyOn(store, 'loadItems').mockResolvedValue()
-    store.items = [{
+    vi.spyOn(store, 'loadQuickPanelItems').mockResolvedValue()
+    store.quickPanelItems = [{
       id: '1',
       kind: 'text',
       title: 'hello',
@@ -112,8 +112,8 @@ describe('ClipboardQuickPanel', () => {
       global: { plugins: [createTestingPinia({ createSpy: vi.fn, stubActions: false })] }
     })
     const store = useClipboardStore()
-    vi.spyOn(store, 'loadItems').mockResolvedValue()
-    store.items = [{
+    vi.spyOn(store, 'loadQuickPanelItems').mockResolvedValue()
+    store.quickPanelItems = [{
       id: 'item-1',
       kind: 'text',
       title: 'hello',

@@ -25,10 +25,31 @@
       <aside class="space-y-3 border-r border-gray-200 p-3 dark:border-dark-border">
         <h2 class="text-base font-semibold">{{ t('clipboard.title') }}</h2>
         <nav class="space-y-1 text-sm">
-          <button v-for="filter in filters" :key="filter.kind" class="block w-full rounded px-2 py-1.5 text-left hover:bg-gray-100 dark:hover:bg-dark-hover" @click="setKind(filter.kind)">
+          <button v-for="filter in filters" :key="filter.kind" class="block w-full rounded px-2 py-1.5 text-left hover:bg-gray-100 dark:hover:bg-dark-hover" :aria-pressed="clipboardStore.kindFilter === filter.kind" @click="setKind(filter.kind)">
             {{ filter.label }}
           </button>
         </nav>
+        <div class="border-t border-gray-200 pt-3 dark:border-dark-border">
+          <div class="mb-2 flex items-center justify-between gap-2">
+            <h3 class="text-sm font-semibold">{{ t('clipboard.groups.title') }}</h3>
+            <button class="rounded px-2 py-1 text-xs text-primary hover:bg-primary/10" @click="showGroupManager = true">{{ t('clipboard.groups.manage') }}</button>
+          </div>
+          <nav class="space-y-1 text-sm" :aria-label="t('clipboard.groups.title')">
+            <button data-test="group-filter-all" class="block w-full rounded px-2 py-1.5 text-left hover:bg-gray-100 dark:hover:bg-dark-hover" :class="clipboardStore.groupFilter === 'all' ? 'bg-primary/10 text-primary' : ''" :aria-current="clipboardStore.groupFilter === 'all' ? 'page' : undefined" @click="setGroupFilter('all')">{{ t('clipboard.groups.all') }}</button>
+            <button data-test="group-filter-ungrouped" class="block w-full rounded px-2 py-1.5 text-left hover:bg-gray-100 dark:hover:bg-dark-hover" :class="clipboardStore.groupFilter === 'ungrouped' ? 'bg-primary/10 text-primary' : ''" :aria-current="clipboardStore.groupFilter === 'ungrouped' ? 'page' : undefined" @click="setGroupFilter('ungrouped')">{{ t('clipboard.groups.ungrouped') }}</button>
+            <button
+              v-for="group in clipboardStore.groups"
+              :key="group.id"
+              :data-test="`group-filter-${group.id}`"
+              class="block w-full truncate rounded px-2 py-1.5 text-left hover:bg-gray-100 dark:hover:bg-dark-hover"
+              :class="clipboardStore.groupFilter === group.id ? 'bg-primary/10 text-primary' : ''"
+              :aria-current="clipboardStore.groupFilter === group.id ? 'page' : undefined"
+              @click="setGroupFilter(group.id)"
+            >
+              {{ group.name }}
+            </button>
+          </nav>
+        </div>
         <ClipboardStorageUsage :usage="clipboardStore.storageUsage" @clear-cache="clearNonTextCache" />
         <ClipboardSecurityEvents />
         <button class="w-full rounded bg-gray-100 px-3 py-2 text-sm dark:bg-dark-hover" @click="showSettings = true">
@@ -40,6 +61,7 @@
         :items="clipboardStore.items"
         :selected-item-id="clipboardStore.selectedItemId"
         :selected-ids="clipboardStore.selectedIds"
+        :groups="clipboardStore.groups"
         @select="selectItem"
         @toggle-selected="clipboardStore.toggleSelected"
         @copy="copyContextItems"
@@ -54,6 +76,10 @@
         @select-all="clipboardStore.selectAllVisible"
         @invert-selection="clipboardStore.invertVisibleSelection"
         @clear-selection="clipboardStore.clearSelection"
+        @set-pinned="setItemPinned"
+        @move-to-group="moveItemToGroup"
+        @set-selected-pinned="setSelectedPinned"
+        @move-selected-to-group="moveSelectedToGroup"
       />
 
       <ClipboardPreview
@@ -74,6 +100,16 @@
       @close="showSettings = false"
       @save="saveSettings"
     />
+    <ClipboardGroupManager
+      v-if="showGroupManager"
+      :groups="clipboardStore.groups"
+      :busy="groupBusy"
+      :error="groupError"
+      @close="closeGroupManager"
+      @create="createGroup"
+      @rename="renameGroup"
+      @delete="deleteGroup"
+    />
   </section>
 </template>
 
@@ -90,10 +126,14 @@ import ClipboardSecurityEvents from './ClipboardSecurityEvents.vue'
 import ClipboardSettings from './ClipboardSettings.vue'
 import ClipboardStorageUsage from './ClipboardStorageUsage.vue'
 import ClipboardToolbar from './ClipboardToolbar.vue'
+import ClipboardGroupManager from './ClipboardGroupManager.vue'
 import type { ClipboardKind, ClipboardPasteFormat, ClipboardSettings as ClipboardSettingsType } from '../types/clipboard'
 
 const clipboardStore = useClipboardStore()
 const showSettings = ref(false)
+const showGroupManager = ref(false)
+const groupBusy = ref(false)
+const groupError = ref<string | null>(null)
 const { t } = useI18n()
 const copyNotice = ref<{ type: 'success' | 'error'; message: string } | null>(null)
 const noteFocusKey = ref(0)
@@ -115,6 +155,7 @@ const filters = computed<Array<{ kind: ClipboardKind | 'all'; label: string }>>(
 onMounted(() => {
   window.addEventListener('keydown', handleKeydown)
   void clipboardStore.loadItems()
+  void clipboardStore.loadGroups()
   void clipboardStore.loadSettings()
   setTimeout(() => {
     void clipboardStore.refreshStorageUsage()
@@ -134,6 +175,67 @@ onBeforeUnmount(() => {
 function setKind(kind: ClipboardKind | 'all') {
   clipboardStore.kindFilter = kind
   clipboardStore.searchItems()
+}
+
+function setGroupFilter(groupId: string) {
+  clipboardStore.groupFilter = groupId
+  void clipboardStore.loadItems()
+}
+
+function closeGroupManager() {
+  showGroupManager.value = false
+  groupError.value = null
+}
+
+async function runGroupAction(action: () => Promise<unknown>) {
+  groupBusy.value = true
+  groupError.value = null
+  try {
+    await action()
+  } catch {
+    groupError.value = t('clipboard.notices.groupActionFailed')
+  } finally {
+    groupBusy.value = false
+  }
+}
+
+function createGroup(name: string) {
+  void runGroupAction(() => clipboardStore.createGroup(name))
+}
+
+function renameGroup(id: string, name: string) {
+  void runGroupAction(() => clipboardStore.renameGroup(id, name))
+}
+
+function deleteGroup(id: string) {
+  void runGroupAction(() => clipboardStore.deleteGroup(id))
+}
+
+async function runClipboardMutation(action: () => Promise<void>, successKey: string) {
+  try {
+    await action()
+    showCopyNotice('success', t(successKey))
+  } catch {
+    showCopyNotice('error', t('clipboard.notices.mutationFailed'))
+  }
+}
+
+function setItemPinned(id: string, pinned: boolean) {
+  void runClipboardMutation(() => clipboardStore.setItemsPinned([id], pinned), pinned ? 'clipboard.notices.pinned' : 'clipboard.notices.unpinned')
+}
+
+function moveItemToGroup(id: string, groupId: string | null) {
+  void runClipboardMutation(() => clipboardStore.moveItems([id], groupId), 'clipboard.notices.moved')
+}
+
+function setSelectedPinned(pinned: boolean) {
+  const ids = clipboardStore.selectedIdsForAction()
+  void runClipboardMutation(() => clipboardStore.setItemsPinned(ids, pinned), pinned ? 'clipboard.notices.pinnedSelected' : 'clipboard.notices.unpinnedSelected')
+}
+
+function moveSelectedToGroup(groupId: string | null) {
+  const ids = clipboardStore.selectedIdsForAction()
+  void runClipboardMutation(() => clipboardStore.moveItems(ids, groupId), 'clipboard.notices.movedSelected')
 }
 
 function selectItem(id: string) {

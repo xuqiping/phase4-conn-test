@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import {
   copyClipboardItem,
   copyClipboardItems,
@@ -51,6 +51,16 @@ const defaultSettings: ClipboardSettings = {
   excludedApps: []
 }
 
+const GROUP_FILTER_STORAGE_KEY = 'file-keeper.clipboard.group-filter'
+
+function loadSavedGroupFilter() {
+  try {
+    return globalThis.localStorage?.getItem(GROUP_FILTER_STORAGE_KEY) || 'all'
+  } catch {
+    return 'all'
+  }
+}
+
 export const useClipboardStore = defineStore('clipboard', () => {
   const items = ref<ClipboardItemSummary[]>([])
   const selectedItemId = ref<string | null>(null)
@@ -62,7 +72,9 @@ export const useClipboardStore = defineStore('clipboard', () => {
   const customEndDate = ref('')
   const favoriteOnly = ref(false)
   const groups = ref<ClipboardGroup[]>([])
-  const groupFilter = ref('all')
+  const groupFilter = ref(loadSavedGroupFilter())
+  const quickPanelItems = ref<ClipboardItemSummary[]>([])
+  const quickPanelSearchQuery = ref('')
   const isQuickPanelOpen = ref(false)
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -71,6 +83,16 @@ export const useClipboardStore = defineStore('clipboard', () => {
   const selectedIds = ref<Set<string>>(new Set())
   let clipboardChangedUnlisten: (() => void) | null = null
   let reloadTimer: ReturnType<typeof setTimeout> | null = null
+  let mutationVersion = 0
+  const itemMutationVersions = new Map<string, number>()
+
+  watch(groupFilter, value => {
+    try {
+      globalThis.localStorage?.setItem(GROUP_FILTER_STORAGE_KEY, value)
+    } catch {
+      // 筛选记忆失败不应阻断本地剪贴板主功能。
+    }
+  })
 
   const selectedItem = computed(() => items.value.find(item => item.id === selectedItemId.value) ?? null)
 
@@ -174,12 +196,14 @@ export const useClipboardStore = defineStore('clipboard', () => {
     reloadTimer = setTimeout(() => {
       reloadTimer = null
       void loadItems()
+      if (isQuickPanelOpen.value) void loadQuickPanelItems()
     }, 100)
   }
 
   async function loadItems() {
     await runWithLoading(async () => {
       items.value = await getClipboardItems(buildQuery())
+      pruneInvisibleSelection()
       if (!selectedItemId.value && items.value.length > 0) {
         selectedItemId.value = items.value[0].id
       }
@@ -189,8 +213,17 @@ export const useClipboardStore = defineStore('clipboard', () => {
   async function searchItems() {
     await runWithLoading(async () => {
       items.value = await searchClipboardItems(buildQuery())
+      pruneInvisibleSelection()
       selectedItemId.value = items.value[0]?.id ?? null
     })
+  }
+
+  async function loadQuickPanelItems() {
+    quickPanelItems.value = await getClipboardItems(buildQuickPanelQuery())
+  }
+
+  async function searchQuickPanelItems() {
+    quickPanelItems.value = await searchClipboardItems(buildQuickPanelQuery())
   }
 
   async function loadDetail(id: string) {
@@ -242,8 +275,22 @@ export const useClipboardStore = defineStore('clipboard', () => {
     return normalizedNote
   }
 
+  function buildQuickPanelQuery() {
+    return {
+      query: quickPanelSearchQuery.value,
+      kind: 'all' as const,
+      favoriteOnly: false,
+      limit: 100,
+      offset: 0
+    }
+  }
+
   async function loadGroups() {
     groups.value = await getClipboardGroups()
+    if (groupFilter.value !== 'all' && groupFilter.value !== 'ungrouped' && !groups.value.some(group => group.id === groupFilter.value)) {
+      groupFilter.value = 'ungrouped'
+      await loadItems()
+    }
   }
 
   async function createGroup(name: string) {
@@ -264,19 +311,125 @@ export const useClipboardStore = defineStore('clipboard', () => {
     groups.value = groups.value.filter(group => group.id !== id)
     if (groupFilter.value === id) {
       groupFilter.value = 'ungrouped'
+      await loadItems()
     }
   }
 
   async function moveItems(ids: string[], groupId: string | null) {
     if (ids.length === 0) return
-    await moveClipboardItems(ids, groupId)
-    await loadItems()
+    const uniqueIds = Array.from(new Set(ids))
+    const version = beginMutation(uniqueIds)
+    const snapshot = captureMutationSnapshot()
+    const startedAt = performance.now()
+    const operationId = `clipboard-move-${Date.now()}-${version}`
+    items.value = items.value
+      .map(item => uniqueIds.includes(item.id) ? { ...item, groupId: groupId ?? undefined } : item)
+      .filter(matchesCurrentGroupFilter)
+    pruneInvisibleSelection()
+    try {
+      await moveClipboardItems(uniqueIds, groupId)
+      logMutation(operationId, 'move', uniqueIds.length, startedAt, 'ok')
+    } catch (err) {
+      rollbackMutation(uniqueIds, version, snapshot)
+      logMutation(operationId, 'move', uniqueIds.length, startedAt, 'failed')
+      throw err
+    }
   }
 
   async function setItemsPinned(ids: string[], isPinned: boolean) {
     if (ids.length === 0) return
-    await setClipboardItemsPinned(ids, isPinned)
-    await loadItems()
+    const uniqueIds = Array.from(new Set(ids))
+    const version = beginMutation(uniqueIds)
+    const snapshot = captureMutationSnapshot()
+    const startedAt = performance.now()
+    const operationId = `clipboard-pin-${Date.now()}-${version}`
+    const pinnedAt = isPinned ? Date.now() : undefined
+    items.value = sortClipboardItems(items.value.map(item => uniqueIds.includes(item.id)
+      ? { ...item, isPinned, pinnedAt }
+      : item))
+    try {
+      await setClipboardItemsPinned(uniqueIds, isPinned)
+      logMutation(operationId, 'pin', uniqueIds.length, startedAt, 'ok')
+    } catch (err) {
+      rollbackMutation(uniqueIds, version, snapshot)
+      logMutation(operationId, 'pin', uniqueIds.length, startedAt, 'failed')
+      throw err
+    }
+  }
+
+  function beginMutation(ids: string[]) {
+    const version = ++mutationVersion
+    for (const id of ids) {
+      itemMutationVersions.set(id, version)
+    }
+    return version
+  }
+
+  function captureMutationSnapshot() {
+    return {
+      items: items.value.map(item => ({ ...item })),
+      selectedIds: new Set(selectedIds.value),
+      selectedItemId: selectedItemId.value,
+      selectedDetail: selectedDetail.value ? { ...selectedDetail.value } : null
+    }
+  }
+
+  function rollbackMutation(ids: string[], version: number, snapshot: ReturnType<typeof captureMutationSnapshot>) {
+    const rollbackIds = new Set(ids.filter(id => itemMutationVersions.get(id) === version))
+    if (rollbackIds.size === 0) return
+    const currentById = new Map(items.value.map(item => [item.id, item]))
+    for (const item of snapshot.items) {
+      if (rollbackIds.has(item.id)) {
+        currentById.set(item.id, item)
+      }
+    }
+    items.value = sortClipboardItems(Array.from(currentById.values()).filter(matchesCurrentGroupFilter))
+    const nextSelected = new Set(selectedIds.value)
+    for (const id of rollbackIds) {
+      if (snapshot.selectedIds.has(id)) nextSelected.add(id)
+      else nextSelected.delete(id)
+    }
+    selectedIds.value = nextSelected
+    if (snapshot.selectedItemId && rollbackIds.has(snapshot.selectedItemId)) {
+      selectedItemId.value = snapshot.selectedItemId
+      selectedDetail.value = snapshot.selectedDetail
+    }
+  }
+
+  function matchesCurrentGroupFilter(item: ClipboardItemSummary) {
+    if (groupFilter.value === 'all') return true
+    if (groupFilter.value === 'ungrouped') return !item.groupId
+    return item.groupId === groupFilter.value
+  }
+
+  function sortClipboardItems(source: ClipboardItemSummary[]) {
+    return [...source].sort((left, right) => {
+      if (left.isPinned !== right.isPinned) return left.isPinned ? -1 : 1
+      const pinnedDifference = (right.pinnedAt ?? 0) - (left.pinnedAt ?? 0)
+      if (pinnedDifference !== 0) return pinnedDifference
+      const createdDifference = right.createdAt - left.createdAt
+      if (createdDifference !== 0) return createdDifference
+      return right.id.localeCompare(left.id)
+    })
+  }
+
+  function pruneInvisibleSelection() {
+    const visibleIds = new Set(items.value.map(item => item.id))
+    selectedIds.value = new Set(Array.from(selectedIds.value).filter(id => visibleIds.has(id)))
+    if (selectedItemId.value && !visibleIds.has(selectedItemId.value)) {
+      selectedItemId.value = items.value[0]?.id ?? null
+      selectedDetail.value = null
+    }
+  }
+
+  function logMutation(operationId: string, action: 'move' | 'pin', count: number, startedAt: number, result: 'ok' | 'failed') {
+    console.info('[clipboard-mutation]', {
+      operationId,
+      action,
+      count,
+      durationMs: Math.round(performance.now() - startedAt),
+      result
+    })
   }
 
   function clearSelectedItem() {
@@ -377,6 +530,8 @@ export const useClipboardStore = defineStore('clipboard', () => {
     favoriteOnly,
     groups,
     groupFilter,
+    quickPanelItems,
+    quickPanelSearchQuery,
     isQuickPanelOpen,
     loading,
     error,
@@ -387,6 +542,8 @@ export const useClipboardStore = defineStore('clipboard', () => {
     stopMonitor,
     loadItems,
     searchItems,
+    loadQuickPanelItems,
+    searchQuickPanelItems,
     loadDetail,
     copyItem,
     copySelectedItems,
