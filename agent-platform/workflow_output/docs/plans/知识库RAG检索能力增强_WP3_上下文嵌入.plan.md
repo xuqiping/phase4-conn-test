@@ -34,11 +34,12 @@ created-date: 2026-09-03
   - **依赖**：Step 1｜**验证**：单测——embed 文本拼接顺序、hash 新公式、存量行不受影响；集成：新文档索引后 OpenSearch 读回（单测 ✅；OS 集成读回留 Phase4 手测） ✅
   - **实现注（偏离）**：V171（非 V1xx 占位）；定位表落库在 `KnowledgeNodeWriter` 新 7 参 writeNodes（+contextualLocators）而非 worker 回写——节点与 contextual_text 同事务同 hash（worker 侧 hash 复校直接可用）；previewChunks() 供事务外 LLM 调用取 chunk 清单（path 同构）；pipeline 字面量 CTX_LLM_V1 在 writer 内联（全库配置 rag.index.pipeline-version 不动）；6 参旧签名保留委托 Map.of() 零测试搅动；OpenSearchChunkDocument +contextualText +KnowledgeIndexSchema mapping 补 text/index:false（dynamic:strict 不补则 bulk 全炸）
 
-- [ ] **Step 3：存量可选重建入口**
+- [x] **Step 3：存量可选重建入口**（commit c0c9bf33，后端 2844/2844+前端 vue-tsc 0）
   - **目标**：库 owner 可选为存量文档应用 LLM 上下文增强
   - **动作**：①KB 索引运维入口（既有重建路径）加「应用 LLM 上下文增强」选项：仅解析型文档（ATTACHMENT 豁免，规格 §6.3）、成本预估（chunk 数估算显示）、确认后生成全量重嵌 job（复用换 embedding 重建机制）；②中断可续（已完成 job 不重复）
   - **文件**：既有索引运维 Service/Controller（定位实施时）、`IndexJobTxService.java`、前端索引运维组件、Test ×1
-  - **依赖**：Step 2｜**验证**：单测——重建 job 全量生成/ATTACHMENT 跳过/中断续传；手测：小库重建→检索调试 embed 文本含定位语
+  - **依赖**：Step 2｜**验证**：单测——重建 job 全量生成/ATTACHMENT 跳过/中断续传 ✅（ContextualRebuildServiceTest 3 例）；手测：小库重建→检索调试 embed 文本含定位语（留 Phase4）
+  - **实现注（偏离）**：事务段放**独立新 bean `ContextualRebuildTxService`** 而非 IndexJobTxService 加方法（避免 @RequiredArgsConstructor 构造器搅动 IndexJobTxServiceTest）；DB 节点直接构 ChunkBrief（path/标题/首行）免重解析——定位表 key 本就是 chunk path，与 DB 行天然对齐；job_type=REINDEX 全指纹幂等键（含新 contextHash+CTX_LLM_V1 管线）；前端挂 IndexOperationsPanel 新节非新组件
 
 - [ ] **Step 4：影子对比验证增益**
   - **目标**：用数据证明 C4 有效再转正（不盲上）
