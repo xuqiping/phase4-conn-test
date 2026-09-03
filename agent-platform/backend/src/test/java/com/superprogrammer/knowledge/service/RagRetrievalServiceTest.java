@@ -21,6 +21,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
@@ -50,6 +51,10 @@ class RagRetrievalServiceTest {
     @Mock private com.superprogrammer.knowledge.relation.RelationGraphPostProcessor relationGraphPostProcessor;
     @Mock private com.superprogrammer.knowledge.mapper.KnowledgeDocumentMapper documentMapper;
     @Mock private com.superprogrammer.knowledge.attachment.AttachmentContentInjector attachmentContentInjector;
+    @Spy private com.superprogrammer.knowledge.retrieval.IterativeRetrievalOrchestrator iterativeRetrievalOrchestrator =
+            new com.superprogrammer.knowledge.retrieval.IterativeRetrievalOrchestrator();
+    private final com.superprogrammer.knowledge.config.RagRetrievalProperties retrievalProps =
+            new com.superprogrammer.knowledge.config.RagRetrievalProperties();
     @Mock private com.superprogrammer.knowledge.context.EvidencePolicyService evidencePolicyService;
     @Mock private com.superprogrammer.knowledge.answer.GroundedAnswerService groundedAnswerService;
     @Mock private com.superprogrammer.knowledge.trace.RagTraceService ragTraceService;
@@ -73,6 +78,7 @@ class RagRetrievalServiceTest {
                 answerCacheService, answerCacheProps, queryExpansionService, recallProps,
                 ragTraceService, rankingConfigService, queryPlanner, rankingEngine, productionRetrievalGateway,
                 relationGraphPostProcessor, documentMapper, attachmentContentInjector,
+                iterativeRetrievalOrchestrator, retrievalProps,
                 evidencePolicyService, groundedAnswerService, ragRolloutService, ragShadowCoordinator);
         lenient().when(ragRolloutService.status(anyLong())).thenAnswer(invocation ->
                 new com.superprogrammer.knowledge.migration.RagRolloutService.RolloutState(
@@ -394,5 +400,63 @@ class RagRetrievalServiceTest {
         assertTrue(vo.getEvidenceL2().get(0).isAttachment());
         assertFalse(vo.getEvidenceL2().get(0).getContent().contains("[附件"));
         verify(documentMapper, never()).selectById(any());
+    }
+
+    // ---- C3 Step2：有界循环检索（SEMANTIC 零开销基线 / EXACT 缺口补轮并集）----
+
+    @Test
+    void semanticQuery_noFilter_zeroSupplementRounds() {
+        KnowledgeBase kb = kb(1L);
+        stubReadableAll(kb);
+        stubExpandSingle();   // setUp 默认 SEMANTIC 无 filter → required 空 → rounds=0
+        when(queryMapper.denseRecallL0(anyLong(), anyString(), anyBoolean(), anyList(), any(), anyInt()))
+                .thenReturn(List.of(denseRow(10L, 99L, "安装手册", 0.6)));
+        when(queryMapper.fetchL2Children(anyLong(), anyList(), anyList()))
+                .thenReturn(List.of(l2Row(11L, 99L, 10L, "安装手册", "安装步骤说明", "hash11")));
+        when(queryMapper.bm25HitsJieba(anyLong(), anyString(), anyList())).thenReturn(List.of());
+        when(queryMapper.reverifyNode(eq(11L))).thenReturn(hashRow("hash11"));
+
+        RagRetrieveVO vo = service.retrieve(req(1L, "如何安装"), 7L);
+
+        assertEquals(0, vo.getTokenBudget().getRounds());
+        // 仅 round0 一次扩展（无补充轮），行为=基线
+        verify(queryExpansionService, times(1)).expand(anyString(), anyString(), any(), anyBoolean());
+    }
+
+    @Test
+    void exactFilterMissing_supplementRoundRecallsAndUnions() {
+        KnowledgeBase kb = kb(1L);
+        stubReadableAll(kb);
+        // round0 query 半向量 [0.1]；补充 query "V2.1" 半向量 [0.9]（不同召回邻域）
+        when(queryExpansionService.expand(eq("差旅制度 V2.1"), anyString(), any(), anyBoolean()))
+                .thenReturn(new ExpandedQuery("差旅制度 V2.1", List.of("[0.1]")));
+        when(queryExpansionService.expand(eq("V2.1"), anyString(), any(), anyBoolean()))
+                .thenReturn(new ExpandedQuery("V2.1", List.of("[0.9]")));
+        when(queryPlanner.plan(anyString())).thenReturn(new com.superprogrammer.knowledge.query.QueryPlan(
+                "EXACT", "DIRECT", java.util.Map.of("version", "V2.1"),
+                List.of("SPARSE", "DENSE"), false, false, false));
+        // round0：召回旧版文档（不含 V2.1 锚点）
+        when(queryMapper.denseRecallL0(anyLong(), eq("[0.1]"), anyBoolean(), anyList(), any(), anyInt()))
+                .thenReturn(List.of(denseRow(10L, 99L, "差旅制度", 0.6)));
+        // 补充轮：V2.1 锚点文档
+        when(queryMapper.denseRecallL0(anyLong(), eq("[0.9]"), anyBoolean(), anyList(), any(), anyInt()))
+                .thenReturn(List.of(denseRow(20L, 98L, "差旅制度 V2.1", 0.4)));
+        when(queryMapper.fetchL2Children(anyLong(), anyList(), anyList())).thenAnswer(inv -> {
+            java.util.List<Long> docIds = inv.getArgument(2);
+            if (docIds.contains(98L)) {
+                return List.of(l2Row(21L, 98L, 20L, "差旅制度 V2.1", "V2.1 版差旅条款原文", "hash21"));
+            }
+            return List.of(l2Row(11L, 99L, 10L, "差旅制度", "通用报销条款", "hash11"));
+        });
+        when(queryMapper.bm25HitsJieba(anyLong(), anyString(), anyList())).thenReturn(List.of());
+        when(queryMapper.reverifyNode(eq(11L))).thenReturn(hashRow("hash11"));
+        when(queryMapper.reverifyNode(eq(21L))).thenReturn(hashRow("hash21"));
+
+        RagRetrieveVO vo = service.retrieve(req(1L, "差旅制度 V2.1"), 7L);
+
+        // 补充轮跑过 + 并集后证据含锚点文档
+        assertEquals(1, vo.getTokenBudget().getRounds());
+        assertTrue(vo.getEvidenceL2().stream().anyMatch(e -> e.getContent().contains("V2.1 版差旅条款原文")));
+        verify(queryExpansionService, times(1)).expand(eq("V2.1"), anyString(), any(), anyBoolean());
     }
 }

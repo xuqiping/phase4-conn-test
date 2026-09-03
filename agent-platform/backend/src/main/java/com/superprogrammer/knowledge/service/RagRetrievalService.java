@@ -81,6 +81,8 @@ public class RagRetrievalService {
     private final com.superprogrammer.knowledge.relation.RelationGraphPostProcessor relationGraphPostProcessor;
     private final com.superprogrammer.knowledge.mapper.KnowledgeDocumentMapper documentMapper;
     private final com.superprogrammer.knowledge.attachment.AttachmentContentInjector attachmentContentInjector;
+    private final com.superprogrammer.knowledge.retrieval.IterativeRetrievalOrchestrator iterativeRetrievalOrchestrator;
+    private final com.superprogrammer.knowledge.config.RagRetrievalProperties retrievalProps;
     private final com.superprogrammer.knowledge.context.EvidencePolicyService evidencePolicyService;
     private final com.superprogrammer.knowledge.answer.GroundedAnswerService groundedAnswerService;
 
@@ -304,6 +306,16 @@ public class RagRetrievalService {
                 return finishAbstain(trace, budget, t0, "LOW_CONFIDENCE", req, l0, l1,
                         bm25Fallback[0], bm25OnlyCands, toEvidencePreview(topK));
             }
+
+            // C3 有界循环（WP2 Step2）：round0 硬阈后判缺口补轮（口径同多库路径，scope 单元素；
+            // 单库路径无 confidential 登记——保密库成员已被 14x#3 守卫挡在检索调试之外）
+            LoopResult loopRes = runIterativeLoop(req.getQuery(), queryPlan, topK,
+                    List.of(new KbScopeCtx(req.getKbId(), vs)), maxL0, bm25Fallback,
+                    new java.util.HashSet<>(), Map.of(), userId, budget);
+            topK = loopRes.topK();
+            bestSim = loopRes.bestSim();
+            grayZone = bestSim < recallProps.getAbstain().getSoft();
+            bm25OnlyCands = topK.stream().filter(L2Candidate::bm25Only).toList();
 
             // step6.5 关系图扩展（C1 §3.2）：MUST 强制带出 / MAY 重打分过阈值 / MAY_BE_CITED 仅相关文档区。
             // 位置在软拒答之后——关联不带救 LOW_CONFIDENCE（拒答口径不因边改变）。
@@ -563,6 +575,15 @@ public class RagRetrievalService {
                 return com.superprogrammer.knowledge.dto.EvidenceResult.abstain(traceId, "LOW_CONFIDENCE", ABSTAIN_MSG);
             }
 
+            // C3 有界循环（WP2 Step2，规格 §5.1）：round0 判缺口（必达子意图=EXACT filter 值）
+            // → 缺则补充轮（补充 query=未覆盖 filter 锚点值，继承 KB/权限/版本范围）→ 并集重排一次。
+            // 零回归门：无 filter → rounds=0 零开销；max-rounds=1 → 直接跳过（=基线）。
+            LoopResult loopRes = runIterativeLoop(query, queryPlanner.plan(query), topK, validScopes,
+                    maxL0, bm25Fallback, confidentialNodes, kbRestricted, userId, budget);
+            topK = loopRes.topK();
+            bestSim = loopRes.bestSim();
+            grayZone = bestSim < recallProps.getAbstain().getSoft();
+
             // step6.5 关系图扩展（C1 §3.2）：per-kb 扫边（边限同库，SQL kb_id 约束天然分组；
             // 传入全集 hitDocIds，他库 doc_id 不命中该库边）。拒答口径同单库：LOW_CONFIDENCE 不因边得救。
             Set<Long> allHitDocIds = topK.stream().map(L2Candidate::documentId)
@@ -804,6 +825,107 @@ public class RagRetrievalService {
         double maxBm = gathered.stream().map(L2Candidate::bm25Rank)
                 .filter(java.util.Objects::nonNull).mapToDouble(Double::doubleValue).max().orElse(0);
         return rerankWithBoost(gathered, maxBm);
+    }
+
+    /**
+     * C3 补充轮召回（WP2 Step2）：补充 query 走与 round0 同一条召回通道（多 query halfs dense L0/L1
+     * + gather L2/BM25/L1）——**继承** round0 的 KB 列表/权限可见集/版本过滤（validScopes 闭包直传，
+     * 不重新解析，规格 §5.1「继承原范围」）。新候选按 nodeId 记入 supplementPool 供并集重排；
+     * 受限库节点同口径登记 confidentialNodes。
+     */
+    /** C3 循环结果：并集重排后的 topK + 重算 bestSim（无缺口时 topK 引用原样返回）。 */
+    private record LoopResult(List<L2Candidate> topK, double bestSim) {}
+
+    /**
+     * C3 有界循环挂接（WP2 Step2，单库/多库路径共用）：round0 候选判缺口 → 补充轮召回 →
+     * 并集重排一次 → bestSim 重算（补充轮可救灰区）。零回归门：无 filter 无缺口 → rounds=0，
+     * topK 原引用返回（行为与基线一致）。LOW_CONFIDENCE 硬阈先行于循环——两路径一致，
+     * 硬拒答不因补轮得救；灰区 verdict 由调用方按重算后的 bestSim 判定。
+     */
+    private LoopResult runIterativeLoop(String query, com.superprogrammer.knowledge.query.QueryPlan plan,
+            List<L2Candidate> topK, List<KbScopeCtx> scopes, int maxL0, boolean[] bm25Fallback,
+            Set<Long> confidentialNodes, Map<Long, Boolean> kbRestricted, Long userId,
+            RagRetrieveVO.TokenBudgetVO budget) {
+        Map<String, L2Candidate> supplementPool = new LinkedHashMap<>();
+        com.superprogrammer.knowledge.retrieval.IterativeRetrievalOrchestrator.Outcome loop =
+                iterativeRetrievalOrchestrator.expand(query, plan, toRetrievalCandidates(topK),
+                        retrievalProps.getMaxRounds(), retrievalProps.getSupplementPerRound(), null,
+                        suppQuery -> recallSupplement(suppQuery, scopes, maxL0, bm25Fallback,
+                                confidentialNodes, kbRestricted, userId, supplementPool));
+        budget.setRounds(loop.roundsExecuted());
+        if (loop.newCandidates().isEmpty()) {
+            return new LoopResult(topK,
+                    topK.stream().mapToDouble(c -> Math.max(c.parentL0Sim(), c.docL1Sim())).max().orElse(0));
+        }
+        // 并集重排一次（round0 topK + 补充候选统一尺度；B3 上限守卫）
+        List<L2Candidate> unionPool = new ArrayList<>(topK);
+        loop.newCandidates().stream()
+                .map(c -> supplementPool.get(c.id())).filter(java.util.Objects::nonNull)
+                .forEach(unionPool::add);
+        if (unionPool.size() > ragConfig.getMaxRerankPairs()) {
+            throw new IllegalStateException("B3 违规(union): pool=" + unionPool.size()
+                    + " > maxRerankPairs=" + ragConfig.getMaxRerankPairs());
+        }
+        double unionMaxBm = unionPool.stream().map(L2Candidate::bm25Rank)
+                .filter(java.util.Objects::nonNull).mapToDouble(Double::doubleValue).max().orElse(0);
+        List<L2Candidate> unionTopK = rankWithTrace(scopes.get(0).kbId(), query,
+                rerankWithBoost(unionPool, unionMaxBm), ragConfig.getMaxL2Read());
+        return new LoopResult(unionTopK,
+                unionTopK.stream().mapToDouble(c -> Math.max(c.parentL0Sim(), c.docL1Sim())).max().orElse(0));
+    }
+
+    private List<com.superprogrammer.knowledge.retrieval.RetrievalCandidate> recallSupplement(
+            String suppQuery, List<KbScopeCtx> scopes, int maxL0, boolean[] bm25Fallback,
+            Set<Long> confidentialNodes, Map<Long, Boolean> kbRestricted, Long userId,
+            Map<String, L2Candidate> supplementPool) {
+        try {
+            // 补充 query 向量化（allowLlmExpansion=false：锚点值改写无意义且烧钱，仅 embed；
+            // 走 4 参重载直调，绕开 mock/真实对象 3→4 参代理差异）。失败→空轮不阻断
+            KnowledgeBase kb0 = knowledgeBaseService.ensure(scopes.get(0).kbId);
+            QueryExpansionService.ExpandedQuery eq =
+                    queryExpansionService.expand(suppQuery, kb0.getEmbeddingModel(), userId, false);
+            List<String> halfs = eq.qHalfs();
+            if (halfs == null || halfs.isEmpty()) {
+                return List.of();
+            }
+            List<com.superprogrammer.knowledge.retrieval.RetrievalCandidate> out = new ArrayList<>();
+            for (KbScopeCtx c : scopes) {
+                FilterScope scope = step3FilterScope(c.vs, null, c.kbId);
+                if (!scope.allDocs && scope.docIds.isEmpty()) {
+                    continue;
+                }
+                List<RecallHit> l0 = multiDenseRecallL0(c.kbId, halfs, scope, null, maxL0);
+                List<L1DocHit> l1 = multiDenseRecallL1(c.kbId, halfs, scope, null, maxL0);
+                if (l0.isEmpty() && l1.isEmpty()) {
+                    continue;
+                }
+                List<L2Candidate> pool = gatherL2Candidates(suppQuery, l0, c.kbId, bm25Fallback, l1);
+                if (Boolean.TRUE.equals(kbRestricted.get(c.kbId))) {
+                    pool.forEach(cand -> confidentialNodes.add(cand.nodeId()));
+                }
+                for (L2Candidate cand : pool) {
+                    String id = String.valueOf(cand.nodeId());
+                    supplementPool.putIfAbsent(id, cand);
+                    out.add(new com.superprogrammer.knowledge.retrieval.RetrievalCandidate(
+                            id, cand.nodeId(), cand.documentId(), "SUPPLEMENT", cand.rerankScore(),
+                            cand.title(), cand.content(), cand.contentHash()));
+                }
+            }
+            return out;
+        } catch (Exception e) {
+            log.warn("C3 补充轮召回失败（按空轮处理）query={} err={}", suppQuery, e.getMessage());
+            return List.of();
+        }
+    }
+
+    /** L2Candidate → RetrievalCandidate（覆盖判定/去重统一面；id=nodeId 字符串）。 */
+    private List<com.superprogrammer.knowledge.retrieval.RetrievalCandidate> toRetrievalCandidates(
+            List<L2Candidate> topK) {
+        return topK.stream()
+                .map(c -> new com.superprogrammer.knowledge.retrieval.RetrievalCandidate(
+                        String.valueOf(c.nodeId()), c.nodeId(), c.documentId(), "RANKED", c.rerankScore(),
+                        c.title(), c.content(), c.contentHash()))
+                .toList();
     }
 
     /**

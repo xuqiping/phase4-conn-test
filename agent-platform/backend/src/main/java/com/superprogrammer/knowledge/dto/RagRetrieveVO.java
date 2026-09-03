@@ -153,5 +153,7 @@ public class RagRetrieveVO {
         private int answerTokenReserve;
         private int effectiveContextCap;
         private int promptTokens;
+        /** C3 多轮检索（WP2）：实际执行的补充轮数（0=round0 即覆盖，行为同基线）。 */
+        private int rounds;
     }
 }

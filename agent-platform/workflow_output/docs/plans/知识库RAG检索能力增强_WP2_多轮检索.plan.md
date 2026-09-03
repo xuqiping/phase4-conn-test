@@ -34,11 +34,19 @@ created-date: 2026-09-03
     - **step6.5 挂点**：现状已钉「gather 循环后单次执行」（WP1 Step2 落地），补轮并集须在 step6.5 前——编排器插点=per-KB gather 循环内每库召回完成后（同库内并集），或循环后并集再 step6.5，Step2 设计时定（测试锚：多轮+有边带出仅一次）
     - **INSUFFICIENT 移位**：现状判定在 grounded facts 空（RagRetrievalService:364）与 GroundedAskResult——发生在证据装载**之后**；循环只管召回并集，天然在判定前完成 → **零代码移动**（plan ②项「移到循环耗尽后」已被现状满足，仅加轮次耗尽语义）
 
-- [ ] **Step 2：IterativeRetrievalOrchestrator 有界循环**
+- [x] **Step 2：IterativeRetrievalOrchestrator 有界循环**
   - **目标**：round0 之外的补充轮可运行、有界、可关
   - **动作**：①新编排类：round0（现有完整管道）→CoverageVerifier 判缺口（依据 QueryPlan 子意图 vs 已命中证据覆盖）→缺口则 supplement 产 query（≤3，去重，继承范围）→重跑 step3-6（召回+融合+rerank）→候选并集（by nodeId 去重，score 取最高）→再判→MAX_ROUND（rag.retrieval.max-rounds 默认 2）或预算守卫（证据 token 累计超预算）跳出；②拒答 INSUFFICIENT 判定移到循环耗尽后；③RagTraceContext 加 rounds 计量；④配置开关 max-rounds=1 时等价单轮（即基线）
   - **文件**：`retrieval/IterativeRetrievalOrchestrator.java`（新）、`RagRetrievalService.java`（重构挂接，step6.5 挂点预留）、`RetrievalRouter.java`（对齐激活）、`CoverageVerifier.java`（对齐激活）、`RagTraceContext.java`、Test ×2
   - **依赖**：Step 1｜**验证**：单测——覆盖→rounds=0；缺口→round1 补齐；轮次耗尽仍缺→INSUFFICIENT；预算守卫跳出；去重
+  - **实现注（2026-09-03）**：
+    - 编排器 `expand()` 落地；补充 query=**未覆盖 filter 值本身**（锚点即 query——原 query 已含该值，LLM 改写无增益只烧钱，`expand(allowLlmExpansion=false)` 仅向量化）。轮次上限+无进展守卫（补轮零新候选即停）+query 去重（已用集含原 query）三重界。**预算守卫未单列**：轮次耗尽即停+per-round cap 已界住开销，token 预算在 fitToBudget 装载端恒定不变
+    - **挂接两路径**：抽 `runIterativeLoop` helper 单库 /retrieve 与多库 chat EvidenceResult 共用（首版只挂多库——单库测试 rounds=0 揪出）；插点=硬阈拒答后、step6.5 前（LOW_CONFIDENCE 不因补轮得救；灰区可被并集 bestSim 重算救出）
+    - **②偏离（Step1 审计已记）**：INSUFFICIENT 现行判定本就在证据装载后（facts 空），零代码移动；轮次耗尽语义=stillMissing 非空+现行拒答路径原样
+    - **③偏离（Step1 预警兑现）**：RagTraceContext 不动，rounds 走 TokenBudgetVO 新字段（预算 JSON 落 trace）+编排器 MDC info 日志
+    - **RetrievalRouter 绕开（Step1 审计）**：补轮 `recallSupplement` 复用主链 PG 召回（expand→denseRecallL0/L1→gatherL2Candidates），不走 OpenSearch
+    - CoverageVerifier required=filter 精确值且**排序输出**（Map.copyOf 无序，batch 取前 N 须稳定）；`RetrievalCandidate` implements CandidateText 统一判定面
+    - 验证：Orchestrator 8 + CoverageVerifier 重写 5 + Service 2（SEMANTIC 零开销基线/EXACT 缺口补轮并集）=15；全量 2817/2817
 
 - [ ] **Step 3：NeighborExpander 激活**
   - **目标**：边界证据扩展相邻节点（表格截断/首尾段场景）
