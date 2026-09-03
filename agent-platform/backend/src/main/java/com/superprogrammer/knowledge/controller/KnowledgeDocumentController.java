@@ -50,7 +50,8 @@ public class KnowledgeDocumentController {
     }
 
     /** 阶段2：上传。Excel 可带 tempFileRef + selectedSheets；其他类型走原 file 路径。
-     *  docType/indexMode/manualIndexText/visionModel 为图片/文件知识库扩展（空=后端按后缀推断 + AUTO 默认）。 */
+     *  docType/indexMode/manualIndexText/visionModel 为图片/文件知识库扩展（空=后端按后缀推断 + AUTO 默认）。
+     *  indexMode=ATTACHMENT（C2 附件模式）：manualIndexText=附件描述（必填），attachmentKeywords 可选。 */
     @PostMapping("/upload")
     @AuditLog(module = "kb", action = "document_upload", targetType = "document")
     @RequirePermission("knowledge:write")
@@ -65,10 +66,11 @@ public class KnowledgeDocumentController {
             @RequestParam(value = "docType", required = false) String docType,
             @RequestParam(value = "indexMode", required = false) String indexMode,
             @RequestParam(value = "manualIndexText", required = false) String manualIndexText,
-            @RequestParam(value = "visionModel", required = false) String visionModel) {
+            @RequestParam(value = "visionModel", required = false) String visionModel,
+            @RequestParam(value = "attachmentKeywords", required = false) String attachmentKeywords) {
         return ResponseEntity.ok(R.ok("上传成功",
                 knowledgeDocumentService.upload(kbId, file, tempFileRef, selectedSheets,
-                        docType, indexMode, manualIndexText, visionModel,
+                        docType, indexMode, manualIndexText, visionModel, attachmentKeywords,
                         getCurrentUserId(), isAdmin())));
     }
 

@@ -49,11 +49,12 @@ created-date: 2026-09-03
   - **依赖**：Step 1-3｜**验证**：vitest 装配+权限显隐（无 canManage 无添加钮）；手测建边→检索带出
   - **实现注**（偏离 1 处）：「文档抽屉新 Tab」实为 `DocumentRelationModal.vue` 行级弹窗（模块无抽屉容器，版本弹窗即先例）；建议页=`DocumentRelationSuggestionModal.vue`（DocumentManager 工具区「关联建议」入口，仅 canManage）。行级「关联」钮成员可见（看边列表理解 🔗 证据来源），建/删边弹窗内 canManage 显隐。测试 10/10（modal 8 + manager 扩 2）；手测剧本（建边→检索带出/旧缓存 miss）留 Phase4 统一跑
 
-- [ ] **Step 5：C2 ATTACHMENT 模式入库**
+- [x] **Step 5：C2 ATTACHMENT 模式入库**
   - **目标**：附件型上传：整件入库不切片，描述必填
   - **动作**：①`KnowledgeDocumentService` indexMode 校验扩 ATTACHMENT（描述必填 ≤4000 字+关键词可选；docType 任意）；②`DocumentParserService.extractAttachment`：不走解析器，单节点构造（复用 MANUAL 单 section 路径），metadata 记 {attachMode:true, attachmentText}——文本类（白名单后缀）读原件全文 ≤8000 字存 attachmentText；PDF/DOCX/XLSX 调 Tika 提取全文截断存；图片不预提取（检索时实时）；③node metadata 注 fileRef 链路复用现状
   - **文件**：`KnowledgeDocumentService.java`、`DocumentParserService.java`、Test ×2
   - **依赖**：无｜**验证**：单测——ATTACHMENT 校验矩阵（缺描述拒/超长拒/图片不预提取/文本类 attachmentText 截断）；上传 txt/pdf/图片三型 nodes 数=1
+  - **实现注**：校验抽 `validateIndexText` 包私有静态（MANUAL/ATTACHMENT 同门 ≤4000，供单测矩阵）；全文预提取落点在 `buildNodeMetadata`（单次文件读，extract 零 IO——附件 section 只装描述+关键词）；白名单 11 后缀直读 UTF-8，其余 Tika 限 8001 字，失败/空 → null 降级不阻断；extract/buildNodeMetadata/loadAttachmentText 放开包私有供单测（scanInjection 先例）。测试 13/13；txt/pdf/图片三型 nodes=1 留 Phase4 手测（需真文件入库）
 
 - [ ] **Step 6：C2 命中注入 AttachmentContentInjector**
   - **目标**：附件命中后真实内容进上下文

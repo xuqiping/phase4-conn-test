@@ -91,15 +91,18 @@ public class KnowledgeDocumentService {
      * <p>Excel picker 路径传 tempFileRef（复用阶段1 存的文件，零重传）+ selectedSheets；
      * 非 Excel 或直传走 file。tempFileRef 经 load 咽喉点强校验归属（非 owner → FORBIDDEN）。
      *
-     * <p>图片/文件知识库扩展：docType（IMAGE/FILE，空=按后缀推断）+ indexMode（MANUAL/AUTO，空=AUTO）
-     * + manualIndexText（MANUAL 必填，索引文本）+ visionModel（IMAGE+AUTO 必填，P2 视觉模型）。
+     * <p>图片/文件知识库扩展：docType（IMAGE/FILE，空=按后缀推断）+ indexMode（MANUAL/AUTO/ATTACHMENT，空=AUTO）
+     * + manualIndexText（MANUAL 必填索引文本 / ATTACHMENT 必填附件描述）
+     * + visionModel（IMAGE+AUTO 必填，P2 视觉模型）
+     * + attachmentKeywords（ATTACHMENT 可选关键词，提升描述召回）。
      * 全部并入 parse_options JSON；doc.setDocType 始终写入（补历史 NULL gap）。
      */
     @Transactional
     public KnowledgeDocumentVO upload(Long kbId, MultipartFile file, String tempFileRef,
                                       List<String> selectedSheets,
                                       String docType, String indexMode, String manualIndexText,
-                                      String visionModel, Long operatorId, boolean admin) {
+                                      String visionModel, String attachmentKeywords,
+                                      Long operatorId, boolean admin) {
         KnowledgeBase kb = knowledgeBaseService.ensure(kbId);
         if (!knowledgeBaseService.canWrite(kb, operatorId, admin)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权向该知识库上传文档");
@@ -134,15 +137,7 @@ public class KnowledgeDocumentService {
         // docType：用户覆盖优先，否则按标题后缀推断（IMAGE/FILE/EXCEL/PDF/...）；始终写入（补 NULL gap）
         String resolvedDocType = resolveDocType(docType, title);
         String resolvedIndexMode = normalizeIndexMode(indexMode);
-        if ("MANUAL".equals(resolvedIndexMode)) {
-            if (manualIndexText == null || manualIndexText.isBlank()) {
-                throw new BusinessException(ErrorCode.BAD_REQUEST,
-                        "MANUAL 索引方式必须提供索引文本（manualIndexText）");
-            }
-            if (manualIndexText.length() > 4000) {
-                throw new BusinessException(ErrorCode.BAD_REQUEST, "索引文本过长（>4000 字）");
-            }
-        }
+        validateIndexText(resolvedIndexMode, manualIndexText);
         if ("IMAGE".equals(resolvedDocType) && "AUTO".equals(resolvedIndexMode)
                 && (visionModel == null || visionModel.isBlank())) {
             throw new BusinessException(ErrorCode.BAD_REQUEST,
@@ -157,7 +152,8 @@ public class KnowledgeDocumentService {
         doc.setFileRef(fileRef);
         doc.setFileHash(fileHash);
         doc.setCreatedBy(operatorId);
-        doc.setParseOptions(buildParseOptions(selectedSheets, resolvedIndexMode, manualIndexText, visionModel));
+        doc.setParseOptions(buildParseOptions(selectedSheets, resolvedIndexMode, manualIndexText,
+                visionModel, attachmentKeywords));
         documentMapper.insert(doc);
         var initialVersion = versionService.createInitialVersion(
                 doc.getId(), fileRef, fileHash, operatorId, "首次上传");
@@ -224,12 +220,35 @@ public class KnowledgeDocumentService {
             return "AUTO";
         }
         String m = indexMode.trim().toUpperCase();
-        return "MANUAL".equals(m) ? "MANUAL" : "AUTO";
+        if ("MANUAL".equals(m)) {
+            return "MANUAL";
+        }
+        return "ATTACHMENT".equals(m) ? "ATTACHMENT" : "AUTO";
     }
 
-    /** 合并 parse_options：selectedSheets（Excel）+ indexMode/manualIndexText/visionModel（图片/文件）。null 字段省略。 */
+    /**
+     * MANUAL/ATTACHMENT 的手填文本门（MANUAL=索引文本 / ATTACHMENT=附件描述，均必填 ≤4000 字）。
+     * 包私有供单测（C2 校验矩阵）。
+     */
+    static void validateIndexText(String resolvedIndexMode, String manualIndexText) {
+        if (!"MANUAL".equals(resolvedIndexMode) && !"ATTACHMENT".equals(resolvedIndexMode)) {
+            return;
+        }
+        String fieldLabel = "ATTACHMENT".equals(resolvedIndexMode) ? "附件描述" : "索引文本";
+        if (manualIndexText == null || manualIndexText.isBlank()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    fieldLabel + "不能为空（" + resolvedIndexMode + " 模式必填）");
+        }
+        if (manualIndexText.length() > 4000) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, fieldLabel + "过长（>4000 字）");
+        }
+    }
+
+    /** 合并 parse_options：selectedSheets（Excel）+ indexMode/manualIndexText/visionModel
+     *  + attachmentKeywords（ATTACHMENT）。null 字段省略。 */
     private String buildParseOptions(List<String> selectedSheets, String indexMode,
-                                     String manualIndexText, String visionModel) {
+                                     String manualIndexText, String visionModel,
+                                     String attachmentKeywords) {
         try {
             Map<String, Object> opts = new java.util.LinkedHashMap<>();
             if (selectedSheets != null && !selectedSheets.isEmpty()) {
@@ -241,6 +260,9 @@ public class KnowledgeDocumentService {
             }
             if (visionModel != null && !visionModel.isBlank()) {
                 opts.put("visionModel", visionModel.trim());
+            }
+            if (attachmentKeywords != null && !attachmentKeywords.isBlank()) {
+                opts.put("attachmentKeywords", attachmentKeywords.trim());
             }
             return objectMapper.writeValueAsString(opts);
         } catch (Exception ignored) {

@@ -224,10 +224,14 @@ public class DocumentParserService {
 
     // -------------------- 抽取 + 切分 --------------------
 
-    /** 分流：IMAGE/FILE 走专用分支；Excel(.xlsx/.xls) 走 POI；其余走 Tika。 */
+    /** 分流：ATTACHMENT 附件模式优先（不走任何结构解析器）；IMAGE/FILE 走专用分支；
+     *  Excel(.xlsx/.xls) 走 POI；其余走 Tika。 */
     private ExtractedDocument extract(KnowledgeDocument doc) {
         doc.setParseWarning(null);   // 每次解析重置；Excel 路径按需回填降级告警
         String dt = doc.getDocType();
+        if ("ATTACHMENT".equalsIgnoreCase(readIndexOption(doc.getParseOptions(), "indexMode"))) {
+            return extractAttachment(doc);
+        }
         if ("IMAGE".equals(dt)) {
             return extractImage(doc);
         }
@@ -342,6 +346,33 @@ public class DocumentParserService {
                 .plainText(manualText).sections(List.of(s)).build();
     }
 
+    /**
+     * C2 附件模式抽取（规格 §4.2）：整件入库不切片——单 section，content=附件描述（+关键词行）。
+     * 描述即召回锚（向量/词法都靠它）；原件全文不进索引，检索命中后由
+     * AttachmentContentInjector 从节点 metadata.attachmentText 按需注入（Step6）。
+     * 图片不预提取（检索时实时调 VLM）；文本全文提取在 buildNodeMetadata（此处零文件 IO）。
+     */
+    ExtractedDocument extractAttachment(KnowledgeDocument doc) {   // 包私有供单测（extract() 触达）
+        String desc = readIndexOption(doc.getParseOptions(), "manualIndexText");
+        if (desc == null || desc.isBlank()) {
+            throw new RuntimeException("附件模式描述为空 docId=" + doc.getId());
+        }
+        String keywords = readIndexOption(doc.getParseOptions(), "attachmentKeywords");
+        StringBuilder content = new StringBuilder(desc.trim());
+        if (keywords != null && !keywords.isBlank()) {
+            content.append("\n关键词：").append(keywords.trim());
+        }
+        String text = content.toString();
+        Section s = Section.builder()
+                .title(title(doc)).content(text).tokenCount(TokenEstimator.estimate(text)).build();
+        return ExtractedDocument.builder()
+                .schemaVersion("1.0")
+                .parserName("attachment")
+                .parserVersion("1")
+                .documentType("ATTACHMENT")
+                .plainText(text).sections(List.of(s)).build();
+    }
+
     /** parse_options 单 key 读取（indexMode/manualIndexText/visionModel）；null/格式错 → null。 */
     private String readIndexOption(String parseOptions, String key) {
         if (parseOptions == null || parseOptions.isBlank()) {
@@ -358,11 +389,15 @@ public class DocumentParserService {
 
     /**
      * 节点 metadata JSON：IMAGE/FILE 注入 {fileRef,mime,originalName} 供检索回显；
-     * 其余 docType 返回 "{}"（原行为）。mime/originalName 从 stored_files 登记行读。
+     * ATTACHMENT（C2 附件模式）额外注入 {attachMode:true, attachmentText}——
+     * 原件全文 ≤8000 字截断预提取（图片不预提取：检索时实时 VLM；提取失败置空降级，
+     * 描述召回不受影响）。其余 docType 返回 "{}"（原行为）。
+     * mime/originalName 从 stored_files 登记行读。
      */
-    private String buildNodeMetadata(KnowledgeDocument doc) {
+    String buildNodeMetadata(KnowledgeDocument doc) {   // 包私有供单测（writeNodes 处调用）
         String dt = doc.getDocType();
-        if (!"IMAGE".equals(dt) && !"FILE".equals(dt)) {
+        boolean attach = "ATTACHMENT".equalsIgnoreCase(readIndexOption(doc.getParseOptions(), "indexMode"));
+        if (!attach && !"IMAGE".equals(dt) && !"FILE".equals(dt)) {
             return "{}";
         }
         String fileId = stripFileRef(doc.getFileRef());
@@ -379,9 +414,58 @@ public class DocumentParserService {
                     m.put("originalName", meta.getOriginalName());
                 }
             }
+            if (attach) {
+                m.put("attachMode", true);
+                String attachmentText = loadAttachmentText(doc);
+                if (attachmentText != null) {
+                    m.put("attachmentText", attachmentText);
+                }
+            }
             return objectMapper.writeValueAsString(m);
         } catch (Exception e) {
             return "{}";
+        }
+    }
+
+    /** 文本类原件后缀白名单：直接 UTF-8 读全文（无解析器开销，无损）。 */
+    private static final Set<String> ATTACHMENT_TEXT_SUFFIXES =
+            Set.of(".txt", ".md", ".markdown", ".csv", ".json", ".html", ".htm", ".log", ".xml", ".yml", ".yaml");
+
+    /** 附件全文预提取上限（规格 §4.2：8000 字截断+「可下载原件」兜底）。 */
+    private static final int ATTACHMENT_TEXT_MAX_CHARS = 8000;
+
+    /**
+     * 附件全文预提取（buildNodeMetadata 内调用，单次读）：
+     * 图片 → null（不预提取，检索时实时 VLM）；文本白名单 → UTF-8 直读；
+     * 其余（PDF/DOCX/XLSX 等）→ Tika 抽取。统一截断 {@value ATTACHMENT_TEXT_MAX_CHARS} 字；
+     * 抽取失败/空 → null 降级（Step6 注入时以「原件内容暂缺」标注，描述召回不受影响）。
+     */
+    String loadAttachmentText(KnowledgeDocument doc) {   // 包私有供单测（buildNodeMetadata 调用）
+        String ref = doc.getFileRef() == null ? "" : doc.getFileRef().toLowerCase();
+        if (ref.endsWith(".png") || ref.endsWith(".jpg") || ref.endsWith(".jpeg")
+                || ref.endsWith(".gif") || ref.endsWith(".webp") || ref.endsWith(".bmp")) {
+            return null;
+        }
+        try (InputStream in = loadSource(doc).getInputStream()) {
+            String text;
+            boolean plain = ATTACHMENT_TEXT_SUFFIXES.stream().anyMatch(ref::endsWith);
+            if (plain) {
+                text = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            } else {
+                Tika tika = new Tika();   // 非线程安全，每次新建
+                text = tika.parseToString(in, new org.apache.tika.metadata.Metadata(),
+                        ATTACHMENT_TEXT_MAX_CHARS + 1);
+            }
+            if (text == null || text.isBlank()) {
+                log.warn("附件全文预提取空文本 docId={}", doc.getId());
+                return null;
+            }
+            return text.length() > ATTACHMENT_TEXT_MAX_CHARS
+                    ? text.substring(0, ATTACHMENT_TEXT_MAX_CHARS)
+                    : text;
+        } catch (Exception e) {
+            log.warn("附件全文预提取失败（降级仅描述召回）docId={}: {}", doc.getId(), e.getMessage());
+            return null;
         }
     }
 
