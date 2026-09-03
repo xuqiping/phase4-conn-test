@@ -189,9 +189,11 @@
         </dependency>
 
         <!-- AWS SDK v2 S3（WP6 Step2 S3Connector）：仅 sync client + url-connection 传输
-             （不引 apache/netty client，树最小化）。S3 兼容（MinIO/OSS/COS）经 endpointOverride+
-             pathStyle 支持。CVE 复核：2.54.11 为 2026-09 当前稳定线（引入前/升级时再核，
-             过 deps-check profile 全量门禁见 scripts/security）。 -->
+             （不引 apache/apache5/netty client，树最小化）。S3 兼容（MinIO/OSS/COS）经 endpointOverride+
+             pathStyle 支持。CVE 复核（WP6 Step5）：2.54.11 无直接 CVE；SDK 系已知项均经 netty
+             传输（CVE-2025-24970/25193）——本项目树中 netty 4.1.109 仅来自 lettuce（Redis，既有），
+             awssdk 子树零 netty。apache5-client 为 s3 传递 runtime 依赖，service-loader 会探到
+             残缺实现（Step2 NoClassDefFoundError 坑）——显式排除，传输固定 url-connection。 -->
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>s3</artifactId>
@@ -204,6 +206,10 @@
                 <exclusion>
                     <groupId>software.amazon.awssdk</groupId>
                     <artifactId>netty-nio-client</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>software.amazon.awssdk</groupId>
+                    <artifactId>apache5-client</artifactId>
                 </exclusion>
             </exclusions>
         </dependency>

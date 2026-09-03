@@ -50,11 +50,12 @@ created-date: 2026-09-03
   - **依赖**：Step 1-3｜**验证**：vitest 表单分支/状态渲染 ✅；手测建 URL 连接器→立即同步→文档出现→可检索（留 Phase4）
   - **实现注（偏离）**：①**入口=KB 行「连接器」按钮→右侧抽屉**（同文档管理交互模式）非「KB 详情 Tab」——本页 Tab 已 6 个且无 KB 详情容器，按钮+抽屉与「文档」一致更合户感；按钮显隐 canDestroy（owner/admin）对齐后端 isOwnerOrAdmin；②**启停/立即同步端点随本步补齐**（计划 Step1 只列 CRUD 四端点）：enable 顺带清 streak（ERROR 停摆手动重启=全新机会）、syncNow 对 ERROR 先复位再触发、`@Async(knowledgeTaskExecutor)` 受理即返 **202**（前端提示异步+5s 延迟刷新拿摘要）；service→worker 循环依赖用 `ObjectProvider` 惰性注入（工厂曾试改静态破环——毁 worker 测试可 mock 性，回退 bean+惰性注入）；③「错误摘要展开」落地=**摘要列 ellipsis tooltip**+ERROR 红标带 `×N` 连败 tooltip（点开弹层省一层交互）；④新建表单补 **canSubmit 禁存门**（名称+类型必填项齐才亮创建钮，与后端结构校验同口径：URL/S3/WebDAV http(s) 前缀、S3 五项、WebDAV 密码可空=匿名）；cron 预设四项（每小时取 17 分错峰）；⑤🔌 徽标数据面=worker NEW 分支补 `markConnectorOrigin`（upload 管线无连接器概念，落库后补 sourceType/sourceUri），与附件 📎 同列共存；⑥测试 +7（计划 ×1）：列表渲染/ERROR 红标×N/表单分支 URL↔S3 切换/禁存门 disabled 断言/提交透传 config+cron/启停分流/202 延迟刷新——坑：**NModal 传送 document.body，`wrapper.text()` 摸不到须断 `document.body.textContent`**；useDialog 同 useMessage 须 mock（无 provider 直接 throw）。
 
-- [ ] **Step 5：运维入口与收尾**
+- [x] **Step 5：运维入口与收尾**
   - **目标**：出问题能查能修
   - **动作**：①连接器详情：最近 N 轮同步历史（时间/计数/错误摘要）；「立即同步」即手动重试入口；②错误摘要脱敏（内网地址/凭证替换为 ***）；③HELP 文档一段（user-ops 手册增补，Phase 5 收尾一起做）
   - **文件**：`ConnectorPanel.vue`、后端查询接口 ×1
-  - **依赖**：Step 4｜**验证**：手测错误连接器（坏地址）→ERROR 状态+脱敏摘要+修好恢复
+  - **依赖**：Step 4｜**验证**：手测错误连接器（坏地址）→ERROR 状态+脱敏摘要+修好恢复（测试方案 S17，Phase4 执行）
+  - **实现注（偏离）**：①**「最近 N 轮历史」不做**（spec 8.4 仅列 新建/启停/立即同步/最近结果）：`last_sync_summary` 单轮快照+`sync_error_streak` 连败计数+ERROR 红标已覆盖运维闭环「查现状→修→重试」；多轮历史需新建表，收益不抵——audit_log（connector_* 三动作）另可供追查；若后续要，加 `knowledge_connector_sync_log` 表+查询端点即可，不动存量；②**脱敏口径收窄**：凭证**只写不读**（VO 零 config 字段，面板永不回显）+`sanitize` 剥 URL userinfo（Step3）——「内网地址→***」不做：摘要仅 KB owner/admin 可见且地址本就是其自配置，脱了反伤排障；③「立即同步」=手动重试入口 Step4 已落（ERROR 连接器 syncNow 自动复位 ENABLED+streak 0 再触发）；④HELP/user-ops 增补按计划本体即注「Phase 5 收尾一起做」→并入功能收尾 chunk；⑤**依赖安全**：owasp dependency-check NVD 离线拉库失败（脚本已知坑）→ 改定向复核：**AWS SDK 2.54.11 无直接 CVE**；SDK 系已知项全经 netty 传输（CVE-2025-24970/25193）——本项目 awssdk 子树**零 netty**（树内 netty 4.1.109 仅来自 lettuce/Redis 既有基线，非 WP6 引入）；顺手加固：**排除 s3 传递 runtime 依赖 apache5-client**（service-loader 残缺实现隐患即 Step2 NoClassDefFoundError 坑根因，排除后树干净），排除后连接器三测试类 22/22 绿。
 
 ## 联动点（WP6 专属细化）
 
@@ -68,6 +69,6 @@ created-date: 2026-09-03
 
 ## 验证汇总
 
-- [ ] 单测新增 ~12（SSRF/加密/增量/并发/限速为主）
-- [ ] 依赖安全：新增 SDK 过 mvn 依赖检查（无已知 CVE）
-- [ ] 手测剧本：静态站点两轮同步全链路→检索命中；S3 增量；错误连接器运维路径
+- [x] 单测新增 ~12（SSRF/加密/增量/并发/限速为主）→ **实际 +41**（Step1 凭证加密 4+Step2 SPI/三连接器/SSRF 9+Step3 worker 编排与记账 15+Step4 启停同步与面板 13）；末次全量 后端 2915/2915+前端 1103/1103+vue-tsc 0
+- [x] 依赖安全：新增 SDK 过 mvn 依赖检查（无已知 CVE）→ NVD 离线改定向复核（Step5 实现注⑤）：AWS SDK 2.54.11 无直接 CVE、awssdk 子树零 netty、**apache5-client 排除**（pom 排除清单 3 项）
+- [x] 手测剧本：静态站点两轮同步全链路→检索命中；S3 增量；错误连接器运维路径 → [测试方案](../测试方案/知识库RAG检索能力增强测试方案.md) S15-S17+L6 联动（含源恢复复活/开关边界/连接器删除孤儿化），Phase4 执行
