@@ -33,6 +33,16 @@ public class RagRetrieveVO {
     private long latencyMs;
     /** QueryPlan → RRF → Ranking 调试时间线；不含 Query/Chunk 正文。 */
     private List<RetrievalStageVO> retrievalTimeline;
+    /** C7 GLOBAL 分支（WP4）：true=本次走全局 map-reduce（文档级引用，无 chunk 证据）。 */
+    private boolean globalMode;
+    /** GLOBAL 参与文档数（引用白名单基数=可见 ∩ INDEXED ∩ 有 L1）。 */
+    private int globalDocCount;
+    /** GLOBAL map 批数（每批 ≤rag.global.answer.batchSize）。 */
+    private int globalBatches;
+    /** GLOBAL 库级摘要 L-KB 概览段是否已拼装。 */
+    private boolean globalOverviewReady;
+    /** GLOBAL 降级（超时/引用越界/无 L1 → 仅概览+提示缩小范围）。 */
+    private boolean globalDegraded;
 
     @Data
     @Builder

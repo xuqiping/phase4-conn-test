@@ -20,4 +20,26 @@ class QueryPlannerTest {
         assertEquals("MULTI_EVIDENCE", plan.answerShape());
         assertTrue(plan.exhaustive());
     }
+
+    // ---- C7 GLOBAL（WP4 Step2）：库级聚合 → map-reduce 分支 ----
+
+    @Test void globalScopePlusIntentClassifiedGlobal() {
+        assertEquals("GLOBAL", planner.plan("总结一下全库的主要主题").queryType());
+        assertEquals("OVERVIEW", planner.plan("总结一下全库的主要主题").answerShape());
+        assertEquals("GLOBAL", planner.plan("这个库主要讲什么").queryType());
+        assertEquals("GLOBAL", planner.plan("列出全库所有文档的主题清单").queryType());   // 库级聚合优先于 LIST
+        assertEquals("GLOBAL", planner.plan("整个知识库的趋势是什么").queryType());
+    }
+
+    @Test void localSummaryQuestionNotGlobal() {
+        // 「总结」无库级范围词 → 不进 GLOBAL（又慢又泛的误判防护）
+        assertNotEquals("GLOBAL", planner.plan("总结一下报销流程的步骤").queryType());
+        assertNotEquals("GLOBAL", planner.plan("这个方案的要点是什么").queryType());
+    }
+
+    @Test void exactAnchorBeatsGlobal() {
+        // 版本/条号锚点先走精确检索（GLOBAL 置于 EXACT 之后）
+        QueryPlan plan = planner.plan("全库中V2.1文档的第十条说了什么");
+        assertEquals("EXACT", plan.queryType());
+    }
 }

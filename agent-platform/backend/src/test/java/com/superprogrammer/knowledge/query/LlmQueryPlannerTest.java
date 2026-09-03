@@ -66,6 +66,22 @@ class LlmQueryPlannerTest {
         assertEquals(Boolean.TRUE, cap.getValue().getDisableThinking());
     }
 
+    /** C7 GLOBAL（WP4 Step2）：LLM 分类 GLOBAL 进白名单（规则未命中时 LLM 结果优先）。 */
+    @Test
+    void globalTypeFromLlm_acceptedByWhitelist() {
+        props.getLlm().setEnabled(true);
+        when(llmGateway.chat(any(), eq(7L))).thenReturn(LlmResponse.builder().content(
+                "{\"queryType\":\"GLOBAL\",\"answerShape\":\"OVERVIEW\",\"strategies\":[\"SPARSE\",\"DENSE\"],"
+                        + "\"exhaustive\":true,\"multiHop\":false,\"subIntents\":[]}")
+                .build());
+
+        var out = planner.planWithFallback("帮我摸一下这个库的底", 7L);   // 规则侧非 GLOBAL（无意图词）
+
+        assertTrue(out.llmUsed());
+        assertEquals("GLOBAL", out.plan().queryType());
+        assertEquals("OVERVIEW", out.plan().answerShape());
+    }
+
     @Test
     void invalidFields_keepRuleVersion() {
         props.getLlm().setEnabled(true);

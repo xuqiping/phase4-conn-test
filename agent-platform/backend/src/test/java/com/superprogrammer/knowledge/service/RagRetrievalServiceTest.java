@@ -58,6 +58,7 @@ class RagRetrievalServiceTest {
             new com.superprogrammer.knowledge.config.RagRetrievalProperties();
     @Mock private com.superprogrammer.knowledge.context.EvidencePolicyService evidencePolicyService;
     @Mock private com.superprogrammer.knowledge.answer.GroundedAnswerService groundedAnswerService;
+    @Mock private com.superprogrammer.knowledge.global.GlobalAnswerStrategy globalAnswerStrategy;
     @Mock private com.superprogrammer.knowledge.trace.RagTraceService ragTraceService;
     @Mock private com.superprogrammer.knowledge.trace.RagTraceService.RetrievalScope retrievalScope;
     @Mock private com.superprogrammer.knowledge.trace.RagTraceService.RankingScope rankingScope;
@@ -80,7 +81,7 @@ class RagRetrievalServiceTest {
                 ragTraceService, rankingConfigService, queryPlanner, llmQueryPlanner, rankingEngine, productionRetrievalGateway,
                 relationGraphPostProcessor, documentMapper, attachmentContentInjector,
                 iterativeRetrievalOrchestrator, retrievalProps,
-                evidencePolicyService, groundedAnswerService, ragRolloutService, ragShadowCoordinator);
+                evidencePolicyService, groundedAnswerService, globalAnswerStrategy, ragRolloutService, ragShadowCoordinator);
         lenient().when(ragRolloutService.status(anyLong())).thenAnswer(invocation ->
                 new com.superprogrammer.knowledge.migration.RagRolloutService.RolloutState(
                         invocation.getArgument(0), 0, "champion", 0));

@@ -35,8 +35,8 @@ import java.util.concurrent.TimeUnit;
 @RequiredArgsConstructor
 public class LlmQueryPlanner {
 
-    private static final Set<String> KNOWN_TYPES = Set.of("EXACT", "SEMANTIC", "PROCEDURE", "COMPARISON", "LIST");
-    private static final Set<String> KNOWN_SHAPES = Set.of("DIRECT", "ORDERED_STEPS", "MULTI_EVIDENCE", "LIST");
+    private static final Set<String> KNOWN_TYPES = Set.of("EXACT", "SEMANTIC", "PROCEDURE", "COMPARISON", "LIST", "GLOBAL");
+    private static final Set<String> KNOWN_SHAPES = Set.of("DIRECT", "ORDERED_STEPS", "MULTI_EVIDENCE", "LIST", "OVERVIEW");
     private static final Set<String> KNOWN_STRATEGIES = Set.of("EXACT", "SPARSE", "DENSE", "NEIGHBOR");
 
     private final QueryPlanner rulePlanner;
@@ -83,10 +83,10 @@ public class LlmQueryPlanner {
     private PlanOutcome callLlm(String query, Long userId, LlmQueryPlannerProperties.Llm cfg) {
         String system = """
                 你是检索规划器。分析用户查询，输出严格 JSON（不要任何其他文字、不要 markdown 代码块）：
-                {"queryType":"EXACT|SEMANTIC|PROCEDURE|COMPARISON|LIST","answerShape":"DIRECT|ORDERED_STEPS|MULTI_EVIDENCE|LIST",\
+                {"queryType":"EXACT|SEMANTIC|PROCEDURE|COMPARISON|LIST|GLOBAL","answerShape":"DIRECT|ORDERED_STEPS|MULTI_EVIDENCE|LIST|OVERVIEW",\
                 "strategies":["SPARSE","DENSE","EXACT","NEIGHBOR"],"exhaustive":false,"multiHop":false,\
                 "subIntents":["回答该问题必须覆盖的子主题，最多3个，每个不超过20字"]}
-                查询：%s""".formatted(query == null ? "" : query);
+                GLOBAL=对整个知识库做总结/趋势/主题概览类问题（非具体事实查找）。查询：%s""".formatted(query == null ? "" : query);
         LlmRequest req = LlmRequest.builder()
                 .model(cfg.getModel())
                 .messages(List.of(new LlmMessage("system", system), new LlmMessage("user", query == null ? "" : query)))

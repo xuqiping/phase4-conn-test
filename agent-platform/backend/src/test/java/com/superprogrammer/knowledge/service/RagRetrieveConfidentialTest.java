@@ -54,6 +54,7 @@ class RagRetrieveConfidentialTest {
             new com.superprogrammer.knowledge.config.RagRetrievalProperties();
     @Mock private com.superprogrammer.knowledge.context.EvidencePolicyService evidencePolicyService;
     @Mock private com.superprogrammer.knowledge.answer.GroundedAnswerService groundedAnswerService;
+    @Mock private com.superprogrammer.knowledge.global.GlobalAnswerStrategy globalAnswerStrategy;
     @Mock private com.superprogrammer.knowledge.trace.RagTraceService ragTraceService;
     @Mock private com.superprogrammer.knowledge.trace.RagTraceService.RetrievalScope retrievalScope;
     @Mock private com.superprogrammer.knowledge.trace.RagTraceService.RankingScope rankingScope;
@@ -80,7 +81,7 @@ class RagRetrieveConfidentialTest {
                 ragTraceService, rankingConfigService, queryPlanner, llmQueryPlanner, rankingEngine, productionRetrievalGateway,
                 relationGraphPostProcessor, documentMapper, attachmentContentInjector,
                 iterativeRetrievalOrchestrator, retrievalProps,
-                evidencePolicyService, groundedAnswerService, ragRolloutService, ragShadowCoordinator);
+                evidencePolicyService, groundedAnswerService, globalAnswerStrategy, ragRolloutService, ragShadowCoordinator);
         // WP2 Step4：LLM 规划桩（固定 SEMANTIC 无 filter——补轮/邻近零触发，口径=该类历史行为）
         lenient().when(llmQueryPlanner.planWithFallback(anyString(), any())).thenReturn(
                 new com.superprogrammer.knowledge.query.LlmQueryPlanner.PlanOutcome(

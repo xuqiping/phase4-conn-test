@@ -86,6 +86,7 @@ public class RagRetrievalService {
     private final com.superprogrammer.knowledge.config.RagRetrievalProperties retrievalProps;
     private final com.superprogrammer.knowledge.context.EvidencePolicyService evidencePolicyService;
     private final com.superprogrammer.knowledge.answer.GroundedAnswerService groundedAnswerService;
+    private final com.superprogrammer.knowledge.global.GlobalAnswerStrategy globalAnswerStrategy;
 
     /** 安全体系 S3 · LLM01 围栏（横切可选依赖：测试/切片无 bean 时降级直通，沿用 2026-08-12 范式）。 */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -226,6 +227,16 @@ public class RagRetrievalService {
             if (!vs.allDocs && vs.docIds.isEmpty()) {
                 return finishAbstain(trace, budget, t0, "NO_VISIBLE_DOCS", req, List.of(), List.of(),
                         false, List.of(), List.of());
+            }
+
+            // C7 GLOBAL 分支（WP4 Step2）：库级聚合问题不走 chunk 检索（置于 B4 前——
+            // 全局 map-reduce 不需要 query embedding，省一次向量调用）。
+            // 调试模式（generateAnswer=false）走零 LLM 勘察；开关关（answer 返回 null）回落常规管道。
+            if ("GLOBAL".equals(queryPlan.queryType())) {
+                RagRetrieveVO globalVo = answerGlobalSingleKb(trace, budget, t0, req, kb, userId, vs);
+                if (globalVo != null) {
+                    return globalVo;
+                }
             }
 
             // B4：query 多路扩展（规范 query + 释义 + HyDE），返回 halfvec 列表（规范第一个）
@@ -446,9 +457,16 @@ public class RagRetrievalService {
      */
     public com.superprogrammer.knowledge.dto.EvidenceResult retrieveEvidence(
             List<Long> effectiveKbs, String query, Long userId, boolean admin) {
+        return retrieveEvidence(effectiveKbs, query, userId, admin, null);
+    }
+
+    /** prePlanned 非-null 时复用规划结果（/ask GLOBAL 预判路径防双重规划；chat 走 null=自规划）。 */
+    public com.superprogrammer.knowledge.dto.EvidenceResult retrieveEvidence(
+            List<Long> effectiveKbs, String query, Long userId, boolean admin,
+            com.superprogrammer.knowledge.query.LlmQueryPlanner.PlanOutcome prePlanned) {
         try (var run = ragTraceService.beginRetrieval(effectiveKbs, query, userId, "EVIDENCE")) {
             try {
-                var result = retrieveEvidenceInternal(effectiveKbs, query, userId, admin);
+                var result = retrieveEvidenceInternal(effectiveKbs, query, userId, admin, prePlanned);
                 if (result.isAbstained()) run.abstain(result.getAbstainReason());
                 else run.succeed("SUPPORTED");
                 return result;
@@ -460,7 +478,8 @@ public class RagRetrievalService {
     }
 
     private com.superprogrammer.knowledge.dto.EvidenceResult retrieveEvidenceInternal(
-            List<Long> effectiveKbs, String query, Long userId, boolean admin) {
+            List<Long> effectiveKbs, String query, Long userId, boolean admin,
+            com.superprogrammer.knowledge.query.LlmQueryPlanner.PlanOutcome prePlanned) {
         long t0 = System.currentTimeMillis();
         String traceId = UUID.randomUUID().toString().replace("-", "");
         int cap = ragConfig.computeEffectiveContextCap();
@@ -593,9 +612,10 @@ public class RagRetrievalService {
             // C3 有界循环（WP2 Step2，规格 §5.1）：round0 判缺口（必达子意图=EXACT filter 值
             // + LLM 子意图（Step4，默认关））→ 缺则补充轮（补充 query=未覆盖锚点值，继承
             // KB/权限/版本范围）→ 并集重排一次。零回归门：无 filter → rounds=0 零开销；
-            // max-rounds=1 → 直接跳过（=基线）。
-            com.superprogrammer.knowledge.query.LlmQueryPlanner.PlanOutcome planOutcome =
-                    llmQueryPlanner.planWithFallback(query, userId);
+            // max-rounds=1 → 直接跳过（=基线）。prePlanned 复用（/ask 已规划）。
+            com.superprogrammer.knowledge.query.LlmQueryPlanner.PlanOutcome planOutcome = prePlanned != null
+                    ? prePlanned
+                    : llmQueryPlanner.planWithFallback(query, userId);
             LoopResult loopRes = runIterativeLoop(query, planOutcome.plan(), topK, validScopes,
                     maxL0, bm25Fallback, confidentialNodes, kbRestricted, userId, budget,
                     planOutcome.subIntents());
@@ -1343,8 +1363,18 @@ public class RagRetrievalService {
 
     public GroundedAskResult retrieveGroundedAnswer(List<Long> effectiveKbs, String query,
                                                      Long userId, boolean admin) {
+        // C7 GLOBAL 分支（WP4 Step2）：规划一次贯穿全程（/ask 不再双重规划）——
+        // GLOBAL → 首库 map-reduce + 文档级引用；开关关/首库无权限回落常规管道
+        com.superprogrammer.knowledge.query.LlmQueryPlanner.PlanOutcome planned =
+                llmQueryPlanner.planWithFallback(query, userId);
+        if ("GLOBAL".equals(planned.plan().queryType())) {
+            GroundedAskResult global = answerGlobalGrounded(effectiveKbs, query, userId, admin);
+            if (global != null) {
+                return global;
+            }
+        }
         com.superprogrammer.knowledge.dto.EvidenceResult evidence =
-                retrieveEvidence(effectiveKbs, query, userId, admin);
+                retrieveEvidence(effectiveKbs, query, userId, admin, planned);
         if (evidence.isAbstained()) {
             return new GroundedAskResult(evidence, evidence.getAnswer(), stateForAbstain(evidence.getAbstainReason()));
         }
@@ -1369,6 +1399,133 @@ public class RagRetrievalService {
             return new GroundedAskResult(evidence, ABSTAIN_MSG, "INSUFFICIENT");
         }
         return new GroundedAskResult(evidence, answer, grounded.conflict() ? "CONFLICT" : "SUPPORTED");
+    }
+
+    // ============================ C7 GLOBAL 分支（WP4 Step2） ============================
+
+    /** GLOBAL 单库路径（检索调试接口）：generateAnswer=false 零 LLM 勘察；true 走 map-reduce。
+     *  null=开关关/常规管道（调用方继续 step3-8）。 */
+    private RagRetrieveVO answerGlobalSingleKb(RagRetrievalLog trace, RagRetrieveVO.TokenBudgetVO budget,
+                                               long t0, RagRetrieveRequest req, KnowledgeBase kb, Long userId,
+                                               VisibleSet vs) {
+        if (!req.isGenerateAnswer()) {
+            // 勘察模式：调试面板只见分支标识+参与文档数+批数（不烧 LLM）
+            com.superprogrammer.knowledge.global.GlobalAnswerStrategy.Inspection insp =
+                    globalAnswerStrategy.inspect(req.getKbId(), vs.allDocs(), vs.docIds());
+            RagRetrieveVO vo = RagRetrieveVO.builder()
+                    .traceId(trace.getTraceId()).abstained(false)
+                    .answer("").citations(List.of())
+                    .candidatesL0(List.of()).candidatesL1(List.of())
+                    .bm25Fallback(false).candidatesBm25(List.of()).evidenceL2(List.of())
+                    .tokenBudget(budget).latencyMs(System.currentTimeMillis() - t0)
+                    .globalMode(true).globalDocCount(insp.docCount()).globalBatches(insp.batchCount())
+                    .globalOverviewReady(insp.overviewReady())
+                    .build();
+            trace.setL2LexicalFallback(false);
+            writeTraceGlobal(trace, "GLOBAL_PEEK", t0, List.of(), insp.batchCount(), false);
+            return vo;
+        }
+        com.superprogrammer.knowledge.global.GlobalAnswerStrategy.GlobalResult gr =
+                globalAnswerStrategy.answer(kb, req.getQuery(), userId, vs.allDocs(), vs.docIds(), false);
+        if (gr == null) {
+            return null;   // kill switch 关 → 常规管道
+        }
+        RagRetrieveVO vo = RagRetrieveVO.builder()
+                .traceId(trace.getTraceId()).abstained(false)
+                .answer(gr.answer())
+                .citations(docCitationVOs(gr))
+                .candidatesL0(List.of()).candidatesL1(List.of())
+                .bm25Fallback(false).candidatesBm25(List.of()).evidenceL2(List.of())
+                .tokenBudget(budget).latencyMs(System.currentTimeMillis() - t0)
+                .globalMode(true).globalDocCount(gr.docs().size()).globalBatches(gr.batchCount())
+                .globalOverviewReady(gr.overviewUsed()).globalDegraded(gr.degraded())
+                .build();
+        vo.setLowConfidence(gr.degraded());
+        vo.setConfidenceState(gr.degraded() ? "PARTIAL" : "SUPPORTED");
+        trace.setL2LexicalFallback(false);
+        writeTraceGlobal(trace, gr.degraded() ? "GLOBAL_DEGRADED" : "GLOBAL_SUPPORTED", t0,
+                gr.docs(), gr.batchCount(), gr.degraded());
+        return vo;
+    }
+
+    /** GLOBAL /ask 路径：首库 map-reduce + 文档级引用 + 多库取首库提示（规格 §9.3 单库生效）。
+     *  null=开关关/无权限回落常规多库管道。 */
+    private GroundedAskResult answerGlobalGrounded(List<Long> effectiveKbs, String query,
+                                                    Long userId, boolean admin) {
+        long t0 = System.currentTimeMillis();
+        String traceId = UUID.randomUUID().toString().replace("-", "");
+        KnowledgeBase kb = knowledgeBaseService.ensure(effectiveKbs.get(0));
+        if (!knowledgeBaseService.canRead(kb, userId, admin)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该知识库");
+        }
+        // 14x#3 同口径：保密库内容出口=RAG 答案本身（L-KB/要点仅进 prompt，摘要原文不下发）
+        KnowledgeConfidentialGuard.assertCanViewContent(kb, userId, admin);
+        VisibleSet vs = step1VisibleSet(kb, userId, admin);
+        boolean multiKb = effectiveKbs.size() > 1;
+        com.superprogrammer.knowledge.global.GlobalAnswerStrategy.GlobalResult gr =
+                globalAnswerStrategy.answer(kb, query, userId, vs.allDocs(), vs.docIds(), multiKb);
+        if (gr == null) {
+            return null;   // kill switch 关 → 常规多库检索
+        }
+        Set<Integer> injected = new HashSet<>();
+        for (int i = 1; i <= gr.docs().size(); i++) {
+            injected.add(i);
+        }
+        com.superprogrammer.knowledge.dto.EvidenceResult evidence =
+                com.superprogrammer.knowledge.dto.EvidenceResult.builder()
+                        .injectedIndexes(injected)
+                        .citations(docCitationVOs(gr))
+                        .abstained(false).answer(gr.answer()).traceId(traceId)
+                        .globalMode(true).globalDocCount(gr.docs().size())
+                        .globalBatches(gr.batchCount()).globalDegraded(gr.degraded())
+                        .build();
+        RagRetrievalLog trace = newLogMerged(traceId, userId, List.of(kb.getId()), query, DEFAULT_MODE);
+        trace.setL2LexicalFallback(false);
+        writeTraceGlobal(trace, gr.degraded() ? "GLOBAL_DEGRADED" : "GLOBAL_SUPPORTED", t0,
+                gr.docs(), gr.batchCount(), gr.degraded());
+        return new GroundedAskResult(evidence, gr.answer(), gr.degraded() ? "PARTIAL" : "SUPPORTED");
+    }
+
+    /** GLOBAL 文档级引用（[n]《标题》，nodeId=null 无段落锚点；documentId 供前端跳文档）。 */
+    private List<RagRetrieveVO.CitationVO> docCitationVOs(
+            com.superprogrammer.knowledge.global.GlobalAnswerStrategy.GlobalResult gr) {
+        List<RagRetrieveVO.CitationVO> out = new ArrayList<>(gr.docs().size());
+        for (int i = 0; i < gr.docs().size(); i++) {
+            var d = gr.docs().get(i);
+            out.add(RagRetrieveVO.CitationVO.builder()
+                    .index(i + 1)
+                    .documentId(d.docId())
+                    .title(d.title() == null ? "未命名" : d.title())
+                    .build());
+        }
+        return out;
+    }
+
+    /** GLOBAL trace：verdict 记分支（GLOBAL_PEEK/SUPPORTED/DEGRADED），evidenceL2 记文档级参与集+批数。 */
+    private void writeTraceGlobal(RagRetrievalLog trace, String verdict, long t0,
+                                  List<com.superprogrammer.knowledge.global.GlobalAnswerStrategy.GlobalDoc> docs,
+                                  int batchCount, boolean degraded) {
+        try {
+            trace.setCragVerdict(verdict);
+            trace.setLatencyMs(System.currentTimeMillis() - t0);
+            Map<String, Object> root = new LinkedHashMap<>();
+            root.put("global", true);
+            root.put("docCount", docs.size());
+            root.put("batches", batchCount);
+            root.put("degraded", degraded);
+            List<Map<String, Object>> entries = new ArrayList<>(docs.size());
+            for (int i = 0; i < docs.size(); i++) {
+                entries.add(Map.of("ordinal", i + 1,
+                        "documentId", docs.get(i).docId(),
+                        "title", String.valueOf(docs.get(i).title())));
+            }
+            root.put("docs", entries);
+            trace.setEvidenceL2(toJson(root));
+            logMapper.insertTrace(trace);
+        } catch (Exception e) {
+            log.error("写 rag_retrieval_logs（GLOBAL）失败 traceId={}（不影响主流程结果）: {}",
+                    trace.getTraceId(), e.getMessage(), e);
+        }
     }
 
     private List<Evidence> parseEvidencePrompt(String prompt) {

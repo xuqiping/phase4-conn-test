@@ -26,6 +26,13 @@ public class EvidenceResult {
     private String abstainReason;
     private String answer;
     private String traceId;
+    /** C7 GLOBAL 分支（WP4）：true=本次证据来自全局 map-reduce（文档级引用），非 chunk 检索。 */
+    private boolean globalMode;
+    /** GLOBAL 参与文档数 / map 批数（前端全局模式标识与调试展示）。 */
+    private int globalDocCount;
+    private int globalBatches;
+    /** GLOBAL 降级标记（仅概览+提示缩小范围）。 */
+    private boolean globalDegraded;
 
     public static EvidenceResult abstain(String traceId, String reason, String answer) {
         return EvidenceResult.builder()

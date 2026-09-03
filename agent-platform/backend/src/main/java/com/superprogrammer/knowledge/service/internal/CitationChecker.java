@@ -50,6 +50,15 @@ public class CitationChecker {
         return new ArrayList<>(new TreeSet<>(citedOrdered));
     }
 
+    /**
+     * 文档级模式（C7 GLOBAL，WP4 Step2）：白名单=参与 map 的文档序号（答案引用形如 [3]《标题》）。
+     * 校验逻辑与 chunk 级同源（[n] ∈ 白名单），仅命名区分调用意图——GLOBAL 分支的编号空间是文档而非证据块，
+     * 越界同样返回 null（调用方重生成→仍失败降级）。
+     */
+    public List<Integer> extractAndCheckDocLevel(String answer, Set<Integer> participatingDocOrdinals) {
+        return extractAndCheck(answer, participatingDocOrdinals);
+    }
+
     /** 剥 markdown 代码块（```...```）—— 其内的 [n] 不算引用。 */
     private String stripCodeFences(String text) {
         return text.replaceAll("(?s)```.*?```", " ");
