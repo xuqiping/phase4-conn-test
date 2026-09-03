@@ -1,22 +1,15 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { ProcessSettings, ColumnConfig, ConfirmMode } from '../types/process'
+import { getDefaultProcessColumns } from '../components/processColumns'
 
 const STORAGE_KEY = 'process-settings'
 
-const defaultColumns: ColumnConfig[] = [
-  { key: 'name', label: 'Name', width: '200px', visible: true, sortable: true },
-  { key: 'category', label: 'Category', width: '120px', visible: true, sortable: true },
-  { key: 'pid', label: 'PID', width: '80px', visible: true, sortable: true },
-  { key: 'memory', label: 'Memory', width: '100px', visible: true, sortable: true },
-  { key: 'cpu', label: 'CPU', width: '80px', visible: true, sortable: true },
-  { key: 'runtime', label: 'Runtime', width: '100px', visible: true, sortable: true },
-  { key: 'path', label: 'Path', width: '300px', visible: false, sortable: false },
-  { key: 'windowTitle', label: 'Window Title', width: '200px', visible: false, sortable: false }
-]
+export const PROCESS_SETTINGS_VERSION = 1
 
 const defaultSettings: ProcessSettings = {
-  columns: defaultColumns,
+  version: PROCESS_SETTINGS_VERSION,
+  columns: getDefaultProcessColumns(),
   autoRefresh: false,
   refreshInterval: 5000, // 5 seconds
   confirmMode: 'whitelist',
@@ -33,24 +26,48 @@ const defaultSettings: ProcessSettings = {
   ]
 }
 
+export function normalizeProcessSettings(stored?: Partial<ProcessSettings> | null): ProcessSettings {
+  const legacyColumns = Array.isArray(stored?.columns) ? stored.columns : []
+  const legacyByKey = new Map(legacyColumns.map(column => [column.key, column]))
+  const isLegacy = (stored?.version ?? 0) < PROCESS_SETTINGS_VERSION
+  const columns = getDefaultProcessColumns().map(defaultColumn => {
+    const saved = legacyByKey.get(defaultColumn.key)
+    const merged = saved ? { ...defaultColumn, ...saved, key: defaultColumn.key } : defaultColumn
+    if (defaultColumn.key === 'windowTitle') {
+      return {
+        ...merged,
+        visible: isLegacy ? true : merged.visible,
+        sortable: true
+      }
+    }
+    return merged
+  })
+
+  return {
+    ...defaultSettings,
+    ...stored,
+    version: PROCESS_SETTINGS_VERSION,
+    columns,
+    whitelist: Array.isArray(stored?.whitelist)
+      ? [...stored.whitelist]
+      : [...defaultSettings.whitelist]
+  }
+}
+
 export const useProcessSettingsStore = defineStore('processSettings', () => {
-  const settings = ref<ProcessSettings>({ ...defaultSettings })
+  const settings = ref<ProcessSettings>(normalizeProcessSettings())
 
   function loadSettings() {
     try {
       const stored = localStorage.getItem(STORAGE_KEY)
       if (stored) {
-        const parsed = JSON.parse(stored) as ProcessSettings
-        // Merge with defaults to handle new settings
-        settings.value = {
-          ...defaultSettings,
-          ...parsed,
-          columns: parsed.columns || defaultColumns
+        const parsed = JSON.parse(stored) as Partial<ProcessSettings>
+        settings.value = normalizeProcessSettings(parsed)
+        if ((parsed.version ?? 0) < PROCESS_SETTINGS_VERSION) saveSettings()
       }
-    }
     } catch (error) {
       console.error('Failed to load process settings:', error)
-      settings.value = { ...defaultSettings }
+      settings.value = normalizeProcessSettings()
     }
   }
 
@@ -100,7 +117,7 @@ export const useProcessSettingsStore = defineStore('processSettings', () => {
   }
 
   function resetToDefaults() {
-    settings.value = { ...defaultSettings }
+    settings.value = normalizeProcessSettings()
     saveSettings()
   }
 

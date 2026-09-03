@@ -62,7 +62,7 @@ import { Settings, X, GripVertical } from 'lucide-vue-next'
 import Sortable from 'sortablejs'
 import { useProcessSettingsStore } from '../stores/processSettingsStore'
 import { useI18n } from '../composables/useI18n'
-import { getColumnSettingsSortableOptions, reorderColumns } from './processColumns'
+import { getColumnSettingsSortableOptions, getDefaultProcessColumns, reorderColumns } from './processColumns'
 import type { ColumnConfig } from '../types/process'
 
 const { t } = useI18n()
@@ -104,18 +104,7 @@ function handleSave() {
 }
 
 function handleReset() {
-  // Reset to default columns
-  const defaultColumns: ColumnConfig[] = [
-    { key: 'name', label: 'Name', width: '200px', visible: true, sortable: true },
-    { key: 'category', label: 'Category', width: '120px', visible: true, sortable: true },
-    { key: 'pid', label: 'PID', width: '80px', visible: true, sortable: true },
-    { key: 'memory', label: 'Memory', width: '100px', visible: true, sortable: true },
-    { key: 'cpu', label: 'CPU', width: '80px', visible: true, sortable: true },
-    { key: 'runtime', label: 'Runtime', width: '100px', visible: true, sortable: true },
-    { key: 'path', label: 'Path', width: '300px', visible: false, sortable: false },
-    { key: 'windowTitle', label: 'Window Title', width: '200px', visible: false, sortable: false }
-  ]
-  localColumns.value = JSON.parse(JSON.stringify(defaultColumns))
+  localColumns.value = getDefaultProcessColumns()
 }
 </script>
 

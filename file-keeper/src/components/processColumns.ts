@@ -11,8 +11,21 @@ const processColumnClassByKey = {
   windowTitle: 'cell-window-title'
 } as const
 
+const defaultProcessColumns: ColumnConfig[] = [
+  { key: 'name', label: 'Name', width: '200px', visible: true, sortable: true },
+  { key: 'category', label: 'Category', width: '120px', visible: true, sortable: true },
+  { key: 'pid', label: 'PID', width: '80px', visible: true, sortable: true },
+  { key: 'memory', label: 'Memory', width: '100px', visible: true, sortable: true },
+  { key: 'cpu', label: 'CPU', width: '80px', visible: true, sortable: true },
+  { key: 'windowTitle', label: 'Window Title', width: '200px', visible: true, sortable: true }
+]
+
 export type SupportedProcessColumnKey = typeof supportedProcessColumnKeys[number]
 export type VisibleProcessColumn = ColumnConfig & { key: SupportedProcessColumnKey }
+
+export function getDefaultProcessColumns(): ColumnConfig[] {
+  return defaultProcessColumns.map(column => ({ ...column }))
+}
 
 export function isSupportedProcessColumnKey(key: string): key is SupportedProcessColumnKey {
   return supportedProcessColumnKeySet.has(key)

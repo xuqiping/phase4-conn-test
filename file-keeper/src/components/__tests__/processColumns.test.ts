@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { getVisibleProcessColumns, reorderColumns } from '../processColumns'
+import { getDefaultProcessColumns, getVisibleProcessColumns, reorderColumns } from '../processColumns'
 import type { ColumnConfig } from '../../types/process'
 
 function createColumns(): ColumnConfig[] {
@@ -14,6 +14,18 @@ function createColumns(): ColumnConfig[] {
 }
 
 describe('processColumns helpers', () => {
+  it('uses only renderable columns and shows a sortable window title by default', () => {
+    const columns = getDefaultProcessColumns()
+
+    expect(columns.map(column => column.key)).toEqual([
+      'name', 'category', 'pid', 'memory', 'cpu', 'windowTitle'
+    ])
+    expect(columns.find(column => column.key === 'windowTitle')).toMatchObject({
+      visible: true,
+      sortable: true
+    })
+  })
+
   it('returns visible process columns in settings order', () => {
     const columns = createColumns()
 
