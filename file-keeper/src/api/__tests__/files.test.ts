@@ -1,7 +1,14 @@
 // src/api/__tests__/files.test.ts
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { pickFile, pickFolder } from '../files'
+import {
+  deleteManagedShortcut,
+  importFavoritePath,
+  pickFile,
+  pickFolder,
+  validateFavoritePath
+} from '../files'
 import { open } from '@tauri-apps/plugin-dialog'
+import { invoke } from '@tauri-apps/api/core'
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: vi.fn()
@@ -9,6 +16,10 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
 
 vi.mock('@tauri-apps/api/path', () => ({
   documentDir: vi.fn(() => Promise.resolve('C:\\Users\\Test\\Documents'))
+}))
+
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn()
 }))
 
 describe('files API', () => {
@@ -72,5 +83,34 @@ describe('files API', () => {
 
       expect(result).toBeNull()
   })
+  })
+
+  it('wraps managed favorite path commands without changing paths', async () => {
+    const descriptor = {
+      name: 'Report.lnk',
+      path: 'C:/AppData/managed-shortcuts/id.lnk',
+      sourcePath: 'C:/Desktop/Report.lnk',
+      itemType: 'file' as const,
+      shortcutTargetPath: 'C:/Docs/Report.xlsx',
+      managedArtifact: {
+        kind: 'windows-shortcut-copy' as const,
+        cachePath: 'C:/AppData/managed-shortcuts/id.lnk',
+        originalPath: 'C:/Desktop/Report.lnk'
+      }
+    }
+    vi.mocked(invoke).mockResolvedValueOnce(descriptor).mockResolvedValueOnce(true)
+
+    await expect(importFavoritePath('C:/Desktop/Report.lnk')).resolves.toEqual(descriptor)
+    await expect(validateFavoritePath(descriptor.path, descriptor.shortcutTargetPath)).resolves.toBe(true)
+    await deleteManagedShortcut(descriptor.managedArtifact.cachePath)
+
+    expect(invoke).toHaveBeenNthCalledWith(1, 'import_favorite_path', { path: 'C:/Desktop/Report.lnk' })
+    expect(invoke).toHaveBeenNthCalledWith(2, 'validate_favorite_path', {
+      path: descriptor.path,
+      shortcutTargetPath: descriptor.shortcutTargetPath
+    })
+    expect(invoke).toHaveBeenNthCalledWith(3, 'delete_managed_shortcut', {
+      cachePath: descriptor.managedArtifact.cachePath
+    })
   })
 })

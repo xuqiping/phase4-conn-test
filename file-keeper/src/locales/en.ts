@@ -55,7 +55,11 @@ export default {
     shortcutConflict: 'This shortcut is already used by “{label}”.',
     shortcutRegisterFailed: 'Shortcut registration failed. The previous shortcut is still active: {error}',
     shortcutRestoreFailed: 'These favorite shortcuts could not be restored:\n{items}',
-    shortcutRemoveFailed: 'The shortcut could not be released, so the favorite was not removed: {error}'
+    shortcutRemoveFailed: 'The shortcut could not be released, so the favorite was not removed: {error}',
+    pathInvalid: 'This path is unavailable. Relocate it before opening.',
+    relocate: 'Relocate',
+    relocateFailed: 'Relocation failed: {error}',
+    managedCleanupFailed: 'The favorite was removed, but its managed shortcut could not be cleaned up.'
   },
   process: {
     title: 'Process Management',

@@ -12,8 +12,8 @@
 import { Plus } from 'lucide-vue-next'
 import { useFileStore } from '../stores/fileStore'
 import { useGroupStore } from '../stores/groupStore'
-import { pickFile, pickFolder, validatePath } from '../api/files'
-import { deriveIconFromExt, resolveGroupId } from '../utils/file'
+import { deleteManagedShortcut, importFavoritePath, pickFile, pickFolder } from '../api/files'
+import { resolveGroupId } from '../utils/file'
 
 const fileStore = useFileStore()
 const groupStore = useGroupStore()
@@ -34,22 +34,20 @@ async function handleAddFile() {
       return
     }
 
-    const isValid = await validatePath(selectedPath)
-    if (!isValid) {
-      alert('路径不存在或无法访问')
+    if (fileStore.files.some(file => file.path === selectedPath || file.sourcePath === selectedPath)) {
+      alert('该项目已存在')
       return
     }
-
-    const name = selectedPath.split(/[/\\]/).pop() || selectedPath
-    const isFile = !!choice
-    const type: 'file' | 'folder' = isFile ? 'file' : 'folder'
-    const icon = isFile ? deriveIconFromExt(name) : 'folder'
+    const descriptor = await importFavoritePath(selectedPath)
 
     const newItem = await fileStore.addFile({
-      name,
-      path: selectedPath,
-      type,
-      icon,
+      name: descriptor.name,
+      path: descriptor.path,
+      sourcePath: descriptor.sourcePath,
+      managedArtifact: descriptor.managedArtifact,
+      shortcutTargetPath: descriptor.shortcutTargetPath,
+      type: descriptor.itemType,
+      icon: descriptor.itemType === 'folder' ? 'folder' : '',
       tags: [],
       groupId: resolveGroupId(
         groupStore.currentGroupId,
@@ -58,11 +56,14 @@ async function handleAddFile() {
     })
 
     if (!newItem) {
+      if (descriptor.managedArtifact) {
+        await deleteManagedShortcut(descriptor.managedArtifact.cachePath).catch(() => undefined)
+      }
       alert('该项目已存在')
       return
     }
 
-    console.log(`已添加${isFile ? '文件' : '文件夹'}: ${name}`)
+    console.log(`已添加收藏项: ${newItem.id}`)
   } catch (error) {
     console.error('添加失败:', error)
     alert(`添加失败: ${error}`)

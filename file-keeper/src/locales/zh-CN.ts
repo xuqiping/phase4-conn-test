@@ -55,7 +55,11 @@ export default {
     shortcutConflict: '该快捷键已被“{label}”占用。',
     shortcutRegisterFailed: '快捷键注册失败，原快捷键仍然有效：{error}',
     shortcutRestoreFailed: '以下收藏项快捷键恢复失败：\n{items}',
-    shortcutRemoveFailed: '快捷键注销失败，收藏项未移除：{error}'
+    shortcutRemoveFailed: '快捷键注销失败，收藏项未移除：{error}',
+    pathInvalid: '路径失效，请重新定位后再打开。',
+    relocate: '重新定位',
+    relocateFailed: '重新定位失败：{error}',
+    managedCleanupFailed: '收藏项已移除，但托管快捷方式清理失败。'
   },
   process: {
     title: '进程管理',

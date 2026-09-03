@@ -178,7 +178,9 @@ export const useFileStore = defineStore('file', () => {
   // Actions
   async function addFile(file: Omit<FileItem, 'id' | 'createdAt' | 'openCount' | 'orderIndex'>): Promise<FileItem | null> {
     // Check for duplicate path
-    const existing = files.value.find(f => f.path === file.path)
+    const existing = files.value.find(f =>
+      f.path === file.path || Boolean(file.sourcePath && f.sourcePath === file.sourcePath)
+    )
     if (existing) {
       return null
     }

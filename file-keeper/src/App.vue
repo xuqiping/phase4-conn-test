@@ -373,6 +373,9 @@
                 :title="file.name"
                 v-html="highlightText(file.name, fileStore.searchQuery)"
               />
+              <span v-if="invalidFavoriteIds.has(file.id)" class="mt-1 text-xs font-medium text-red-500">
+                {{ t('file.pathInvalid') }}
+              </span>
                </div>
 
           <!-- Tags -->
@@ -463,6 +466,9 @@
                  class="text-sm font-medium truncate"
             v-html="highlightText(file.name, fileStore.searchQuery)"
                   />
+                  <span v-if="invalidFavoriteIds.has(file.id)" class="text-[11px] font-medium text-red-500">
+                    {{ t('file.pathInvalid') }}
+                  </span>
            <span
                       class="text-[11px] text-gray-400 truncate mt-0.5"
                     v-html="highlightText(file.path, fileStore.searchQuery)"
@@ -778,8 +784,10 @@
       :file="editingFile"
       :saving="fileEditSaving"
       :shortcut-error="fileEditShortcutError"
+      :path-invalid="invalidFavoriteIds.has(editingFile.id)"
       @close="editingFile = null"
       @saved="handleFileSaved"
+      @relocate="handleRelocateFile"
     />
 
     <ClipboardQuickPanel />
@@ -838,7 +846,15 @@ import { useRecentStore } from './stores/recentStore'
 import { useClipboardStore } from './stores/clipboardStore'
 import { useAuthStore } from './stores/authStore'
 import { useI18n } from './composables/useI18n'
-import { openFile, showInFolder, validatePath } from './api/files'
+import {
+  deleteManagedShortcut,
+  importFavoritePath,
+  openFile,
+  pickFile,
+  pickFolder,
+  showInFolder,
+  validateFavoritePath
+} from './api/files'
 import { findFileProcesses, closeProcess } from './api/processes'
 import { captureScreenshotRegion } from './api/screenshot'
 import { closeScreenshotOverlayWindow, openScreenshotOverlayWindow } from './api/screenshotOverlay'
@@ -875,6 +891,7 @@ const clipboardStore = useClipboardStore()
 const authStore = useAuthStore()
 const { t, locale, toggleLocale } = useI18n()
 const commercialServerUrl = import.meta.env.VITE_FILE_KEEPER_SERVER_URL || 'http://localhost:8088'
+const invalidFavoriteIds = ref(new Set<string>())
 const favoriteShortcutCoordinator = createFavoriteShortcutCoordinator({
   register: registerGlobalShortcut,
   unregister: unregisterGlobalShortcut
@@ -1111,6 +1128,7 @@ async function handleBatchDelete() {
   const confirmed = confirm(`确定删除选中的 ${ids.length} 个项目？`)
   if (confirmed) {
     const removableIds: string[] = []
+    const removableFiles: FileItem[] = []
     const failures: string[] = []
     for (const id of ids) {
       const file = fileStore.files.find(item => item.id === id)
@@ -1118,14 +1136,22 @@ async function handleBatchDelete() {
       try {
         await favoriteShortcutCoordinator.unregister(file.id, file.shortcut)
         removableIds.push(file.id)
+        removableFiles.push(file)
       } catch (error) {
         failures.push(`${file.name}: ${error instanceof Error ? error.message : String(error)}`)
       }
     }
     fileStore.batchDelete(removableIds)
+    invalidFavoriteIds.value = new Set(
+      [...invalidFavoriteIds.value].filter(id => !removableIds.includes(id))
+    )
+    const cleanupResults = await Promise.all(removableFiles.map(file => cleanupManagedArtifact(file)))
     selectionStore.clearSelection()
     if (failures.length > 0) {
       alert(t('file.shortcutRemoveFailed', { error: failures.join('\n') }))
+    }
+    if (cleanupResults.some(result => !result)) {
+      alert(t('file.managedCleanupFailed'))
     }
   }
 }
@@ -1194,6 +1220,7 @@ async function handleAddFolder() {
     const newItem = await fileStore.addFile({
       name,
       path: selectedPath,
+      sourcePath: selectedPath,
       type: 'folder',
       icon: '', // Icon will be loaded lazily
       tags: [],
@@ -1270,49 +1297,37 @@ async function handleTauriDroppedPaths(paths: string[]) {
 
 async function processDroppedPath(filePath: string): Promise<'added' | 'duplicate' | 'invalid' | 'error'> {
   try {
-    const { validatePath } = await import('./api/files')
-    const isValid = await validatePath(filePath)
-    if (!isValid) {
-      console.warn(`拖拽路径无效: ${filePath}`)
-      return 'invalid'
-  }
-    // Determine if it's a file or folder based on path (no extension usually means folder, but check via stat)
-    const { stat } = await import('@tauri-apps/plugin-fs')
-    let isFolder = false
-    try {
-      const info = await stat(filePath)
-      isFolder = info.isDirectory
-    } catch {
-      // Fallback: check if there's a file extension
-      const lastSegment = filePath.split(/[/\\]/).pop() || ''
-      isFolder = !lastSegment.includes('.')
+    if (fileStore.files.some(file => file.path === filePath || file.sourcePath === filePath)) {
+      return 'duplicate'
     }
-
-    const name = filePath.split(/[/\\]/).pop() || filePath
-    const type: 'file' | 'folder' = isFolder ? 'folder' : 'file'
-    // Icon will be loaded lazily via useIconLazyLoad
-    const icon = ''
+    const descriptor = await importFavoritePath(filePath)
 
     const newItem = await fileStore.addFile({
-   name,
-      path: filePath,
-      type,
-      icon,
+      name: descriptor.name,
+      path: descriptor.path,
+      sourcePath: descriptor.sourcePath,
+      managedArtifact: descriptor.managedArtifact,
+      shortcutTargetPath: descriptor.shortcutTargetPath,
+      type: descriptor.itemType,
+      icon: '',
       tags: [],
       groupId: resolveGroupId(
         groupStore.currentGroupId,
-      groupStore.customGroups[0]?.id
+        groupStore.customGroups[0]?.id
       )
     })
 
     if (!newItem) {
-    console.warn(`项目已存在: ${filePath}`)
+      if (descriptor.managedArtifact) {
+        await deleteManagedShortcut(descriptor.managedArtifact.cachePath).catch(() => undefined)
+      }
       return 'duplicate'
     }
+    await refreshFavoriteValidity(newItem)
     return 'added'
   } catch (error) {
-    console.error('拖拽处理失败:', error)
-  return 'error'
+    console.error('拖拽处理失败:', error instanceof Error ? error.message : String(error))
+    return 'error'
   }
 }
 
@@ -1601,6 +1616,12 @@ onMounted(async () => {
     console.error('Failed to restore favorite shortcuts:', error)
   })
 
+  void (fileStore as { $persistReady?: Promise<void> }).$persistReady?.then(() =>
+    Promise.all(fileStore.files.map(file => refreshFavoriteValidity(file)))
+  ).catch(() => {
+    console.warn('Failed to refresh favorite path status')
+  })
+
   // Tauri native drag-drop (provides real file paths)
   try {
     dndUnlisten = await appWindow.onDragDropEvent((event) => {
@@ -1773,12 +1794,16 @@ const loadingProcesses = ref(false)
 
 async function handleFileClick(file: FileItem) {
   try {
+    if (!await refreshFavoriteValidity(file)) {
+      alert(t('file.pathInvalid'))
+      return
+    }
+    await openFile(file.path)
     fileStore.recordOpen(file.id)
     recentStore.addRecent(file)
-    await openFile(file.path)
-    console.log(`已打开: ${file.name}`)
+    console.log(`已打开收藏项: ${file.id}`)
   } catch (error) {
-    console.error(`打开失败: ${error}`)
+    console.error(`打开收藏项失败: ${file.id}`)
     alert(`打开失败: ${error}`)
   }
 }
@@ -1786,12 +1811,69 @@ async function handleFileClick(file: FileItem) {
 async function openFavoriteById(id: string) {
   const file = fileStore.files.find(item => item.id === id)
   if (!file) return
-  if (!await validatePath(file.path)) {
-    console.warn(`Favorite shortcut target is unavailable: ${file.id}`)
-    return
-  }
-
   await handleFileClick(file)
+}
+
+async function refreshFavoriteValidity(file: FileItem): Promise<boolean> {
+  const valid = await validateFavoritePath(file.path, file.shortcutTargetPath)
+  const next = new Set(invalidFavoriteIds.value)
+  if (valid) next.delete(file.id)
+  else next.add(file.id)
+  invalidFavoriteIds.value = next
+  return valid
+}
+
+async function cleanupManagedArtifact(file: FileItem): Promise<boolean> {
+  if (!file.managedArtifact) return true
+  try {
+    await deleteManagedShortcut(file.managedArtifact.cachePath)
+    return true
+  } catch {
+    console.warn(`Managed shortcut cleanup failed for favorite ${file.id}`)
+    return false
+  }
+}
+
+async function handleRelocateFile(file: FileItem) {
+  try {
+    const selectedPath = file.type === 'folder'
+      ? await pickFolder(file.sourcePath || file.path)
+      : await pickFile()
+    if (!selectedPath) return
+    if (fileStore.files.some(item =>
+      item.id !== file.id && (item.path === selectedPath || item.sourcePath === selectedPath)
+    )) {
+      alert('该项目已存在')
+      return
+    }
+    const descriptor = await importFavoritePath(selectedPath)
+    const descriptorValid = await validateFavoritePath(
+      descriptor.path,
+      descriptor.shortcutTargetPath
+    )
+    if (!descriptorValid) {
+      if (descriptor.managedArtifact) {
+        await deleteManagedShortcut(descriptor.managedArtifact.cachePath).catch(() => undefined)
+      }
+      throw new Error(t('file.pathInvalid'))
+    }
+    const previous = { ...file }
+    fileStore.updateFile(file.id, {
+      path: descriptor.path,
+      sourcePath: descriptor.sourcePath,
+      managedArtifact: descriptor.managedArtifact,
+      shortcutTargetPath: descriptor.shortcutTargetPath,
+      type: descriptor.itemType
+    })
+    await refreshFavoriteValidity(file)
+    if (!(await cleanupManagedArtifact(previous))) {
+      alert(t('file.managedCleanupFailed'))
+    }
+  } catch (error) {
+    alert(t('file.relocateFailed', {
+      error: error instanceof Error ? error.message : String(error)
+    }))
+  }
 }
 
 function handleCardClick(event: MouseEvent, file: FileItem) {
@@ -1877,6 +1959,7 @@ async function handleFileSaved(updates: Partial<FileItem>) {
       () => { void openFavoriteById(file.id) }
     )
     fileStore.updateFile(file.id, { ...updates, shortcut: shortcut || undefined })
+    await refreshFavoriteValidity(file)
     editingFile.value = null
   } catch (error) {
     fileEditShortcutError.value = t('file.shortcutRegisterFailed', {
@@ -1990,6 +2073,10 @@ async function handleRemoveFile(file: FileItem) {
   try {
     await favoriteShortcutCoordinator.unregister(file.id, file.shortcut)
     fileStore.removeFile(file.id)
+    invalidFavoriteIds.value = new Set([...invalidFavoriteIds.value].filter(id => id !== file.id))
+    if (!(await cleanupManagedArtifact(file))) {
+      alert(t('file.managedCleanupFailed'))
+    }
     console.log(`已移除收藏项: ${file.id}`)
   } catch (error) {
     alert(t('file.shortcutRemoveFailed', {

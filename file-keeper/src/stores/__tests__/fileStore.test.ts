@@ -54,6 +54,29 @@ describe('fileStore', () => {
         expect(result).toBeNull()
     expect(store.files).toHaveLength(7) // 6 mock + 1 new (not 8)
     })
+
+    it('should not add the same managed shortcut source twice', async () => {
+      const store = useFileStore()
+      await store.addFile({
+        name: 'Report.lnk',
+        path: 'C:/cache/one.lnk',
+        sourcePath: 'C:/Desktop/Report.lnk',
+        type: 'file',
+        tags: [],
+        groupId: 'all'
+      })
+
+      const result = await store.addFile({
+        name: 'Report.lnk',
+        path: 'C:/cache/two.lnk',
+        sourcePath: 'C:/Desktop/Report.lnk',
+        type: 'file',
+        tags: [],
+        groupId: 'all'
+      })
+
+      expect(result).toBeNull()
+    })
   })
 
   describe('removeFile', () => {

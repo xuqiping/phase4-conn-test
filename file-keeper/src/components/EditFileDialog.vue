@@ -66,6 +66,22 @@
               />
               <Lock :size="14" class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
             </div>
+            <div
+              v-if="pathInvalid"
+              data-test="invalid-path-alert"
+              role="alert"
+              class="mt-2 flex items-center justify-between gap-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300"
+            >
+              <span>{{ t('file.pathInvalid') }}</span>
+              <button
+                data-test="relocate-file"
+                type="button"
+                class="shrink-0 rounded-md border border-red-300 px-2 py-1 font-medium hover:bg-red-100 dark:border-red-800 dark:hover:bg-red-900/40"
+                @click="emit('relocate', file)"
+              >
+                {{ t('file.relocate') }}
+              </button>
+            </div>
           </div>
 
           <div>
@@ -183,11 +199,13 @@ const props = defineProps<{
   file: FileItem
   saving: boolean
   shortcutError: string
+  pathInvalid: boolean
 }>()
 
 const emit = defineEmits<{
   close: []
   saved: [updates: Partial<FileItem>]
+  relocate: [file: FileItem]
 }>()
 
 const groupStore = useGroupStore()

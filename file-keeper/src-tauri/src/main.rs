@@ -8,7 +8,10 @@ mod platform;
 mod types;
 mod utils;
 
-use commands::files::{open_file, validate_path, show_in_folder};
+use commands::files::{
+    delete_managed_shortcut, import_favorite_path, open_file, show_in_folder,
+    validate_favorite_path, validate_path,
+};
 use commands::processes::{find_file_processes, close_process, close_file_processes};
 use commands::process_management::{get_running_processes, close_app_process, close_app_processes, kill_app_process, kill_app_processes, activate_app_window};
 use commands::icons::get_file_icon;
@@ -122,6 +125,9 @@ fn main() {
             open_file,
          validate_path,
             show_in_folder,
+            import_favorite_path,
+            validate_favorite_path,
+            delete_managed_shortcut,
             find_file_processes,
             close_process,
           close_file_processes,
