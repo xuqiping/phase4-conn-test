@@ -34,11 +34,12 @@ created-date: 2026-09-03
   - **依赖**：Step 1｜**验证**：单测——GLOBAL 分类/引用白名单/越界拒/多库提示/超时降级；黄金集普通问题不进 GLOBAL ✅（Test ×13 实际）
   - **实现注（偏离）**：规则 GLOBAL 用双词表门（范围词+意图词同时命中）防「总结报销流程」误入——比计划单列词表更严；/ask 新增 retrieveEvidence(prePlanned) 重载防 GLOBAL 预判导致的双重 LLM 规划（chat 路径不变）；并行用静态 2 线程守护池（计划「≤2」落为常量而非配置项）；黄金集回归=既有 RagBaselineRegressionGateTest 不受扰（GLOBAL 不改常规管道路径）
 
-- [ ] **Step 3：混合问题跟进轮**
+- [x] **Step 3：混合问题跟进轮**（commit 9c7f08d3，2865/2865）
   - **目标**：全局+细节混合问题两类证据齐答
   - **动作**：①GLOBAL 完成后 CoverageVerifier 检测剩余子意图（依赖 WP2 设施；WP2 未合入则用规则缺口判定）→补一轮局部检索（现有管道）→细节证据分列引用；②答案结构：概览段（L-KB）+要点段（map）+细节段（局部检索）
   - **文件**：`GlobalAnswerStrategy.java`、`context/CoverageVerifier.java`（复用）、Test ×1
-  - **依赖**：Step 2、WP2 Step 2（可后并）｜**验证**：单测混合 query 三段结构
+  - **依赖**：Step 2、WP2 Step 2（可后并）｜**验证**：单测混合 query 三段结构 ✅（Test ×5 实际）
+  - **实现注（偏离）**：①GLOBAL 分支移到 EXACT 之前——原 Step2 顺序下混合问题（「总结全库，V2.1第十条原文」）永远被锚点 filters 抢先进 EXACT，GLOBAL 永远收不到混合题；双词表门仍保护纯锚点问题（「说了什么」无意图词→EXACT）。②揪出 VERSION 正则坑：JDK `\b` 按 Unicode 判词，「V2.1第十条」无空格时 1 与 第 均词字符无边界→版本锚点漏提（细节跟进轮锚点失效），改环视 `(?<![0-9A-Za-z.])V?\d+(?:\.\d+)+(?![0-9.])`。③细节段语义=增益非依赖：abstain/空证据/空事实/引用双败/异常全部返回 UNUSED，全局两段主体完整可用。④引用编号空间：细节段续 global 文档序之后（Evidence.citationId 与 CitationVO.index 双层偏移，CitationVO 补 toBuilder）。⑤规划复用 PlanOutcome 透传防细节轮二次 LLM 规划。Test ×5（计划 ×1）：missing 检测 ×2+混合分类锚点保留 ×1+细节段偏移合成/引用越界跳过 ×2
 
 - [ ] **Step 4：前端与调试可见性**
   - **目标**：全局模式可辨识、可调试
