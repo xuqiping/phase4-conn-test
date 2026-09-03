@@ -20,15 +20,26 @@ function Show-AdminReminder {
 function Test-PortListening {
     param([Parameter(Mandatory)][int]$Port)
 
-    $client = [System.Net.Sockets.TcpClient]::new()
-    try {
-        $task = $client.ConnectAsync('127.0.0.1', $Port)
-        return $task.Wait(400) -and $client.Connected
-    } catch {
-        return $false
-    } finally {
-        $client.Dispose()
+    $loopbacks = @(
+        @{ Address = '127.0.0.1'; Family = [System.Net.Sockets.AddressFamily]::InterNetwork },
+        @{ Address = '::1'; Family = [System.Net.Sockets.AddressFamily]::InterNetworkV6 }
+    )
+
+    foreach ($loopback in $loopbacks) {
+        $client = New-Object System.Net.Sockets.TcpClient($loopback.Family)
+        try {
+            $task = $client.ConnectAsync($loopback.Address, $Port)
+            if ($task.Wait(400) -and $client.Connected) {
+                return $true
+            }
+        } catch {
+            # 继续尝试另一个回环地址。
+        } finally {
+            $client.Dispose()
+        }
     }
+
+    return $false
 }
 
 function Wait-PortListening {
@@ -192,6 +203,14 @@ try {
         $maven = Resolve-Application -Names @('mvn.cmd', 'mvn.exe', 'mvn')
         if (-not $maven) { throw '未找到 Maven（mvn），请先安装并加入 PATH。' }
 
+        if ([string]::IsNullOrWhiteSpace($env:FILE_KEEPER_DB_PASSWORD)) {
+            $userDbPassword = [Environment]::GetEnvironmentVariable('FILE_KEEPER_DB_PASSWORD', 'User')
+            if (-not [string]::IsNullOrWhiteSpace($userDbPassword)) {
+                $env:FILE_KEEPER_DB_PASSWORD = $userDbPassword
+                Write-Host '[提示] 已从当前用户环境加载数据库密码。' -ForegroundColor DarkGray
+            }
+        }
+
         $jwtSecret = $env:FILE_KEEPER_JWT_SECRET
         if ([string]::IsNullOrWhiteSpace($jwtSecret)) {
             $jwtSecret = New-TemporaryJwtSecret
@@ -220,7 +239,7 @@ try {
         Wait-PortListening -Port 8088 -Name 'Java 后端' -TimeoutSeconds 90
     }
 
-    if ((Test-PortListening -Port 1420) -or (Get-Process -Name 'file-keeper' -ErrorAction SilentlyContinue)) {
+    if (Test-PortListening -Port 1420) {
         Write-Host '[跳过] Tauri 桌面端已运行。' -ForegroundColor DarkGray
     } else {
         $npm = Resolve-Application -Names @('npm.cmd', 'npm.exe')
