@@ -99,6 +99,18 @@ export interface RagRolloutState {
   operatorId: number
 }
 
+/** WP3 C4 存量上下文增强：预估（dryRun=true）/ 应用结果 */
+export interface ContextualRebuildStatus {
+  docCount: number
+  chunkCount: number
+  llmCallCount: number
+  appliedDocs: number
+  skippedDone: number
+  skippedAttachment: number
+  enqueuedJobs: number
+  dryRun: boolean
+}
+
 /** 文档（对应后端 KnowledgeDocumentVO） */
 export interface KnowledgeDocument {
   id: number
@@ -523,6 +535,10 @@ export const knowledgeApi = {
   },
   rollbackIndex(kbId: number) {
     return request.post<ApiResponse<KnowledgeIndexStatus>>(`/knowledge/admin/indexes/${kbId}/rollback`, { snapshotId: 'rollback', confirmed: true, dryRun: false })
+  },
+  /** WP3 C4：存量「应用 LLM 上下文增强」——dryRun=true 只回成本预估，false 逐文档生成定位表并入队重嵌 */
+  contextualRebuild(kbId: number, dryRun: boolean) {
+    return request.post<ApiResponse<ContextualRebuildStatus>>(`/knowledge/admin/indexes/${kbId}/contextual-rebuild`, { dryRun })
   },
   getRolloutStatus(kbId: number) {
     return request.get<ApiResponse<RagRolloutState>>(`/knowledge/admin/rollouts/${kbId}`)

@@ -33,6 +33,26 @@ public class KnowledgeAdminController {
     private final com.superprogrammer.knowledge.migration.RagRolloutReadinessService rolloutReadinessService;
     private final com.superprogrammer.knowledge.retrieval.ShadowComparisonQueryService shadowComparisonQueryService;
     private final com.superprogrammer.knowledge.service.KnowledgeBaseService knowledgeBaseService;
+    private final com.superprogrammer.knowledge.service.ContextualRebuildService contextualRebuildService;
+
+    /**
+     * WP3 C4：存量可选「应用 LLM 上下文增强」。dryRun=true 只回成本预估（确认框展示）；
+     * false 逐文档生成定位表并入队 REINDEX（pipeline=CTX_LLM_V1，worker 异步重嵌+OS 双写）。
+     * ATTACHMENT 文档豁免（描述召回，规格 §6.3）；中断可续（整文档已完成的跳过）。
+     */
+    @PostMapping("/indexes/{kbId}/contextual-rebuild")
+    @AuditLog(module = "kb", action = "rag_contextual_rebuild", targetType = "knowledge_base")
+    @RequirePermission("knowledge:manage")
+    public ResponseEntity<R<com.superprogrammer.knowledge.dto.ContextualRebuildVO>> contextualRebuild(
+            @PathVariable Long kbId, @RequestBody ContextualRebuildRequest request) {
+        com.superprogrammer.knowledge.dto.ContextualRebuildVO vo =
+                Boolean.TRUE.equals(request.dryRun())
+                        ? contextualRebuildService.estimate(kbId)
+                        : contextualRebuildService.apply(kbId);
+        return ResponseEntity.ok(R.ok(vo));
+    }
+
+    record ContextualRebuildRequest(Boolean dryRun) {}
 
     @PostMapping("/backfill-tokens")
     @AuditLog(module = "kb", action = "backfill_tokens", targetType = "kb_document")

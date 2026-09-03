@@ -22,6 +22,27 @@
       </n-descriptions>
 
       <n-divider />
+      <n-divider />
+
+      <strong>LLM 上下文增强（存量）</strong>
+      <n-space>
+        <n-button :disabled="!kbId" @click="estimateContextual">成本预估</n-button>
+        <n-button type="warning" :disabled="!kbId" @click="confirmContextual">应用 LLM 上下文增强</n-button>
+      </n-space>
+      <n-alert v-if="contextual" :type="contextual.dryRun ? 'info' : 'success'">
+        <template v-if="contextual.dryRun">
+          预估：{{ contextual.docCount }} 个文档 / {{ contextual.chunkCount }} 个分块，
+          将发起 {{ contextual.llmCallCount }} 次 LLM 定位调用并重嵌全部分块（附件豁免
+          {{ contextual.skippedAttachment }} 个）
+        </template>
+        <template v-else>
+          完成：处理 {{ contextual.appliedDocs }} 个文档，入队 {{ contextual.enqueuedJobs }} 个重嵌
+          job；跳过（含中断续跑）{{ contextual.skippedDone }} 个，附件豁免 {{ contextual.skippedAttachment }} 个
+        </template>
+      </n-alert>
+
+      <n-divider />
+
       <strong>RAG 灰度发布</strong>
       <n-select v-model:value="rolloutPercentage" :options="rolloutOptions" />
       <n-input v-model:value="configVersion" placeholder="配置版本，例如 rag-v2" />
@@ -44,7 +65,8 @@ import {
   NInput, NSelect, NSpace, useDialog, useMessage
 } from 'naive-ui'
 import {
-  knowledgeApi, type KnowledgeBase, type KnowledgeIndexStatus, type RagRolloutState
+  knowledgeApi, type KnowledgeBase, type KnowledgeIndexStatus, type RagRolloutState,
+  type ContextualRebuildStatus
 } from '@/api/knowledge'
 
 const props = defineProps<{ bases: KnowledgeBase[] }>()
@@ -52,6 +74,7 @@ const kbId = ref<number | null>(null)
 const snapshotId = ref('')
 const status = ref<KnowledgeIndexStatus | null>(null)
 const rollout = ref<RagRolloutState | null>(null)
+const contextual = ref<ContextualRebuildStatus | null>(null)
 const rolloutPercentage = ref(5)
 const configVersion = ref('')
 const dialog = useDialog()
@@ -97,6 +120,23 @@ function confirmRollback() {
     title: '确认回滚', content: '回滚到上一已登记快照？', positiveText: '确认', negativeText: '取消',
     onPositiveClick: async () => {
       if (kbId.value) status.value = (await knowledgeApi.rollbackIndex(kbId.value)).data.data
+    }
+  })
+}
+async function estimateContextual() {
+  if (!kbId.value) return
+  contextual.value = (await knowledgeApi.contextualRebuild(kbId.value, true)).data.data
+}
+function confirmContextual() {
+  dialog.warning({
+    title: '应用 LLM 上下文增强',
+    content: contextual.value?.dryRun === false
+      ? `上轮已入队 ${contextual.value.enqueuedJobs} 个重嵌 job。再次应用将为剩余未完成文档生成定位表并入队（已完成的自动跳过），继续？`
+      : '将为库内全部解析型文档生成 LLM 定位语并入队重嵌（附件描述召回豁免；中断后重跑自动续）。建议先「成本预估」确认调用量。继续？',
+    positiveText: '确认应用',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      if (kbId.value) contextual.value = (await knowledgeApi.contextualRebuild(kbId.value, false)).data.data
     }
   })
 }
