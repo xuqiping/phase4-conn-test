@@ -43,6 +43,12 @@ public class RagRecallProperties {
         private boolean enabled = true;
         /** 每带出文档的 L2 节点上限（独立于主池 perDocL2Cap，可单独收紧）。 */
         private int perDocL2Cap = 5;
+        /** 共召回建议 worker 开关（关 → 不再生成新建议；已有建议照常可采纳/忽略）。 */
+        private boolean suggestionEnabled = true;
+        /** 建议门槛：同 query 下两文档共现 ≥ 此次数才建议（默认 3，规格 §3.3）。 */
+        private int suggestionMinCoRecall = 3;
+        /** 建议扫描窗口（天）：只统计近 N 天 trace，窗口外共现不再累计。 */
+        private int suggestionLookbackDays = 14;
     }
 
     @Data

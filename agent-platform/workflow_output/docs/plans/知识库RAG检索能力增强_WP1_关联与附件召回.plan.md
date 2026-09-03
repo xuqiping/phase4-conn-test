@@ -35,11 +35,12 @@ created-date: 2026-09-03
   - **依赖**：Step 1｜**验证**：单测——去重/1跳（A→B→C 不带C）/权限丢弃静默/预算挤占顺序/缓存失效；集成——无任何边时输出与基线一致
   - **实现注**（偏离 2 处，详见开发进度）：①缓存失效走 `computeKnowledgeSnapshot` SQL 双聚合（nodes+边）而非 AnswerCacheService 单独 hash 段——P3 校验链单点收口，部署日存量缓存全量 miss 一次属预期；②step6.5 计量走 MDC traceId 结构化日志（processor 一条 info：边/MUST/MAY/相关文档/权限丢弃/耗时）+ writeTrace evidence 行加 injectedBy 列，不动 RagTraceContext（该类设计为「只存 ID/用途」，加计数列需 DDL+新表，收益不成比例）；MAY_CITE 重打分复用 rankWithTrace（真实 RankingEngine 调用，DISABLED 模式下候选保守淘汰）。运维补：`rag.recall.relation.enabled` kill switch + `per-doc-l2-cap`（RagRecallProperties.Relation，主计划运维清单配置开关行的 C1 项）。测试 16/16（processor 12 + merge 4）✅；全量 2761/2761
 
-- [ ] **Step 3：C1 关联建议**
+- [x] **Step 3：C1 关联建议**
   - **目标**：共召回统计自动建议关联
   - **动作**：①`RelationSuggestionWorker`（@Scheduled 每日）：扫 trace 表近期共召回对（同 query ≥3 次共现、无既有边、同库）→ upsert suggestions；②采纳 API（POST /relations/adopt/{suggestionId}→建边+删建议）/忽略 API；③仅 owner/canManage 可见可操作
   - **文件**：`RelationSuggestionWorker.java`、`DocumentRelationController.java`（扩展）、`trace` 读侧 Mapper、Test ×1
   - **依赖**：Step 1（trace 表已有）｜**验证**：构造共召回数据→建议生成→采纳→边出现→建议消失
+  - **实现注**（偏离 3 处，详见开发进度）：①采纳后建议不物理删——置 ADOPTED/IGNORED 状态位占住 uq_kdrs(kb,a,b)，worker 据此不重提（用户已裁决的对不再打扰），等价防重且留审计痕迹；②采纳不直接写边表——委托 `DocumentRelationService.create` 复用六路校验（建议流不能绕过建边不变式），建议生成后用户手动建过边 → 采纳遇「已存在」按成功收口；③trace 读侧零新 Mapper——复用 `RagRetrievalLogMapper.selectList`（cursor 分批 LIMIT 500）；Controller 实为 `KnowledgeRelationController` 扩展（GET /suggestions + POST /{id}/adopt + /{id}/ignore）。测试 18/18（worker 9 + service 9）✅
 
 - [ ] **Step 4：C1 前端**
   - **目标**：关联可管理、可见、可追溯
