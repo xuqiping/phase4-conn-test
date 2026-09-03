@@ -7,6 +7,7 @@ import com.superprogrammer.knowledge.dto.RagQueryRow;
 import com.superprogrammer.knowledge.dto.RagRetrieveRequest;
 import com.superprogrammer.knowledge.dto.RagRetrieveVO;
 import com.superprogrammer.knowledge.entity.KnowledgeBase;
+import com.superprogrammer.knowledge.entity.KnowledgeDocument;
 import com.superprogrammer.knowledge.entity.RagRetrievalLog;
 import com.superprogrammer.knowledge.mapper.RagRetrievalLogMapper;
 import com.superprogrammer.knowledge.mapper.RagRetrievalQueryMapper;
@@ -78,6 +79,8 @@ public class RagRetrievalService {
     private final com.superprogrammer.knowledge.ranking.RankingEngine rankingEngine;
     private final com.superprogrammer.knowledge.retrieval.ProductionRetrievalGateway productionRetrievalGateway;
     private final com.superprogrammer.knowledge.relation.RelationGraphPostProcessor relationGraphPostProcessor;
+    private final com.superprogrammer.knowledge.mapper.KnowledgeDocumentMapper documentMapper;
+    private final com.superprogrammer.knowledge.attachment.AttachmentContentInjector attachmentContentInjector;
     private final com.superprogrammer.knowledge.context.EvidencePolicyService evidencePolicyService;
     private final com.superprogrammer.knowledge.answer.GroundedAnswerService groundedAnswerService;
 
@@ -121,13 +124,14 @@ public class RagRetrievalService {
                        boolean bm25Only, double docL1Sim) {
     }
 
-    /** injectedBy（C1 step6.5）：RELATION_MUST/RELATION_MAY/null=常规检索命中。 */
+    /** injectedBy（C1 step6.5）：RELATION_MUST/RELATION_MAY/null=常规检索命中。
+     *  attachment（C2 Step6）：附件型证据——content 已拼入注入块（原件全文/识图文本/降级标注）。 */
     private record Evidence(Long nodeId, Long documentId, String title, String content,
                             String contentHash, String docType,
                             String fileRef, String mime, String originalName,
                             String l1Outline, String l1Rules,
                             int citationIndex, double rerankScore, LocatorData locator,
-                            String injectedBy) {
+                            String injectedBy, boolean attachment) {
     }
 
     /** step6.5 关系扩展产物（单次 expandRelations 调用结果；多 KB 路径逐库聚合）。 */
@@ -604,6 +608,7 @@ public class RagRetrievalService {
                             .docType(e.docType()).fileRef(e.fileRef())
                             .mime(e.mime()).originalName(e.originalName())
                             .confidential(confidentialNodes.contains(e.nodeId()))
+                            .attachment(e.attachment())
                             .page(e.locator().page()).article(e.locator().article())
                             .sheet(e.locator().sheet()).cellRange(e.locator().cellRange())
                             .bbox(e.locator().bbox()).build())
@@ -687,7 +692,8 @@ public class RagRetrievalService {
                     "title", String.valueOf(e.title()),
                     "contentHash", String.valueOf(e.contentHash()),
                     "citationIndex", e.citationIndex(),
-                    "injectedBy", String.valueOf(e.injectedBy()))).toList()));
+                    "injectedBy", String.valueOf(e.injectedBy()),
+                    "attachment", e.attachment())).toList()));
             trace.setTokenBudget(toJson(budget));
             logMapper.insertTrace(trace);
         } catch (Exception e) {
@@ -1101,7 +1107,7 @@ public class RagRetrievalService {
         while (matcher.find()) {
             int index = Integer.parseInt(matcher.group(1));
             result.add(new Evidence(null, null, matcher.group(2).trim(), matcher.group(3).trim(),
-                    null, null, null, null, null, null, null, index, 0, null, null));
+                    null, null, null, null, null, null, null, index, 0, null, null, false));
         }
         return result;
     }
@@ -1131,7 +1137,8 @@ public class RagRetrievalService {
     }
 
     /** step8：I3 复校（content_hash 现值）+ L1 装载 + 编号。失配丢弃并记 REINDEX。
-     *  injectedBy：nodeId → RELATION_MUST/RELATION_MAY（step6.5 带出），null=常规命中。 */
+     *  injectedBy：nodeId → RELATION_MUST/RELATION_MAY（step6.5 带出），null=常规命中。
+     *  C2 Step6：attachMode 节点在此拼注入块（附件全文/图片识图/降级标注）进 content。 */
     private List<Evidence> step8LoadEvidence(List<L2Candidate> topK, Map<Long, String> injectedBy) {
         List<Evidence> out = new ArrayList<>();
         int idx = 1;
@@ -1143,13 +1150,47 @@ public class RagRetrievalService {
                 continue;   // I3：丢弃，Phase1 仅记日志（REINDEX 由阶段7 对账兜底）
             }
             L1Outline l1 = loadL1(c.documentId());
-            out.add(new Evidence(c.nodeId(), c.documentId(), c.title(), c.content(),
+            String content = c.content();
+            boolean attachment = false;
+            Map<String, Object> metaMap = readMetadataMap(hv.getMetadata());
+            if (metaMap != null && Boolean.TRUE.equals(metaMap.get("attachMode"))) {
+                attachment = true;
+                String block = buildAttachmentBlock(c.documentId(), metaMap);
+                if (block != null) {
+                    content = (content == null ? "" : content) + "\n" + block;
+                }
+            }
+            out.add(new Evidence(c.nodeId(), c.documentId(), c.title(), content,
                     c.contentHash(), l1.docType, l1.fileRef, l1.mime, l1.originalName,
                     l1.outline, l1.rules, idx, c.rerankScore(), parseLocator(hv.getMetadata()),
-                    injectedBy == null ? null : injectedBy.get(c.nodeId())));
+                    injectedBy == null ? null : injectedBy.get(c.nodeId()), attachment));
             idx++;
         }
         return out;
+    }
+
+    /** C2 Step6：附件注入块。kill switch 关/文档已删 → null（📎 标志保留，内容仅描述）。 */
+    private String buildAttachmentBlock(Long documentId, Map<String, Object> metaMap) {
+        if (!recallProps.getAttachment().isEnabled()) {
+            return null;
+        }
+        KnowledgeDocument doc = documentMapper.selectById(documentId);
+        if (doc == null) {
+            return null;
+        }
+        return attachmentContentInjector.inject(doc, metaMap);
+    }
+
+    /** node metadata JSON → Map；null/格式错 → null（与 parseLocator 同容错口径）。 */
+    private Map<String, Object> readMetadataMap(String metadataJson) {
+        if (metadataJson == null || metadataJson.isBlank()) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(metadataJson, Map.class);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private List<Evidence> renumberEvidence(List<Evidence> evidence) {
@@ -1159,7 +1200,7 @@ public class RagRetrievalService {
             result.add(new Evidence(e.nodeId(), e.documentId(), e.title(), e.content(),
                     e.contentHash(), e.docType(), e.fileRef(), e.mime(), e.originalName(),
                     e.l1Outline(), e.l1Rules(), citationIndex++, e.rerankScore(), e.locator(),
-                    e.injectedBy()));
+                    e.injectedBy(), e.attachment()));
         }
         return result;
     }
@@ -1307,6 +1348,7 @@ public class RagRetrievalService {
                         .page(e.locator().page()).article(e.locator().article())
                         .sheet(e.locator().sheet()).cellRange(e.locator().cellRange())
                         .bbox(e.locator().bbox())
+                        .attachment(e.attachment())
                         .build());
             }
         }
@@ -1479,7 +1521,8 @@ public class RagRetrievalService {
                     "title", String.valueOf(e.title()),
                     "contentHash", String.valueOf(e.contentHash()),
                     "citationIndex", e.citationIndex(),
-                    "injectedBy", String.valueOf(e.injectedBy()))).toList()));
+                    "injectedBy", String.valueOf(e.injectedBy()),
+                    "attachment", e.attachment())).toList()));
             trace.setTokenBudget(toJson(budget));
             logMapper.insertTrace(trace);
         } catch (Exception e) {
@@ -1525,7 +1568,7 @@ public class RagRetrievalService {
         int idx = 1;
         for (L2Candidate c : topK) {
             out.add(new Evidence(c.nodeId(), c.documentId(), c.title(), c.content(),
-                    c.contentHash(), null, null, null, null, null, null, idx, c.rerankScore(), null, null));
+                    c.contentHash(), null, null, null, null, null, null, idx, c.rerankScore(), null, null, false));
             idx++;
         }
         return out;
@@ -1587,7 +1630,7 @@ public class RagRetrievalService {
                 .content(e.content()).contentHash(e.contentHash()).docType(e.docType())
                 .fileRef(e.fileRef()).mime(e.mime()).originalName(e.originalName())
                 .citationIndex(e.citationIndex()).rerankScore(e.rerankScore())
-                .injectedBy(e.injectedBy()).build()).toList();
+                .injectedBy(e.injectedBy()).attachment(e.attachment()).build()).toList();
     }
 
     /** Phase3：RRF 融合 L0 doc 序 + L1 doc 序 → top-D doc（两通道分数尺度不可比，按排名归一）。 */
@@ -1695,6 +1738,7 @@ public class RagRetrievalService {
                 .title(r.getTitle()).nodeId(r.getNodeId())
                 .docType(r.getDocType()).fileRef(r.getFileRef()).mime(r.getMime()).originalName(r.getOriginalName())
                 .confidential(r.isConfidential())
+                .attachment(r.isAttachment())
                 .build()).toList();
     }
 
@@ -1708,6 +1752,7 @@ public class RagRetrievalService {
                 .title(c.getTitle()).nodeId(c.getNodeId())
                 .docType(c.getDocType()).fileRef(c.getFileRef()).mime(c.getMime()).originalName(c.getOriginalName())
                 .confidential(c.isConfidential())
+                .attachment(c.isAttachment())
                 .build()).toList();
     }
 }

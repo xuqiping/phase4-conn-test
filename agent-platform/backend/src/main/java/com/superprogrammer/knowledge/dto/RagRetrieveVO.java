@@ -66,6 +66,8 @@ public class RagRetrieveVO {
         /** 14x#3：引用来自保密库且请求者非 owner/admin → 前端隐藏缩略图/下载入口（asset 403 兜底）。
          *  答案缓存命中回放的旧条目无此标志= false，隐藏仅是 UX、强制在后端 /asset。 */
         private boolean confidential;
+        /** C2：附件型文档（ATTACHMENT 模式）→ 前端 📎 徽标（证据已注入原件内容或描述）。 */
+        private boolean attachment;
         private String page;
         private String article;
         private String sheet;
@@ -129,6 +131,8 @@ public class RagRetrieveVO {
         /** 证据来源标记（C1 step6.5）：RELATION_MUST=关联强制带出 / RELATION_MAY=关联按需引用；
          *  null=常规检索命中。前端据此打「🔗 关联带出」徽标。 */
         private String injectedBy;
+        /** C2：附件型证据（ATTACHMENT 模式文档）→ 📎 徽标；content 已含注入的原件内容/描述。 */
+        private boolean attachment;
     }
 
     /** 「相关文档」区条目（MAY_BE_CITED 反向解释，规格 §3.4）：只推荐，不进证据。 */

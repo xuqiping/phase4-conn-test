@@ -56,11 +56,12 @@ created-date: 2026-09-03
   - **依赖**：无｜**验证**：单测——ATTACHMENT 校验矩阵（缺描述拒/超长拒/图片不预提取/文本类 attachmentText 截断）；上传 txt/pdf/图片三型 nodes 数=1
   - **实现注**：校验抽 `validateIndexText` 包私有静态（MANUAL/ATTACHMENT 同门 ≤4000，供单测矩阵）；全文预提取落点在 `buildNodeMetadata`（单次文件读，extract 零 IO——附件 section 只装描述+关键词）；白名单 11 后缀直读 UTF-8，其余 Tika 限 8001 字，失败/空 → null 降级不阻断；extract/buildNodeMetadata/loadAttachmentText 放开包私有供单测（scanInjection 先例）。测试 13/13；txt/pdf/图片三型 nodes=1 留 Phase4 手测（需真文件入库）
 
-- [ ] **Step 6：C2 命中注入 AttachmentContentInjector**
+- [x] **Step 6：C2 命中注入 AttachmentContentInjector**
   - **目标**：附件命中后真实内容进上下文
   - **动作**：①`AttachmentContentInjector.inject(evidence)`：metadata.attachMode 命中 → 文本类读 attachmentText；图片读 Redis 视觉缓存 miss 则调 VLM（2.5s 超时降级仅描述，计费归户 docOwner，写缓存）；②注入内容格式 `[附件 {originalName}] 内容：…`（截断标注）；计入证据预算（超 8000 字可配）；③`RagRetrievalService` 证据组装处调用；④evidence hash 扩附件注入内容 hash；⑤CitationVO 渲染 📎 徽标（docType 已有，前端补样式）
   - **文件**：`knowledge/attachment/AttachmentContentInjector.java`、`AttachmentVisionCache.java`、`RagRetrievalService.java`、`AnswerCacheService.java`、`LlmGateway`（视觉调用复用现有识图通道）、Test ×2
   - **依赖**：Step 5｜**验证**：单测——三型注入分流/超时降级/缓存命中不调 VLM（gateway 计数）/保密库附件 fileRef 403 但注入正常；手测：传架构图问图中内容
+  - **实现注**（偏离 3 处，详见开发进度3）：①缓存失效（④项）不动 AnswerCacheService——沿用 Step2 的 `computeKnowledgeSnapshot` 双聚合口径：附件换版 → 节点重建（新 id/新 content_hash）→ 快照变 → 旧缓存自然 miss，AnswerCache 零改动；VLM 识图文本只在 Redis（TTL 30d），不入 DB 快照——识图文案变化不触发答案重算（可接受：答案缓存本身有 TTL）；②注入点在 `step8LoadEvidence`（I3 复校后）——两条检索路径（/retrieve 调试 + 聊天 EvidenceResult）共用，parseEvidencePrompt/toEvidencePreview 构造点补 `attachment=false`；📎 标志独立于注入成败（kill switch 关/文档已删/降级 → 标志保留，内容仅描述）；③保密库注入用例并入 AttachmentContentInjectorTest——注入器以 docOwner 身份服务端读原件（fileStorageService.load(fileId, createdBy, false)），请求者 fileRef 403 与注入正交，单测验「计费归户 owner」等价覆盖。CitationVO/EvidenceVO/CachedPayload.CitationRef 三处 +`attachment` 布尔（缓存命中回放徽标不丢；旧缓存条目缺字段反序列化=false 属预期）。kill switch `rag.recall.attachment.enabled` + 5 旋钮（maxInjectChars/visionTimeoutMs/visionMaxTokens/visionCacheTtlDays/visionPromptVersion）。测试 11/11（injector 9 + service 2：管道接线注入+标志透传 / kill switch 标志保留零注入）
 
 - [ ] **Step 7：C2 前端**
   - **目标**：上传三选+附件标识+调试预览

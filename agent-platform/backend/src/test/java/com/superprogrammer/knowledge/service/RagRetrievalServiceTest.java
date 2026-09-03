@@ -8,6 +8,7 @@ import com.superprogrammer.knowledge.dto.RagQueryRow;
 import com.superprogrammer.knowledge.dto.RagRetrieveRequest;
 import com.superprogrammer.knowledge.dto.RagRetrieveVO;
 import com.superprogrammer.knowledge.entity.KnowledgeBase;
+import com.superprogrammer.knowledge.entity.KnowledgeDocument;
 import com.superprogrammer.knowledge.mapper.RagRetrievalLogMapper;
 import com.superprogrammer.knowledge.mapper.RagRetrievalQueryMapper;
 import com.superprogrammer.knowledge.service.QueryExpansionService.ExpandedQuery;
@@ -47,6 +48,8 @@ class RagRetrievalServiceTest {
     @Mock private com.superprogrammer.knowledge.ranking.RankingEngine rankingEngine;
     @Mock private com.superprogrammer.knowledge.retrieval.ProductionRetrievalGateway productionRetrievalGateway;
     @Mock private com.superprogrammer.knowledge.relation.RelationGraphPostProcessor relationGraphPostProcessor;
+    @Mock private com.superprogrammer.knowledge.mapper.KnowledgeDocumentMapper documentMapper;
+    @Mock private com.superprogrammer.knowledge.attachment.AttachmentContentInjector attachmentContentInjector;
     @Mock private com.superprogrammer.knowledge.context.EvidencePolicyService evidencePolicyService;
     @Mock private com.superprogrammer.knowledge.answer.GroundedAnswerService groundedAnswerService;
     @Mock private com.superprogrammer.knowledge.trace.RagTraceService ragTraceService;
@@ -69,7 +72,8 @@ class RagRetrievalServiceTest {
                 ragConfig, citationChecker, objectMapper, visibilitySetService,
                 answerCacheService, answerCacheProps, queryExpansionService, recallProps,
                 ragTraceService, rankingConfigService, queryPlanner, rankingEngine, productionRetrievalGateway,
-                relationGraphPostProcessor, evidencePolicyService, groundedAnswerService, ragRolloutService, ragShadowCoordinator);
+                relationGraphPostProcessor, documentMapper, attachmentContentInjector,
+                evidencePolicyService, groundedAnswerService, ragRolloutService, ragShadowCoordinator);
         lenient().when(ragRolloutService.status(anyLong())).thenAnswer(invocation ->
                 new com.superprogrammer.knowledge.migration.RagRolloutService.RolloutState(
                         invocation.getArgument(0), 0, "champion", 0));
@@ -316,10 +320,79 @@ class RagRetrievalServiceTest {
     }
 
     private RagQueryRow.HashVerifyRow hashRow(String hash) {
+        return hashRow(hash, null);
+    }
+
+    private RagQueryRow.HashVerifyRow hashRow(String hash, String metadata) {
         RagQueryRow.HashVerifyRow r = new RagQueryRow.HashVerifyRow();
         r.setNodeHash(hash);
         r.setEmbedHash(hash);
-        r.setMetadata("{\"titlePath\":[\"安装\"],\"locator\":{\"pageStart\":3,\"pageEnd\":3}}");
+        r.setMetadata(metadata != null ? metadata
+                : "{\"titlePath\":[\"安装\"],\"locator\":{\"pageStart\":3,\"pageEnd\":3}}");
         return r;
+    }
+
+    // ---- C2 Step6：附件证据注入（三路分流在 AttachmentContentInjectorTest；此处验管道接线）----
+
+    @Test
+    void attachmentEvidence_contentInjectedAndFlagged() {
+        KnowledgeBase kb = kb(1L);
+        stubReadableAll(kb);
+        stubExpandSingle();
+        when(queryPlanner.plan(anyString())).thenReturn(new com.superprogrammer.knowledge.query.QueryPlan(
+                "PROCEDURE", "ORDERED_STEPS", java.util.Map.of(),
+                List.of("SPARSE", "DENSE", "NEIGHBOR"), true, true, false));
+        when(queryMapper.denseRecallL0(anyLong(), anyString(), anyBoolean(), anyList(), any(), anyInt()))
+                .thenReturn(List.of(denseRow(10L, 99L, "部署手册", 0.6)));
+        when(queryMapper.fetchL2Children(anyLong(), anyList(), anyList()))
+                .thenReturn(List.of(l2Row(11L, 99L, 10L, "部署手册", "系统部署拓扑描述", "hash11")));
+        when(queryMapper.bm25HitsJieba(anyLong(), anyString(), anyList())).thenReturn(List.of());
+        when(queryMapper.reverifyNode(eq(11L))).thenReturn(hashRow("hash11",
+                "{\"attachMode\":true,\"attachmentText\":\"全文ABC\",\"fileRef\":\"/api/files/f1.txt\","
+                        + "\"originalName\":\"手册.txt\",\"titlePath\":[\"安装\"],\"locator\":{\"pageStart\":3,\"pageEnd\":3}}"));
+        KnowledgeDocument attachDoc = new KnowledgeDocument();
+        attachDoc.setId(99L);
+        attachDoc.setKbId(1L);
+        attachDoc.setDocType("FILE");
+        attachDoc.setCreatedBy(7L);
+        when(documentMapper.selectById(99L)).thenReturn(attachDoc);
+        when(attachmentContentInjector.inject(eq(attachDoc), any()))
+                .thenReturn("[附件 手册.txt] 内容：全文ABC");
+        RagRetrieveRequest request = req(1L, "如何部署");
+        request.setGenerateAnswer(true);
+        lenient().when(llmGateway.chat(any(), any())).thenReturn(LlmResponse.builder().content("[1] 部署说明").build());
+
+        RagRetrieveVO vo = service.retrieve(request, 7L);
+
+        // 注入块拼进证据 content（预算/事实提炼/答案生成同享此 content）
+        assertTrue(vo.getEvidenceL2().get(0).getContent().contains("[附件 手册.txt] 内容：全文ABC"));
+        assertTrue(vo.getEvidenceL2().get(0).getContent().contains("系统部署拓扑描述"));
+        // 📎 标志透传 EvidenceVO + CitationVO
+        assertTrue(vo.getEvidenceL2().get(0).isAttachment());
+        assertTrue(vo.getCitations().get(0).isAttachment());
+    }
+
+    @Test
+    void attachmentKillSwitch_flagKept_noInjection() {
+        recallProps.getAttachment().setEnabled(false);
+        KnowledgeBase kb = kb(1L);
+        stubReadableAll(kb);
+        stubExpandSingle();
+        when(queryPlanner.plan(anyString())).thenReturn(new com.superprogrammer.knowledge.query.QueryPlan(
+                "PROCEDURE", "ORDERED_STEPS", java.util.Map.of(),
+                List.of("SPARSE", "DENSE", "NEIGHBOR"), true, true, false));
+        when(queryMapper.denseRecallL0(anyLong(), anyString(), anyBoolean(), anyList(), any(), anyInt()))
+                .thenReturn(List.of(denseRow(10L, 99L, "部署手册", 0.6)));
+        when(queryMapper.fetchL2Children(anyLong(), anyList(), anyList()))
+                .thenReturn(List.of(l2Row(11L, 99L, 10L, "部署手册", "系统部署拓扑描述", "hash11")));
+        when(queryMapper.bm25HitsJieba(anyLong(), anyString(), anyList())).thenReturn(List.of());
+        when(queryMapper.reverifyNode(eq(11L))).thenReturn(hashRow("hash11",
+                "{\"attachMode\":true,\"titlePath\":[\"安装\"],\"locator\":{\"pageStart\":3,\"pageEnd\":3}}"));
+
+        RagRetrieveVO vo = service.retrieve(req(1L, "如何部署"), 7L);
+
+        assertTrue(vo.getEvidenceL2().get(0).isAttachment());
+        assertFalse(vo.getEvidenceL2().get(0).getContent().contains("[附件"));
+        verify(documentMapper, never()).selectById(any());
     }
 }

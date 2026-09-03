@@ -45,6 +45,8 @@ class RagRetrieveConfidentialTest {
     @Mock private com.superprogrammer.knowledge.ranking.RankingEngine rankingEngine;
     @Mock private com.superprogrammer.knowledge.retrieval.ProductionRetrievalGateway productionRetrievalGateway;
     @Mock private com.superprogrammer.knowledge.relation.RelationGraphPostProcessor relationGraphPostProcessor;
+    @Mock private com.superprogrammer.knowledge.mapper.KnowledgeDocumentMapper documentMapper;
+    @Mock private com.superprogrammer.knowledge.attachment.AttachmentContentInjector attachmentContentInjector;
     @Mock private com.superprogrammer.knowledge.context.EvidencePolicyService evidencePolicyService;
     @Mock private com.superprogrammer.knowledge.answer.GroundedAnswerService groundedAnswerService;
     @Mock private com.superprogrammer.knowledge.trace.RagTraceService ragTraceService;
@@ -71,7 +73,8 @@ class RagRetrieveConfidentialTest {
                 ragConfig, citationChecker, objectMapper, visibilitySetService,
                 answerCacheService, answerCacheProps, queryExpansionService, recallProps,
                 ragTraceService, rankingConfigService, queryPlanner, rankingEngine, productionRetrievalGateway,
-                relationGraphPostProcessor, evidencePolicyService, groundedAnswerService, ragRolloutService, ragShadowCoordinator);
+                relationGraphPostProcessor, documentMapper, attachmentContentInjector,
+                evidencePolicyService, groundedAnswerService, ragRolloutService, ragShadowCoordinator);
         lenient().when(relationGraphPostProcessor.planExpansion(anyLong(), any(), anyBoolean(), any(), anyInt()))
                 .thenReturn(new com.superprogrammer.knowledge.relation.RelationGraphPostProcessor.ExpansionPlan(
                         List.of(), List.of(), List.of(), 0, 0));
