@@ -48,11 +48,17 @@ created-date: 2026-09-03
     - CoverageVerifier required=filter 精确值且**排序输出**（Map.copyOf 无序，batch 取前 N 须稳定）；`RetrievalCandidate` implements CandidateText 统一判定面
     - 验证：Orchestrator 8 + CoverageVerifier 重写 5 + Service 2（SEMANTIC 零开销基线/EXACT 缺口补轮并集）=15；全量 2817/2817
 
-- [ ] **Step 3：NeighborExpander 激活**
+- [x] **Step 3：NeighborExpander 激活**
   - **目标**：边界证据扩展相邻节点（表格截断/首尾段场景）
   - **动作**：①判定边界证据：TABLE 节点内容被截断标记、或证据位于文档首尾且长度 < 阈值；②扩展：按同文档 sibling 序号取相邻 L2 节点（PG 侧查询，OpenSearch 网关暂不扩展——`OpenSearchProductionRetrievalGateway` 补 NEIGHBOR 策略透传忽略，注释说明）；③扩展节点进证据需 rerank 过阈；④QueryPlanner NEIGHBOR 策略输出保持（现状已有）
   - **文件**：`context/NeighborExpander.java`、`RagRetrievalService.java`、`mapper/RagRetrievalQueryMapper.java`（sibling 查询）、Test ×1
   - **依赖**：Step 2｜**验证**：单测——表格截断证据扩出下一段；非边界证据零扩展
+  - **实现注（2026-09-03）**：
+    - ①口径落地：截断标记=content 含「已截断」（表格行/附件注入块/解析摘要同字样）**或** 证据位于同 parent 组首/尾且 content < `rag.retrieval.neighbor.short-content-chars`（默认 200）。**偏离**：Excel 行截断标记在 warnings 不入节点内容（行级 section 无标记可判），故 TABLE 专项判定不做——「已截断」字样口径已覆盖一切可判定截断
+    - ②sibling 查询=`fetchSiblingRows(nodeIds)`：同 parent 全组（含自身），组内 id 序=文档序；文档有效性 JOIN 同关系查询（过期/已删/未建版本文档兄弟自然过滤）。**OpenSearch 网关 NEIGHBOR 透传注释未加**——网关侧无策略分支代码，无注入点可注释（Step1 审计已定 OpenSearch=影子链不承载）
+    - ③过阈口径同 MAY_CITE：`keepMayAboveThreshold`（≥ round0 topK 最低分）；种子分=边界证据自身 rerankScore（DISABLED 直通模式天然过阈，真实 rerank 模式被重打分覆盖）；失败降级丢弃不伤主链
+    - ④策略门=QueryPlan.strategies 含 NEIGHBOR（PROCEDURE 类）+ kill switch `rag.retrieval.neighbor.enabled`（默认 true）+ `max-nodes-per-query=4` 上限；两路径挂接（step6.5 后、step8 前，单库/多库同 helper `expandNeighbors`）
+    - 验证：NeighborExpanderTest 3 + Service 4（边界判定静态 5 断言/表格截断扩下段/非边界零扩展/kill switch 零 sibling 查询）；全量 2824/2824
 
 - [ ] **Step 4：LlmQueryPlanner（开关+降级）**
   - **目标**：LLM 生成 QueryPlan 可选启用

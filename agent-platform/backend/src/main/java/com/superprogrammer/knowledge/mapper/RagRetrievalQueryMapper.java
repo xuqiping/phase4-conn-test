@@ -148,6 +148,33 @@ public interface RagRetrievalQueryMapper {
                                                    @Param("docIds") List<Long> docIds);
 
     /**
+     * WP2 Step3 边界邻近扩展：给定节点的全部同 parent 兄弟行（含自身），组内按 id 序（入库序=文档序）。
+     * 文档级有效性 JOIN 同 fetchRelationDocRows——过期/已删/未建版本文档的兄弟自然过滤。
+     * kb 约束经 parent id 精确圈定（node id 全局唯一），无需显式 kb_id 条件。
+     */
+    @Select("""
+            <script>
+            SELECT n.id AS node_id, n.kb_id AS kb_id, n.document_id AS document_id, n.parent_id AS parent_id,
+                   n.title AS title, n.content AS content, n.content_hash AS content_hash
+            FROM knowledge_nodes n
+            JOIN knowledge_documents d ON d.id = n.document_id
+            WHERE n.level = 'L2'
+              AND n.status = 'ACTIVE'
+              AND n.deleted = 0
+              AND d.deleted = 0
+              AND d.current_version_id IS NOT NULL
+              AND (d.effective_at IS NULL OR d.effective_at &lt;= now())
+              AND (d.expired_at IS NULL OR d.expired_at &gt; now())
+              AND n.parent_id IN (
+                  SELECT p.parent_id FROM knowledge_nodes p
+                  WHERE p.parent_id IS NOT NULL AND p.id IN
+                  <foreach collection="nodeIds" item="nid" open="(" separator="," close=")">#{nid}</foreach>)
+            ORDER BY n.parent_id, n.id
+            </script>
+            """)
+    List<RagQueryRow.L2Row> fetchSiblingRows(@Param("nodeIds") List<Long> nodeIds);
+
+    /**
      * step6（Phase2）：jieba-BM25 预筛。查 content_tokens_tsv（jieba 分词后空格串生成的 'simple' tsvector）。
      * query 已由 JiebaTokenizer.tokenize 分词为空格串。
      *

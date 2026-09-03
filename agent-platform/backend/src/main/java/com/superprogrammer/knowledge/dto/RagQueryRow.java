@@ -29,7 +29,7 @@ public class RagQueryRow {
         private Double cosineDistance;
     }
 
-    /** L2 候选行（children 与 BM25 复用；bm25Rank 仅 BM25 命中时非空）*/
+    /** L2 候选行（children 与 BM25 复用；bm25Rank 仅 BM25 命中时非空；kbId 仅 fetchSiblingRows 填）*/
     @Data
     public static class L2Row {
         private Long nodeId;
@@ -39,6 +39,7 @@ public class RagQueryRow {
         private String content;
         private String contentHash;
         private Double bm25Rank;
+        private Long kbId;
     }
 
     /** I3 evidence content_hash 复校行 */

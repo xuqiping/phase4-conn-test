@@ -325,8 +325,17 @@ public class RagRetrievalService {
                     topK.get(0).rerankScore(), topK.get(topK.size() - 1).rerankScore());
             List<L2Candidate> mergedTopK = mergeRelationCandidates(topK, rx.mustCandidates(), rx.mayCandidates());
 
+            // step6.6 边界邻近扩展（WP2 Step3）：截断/首尾短证据补相邻兄弟（NEIGHBOR 策略门+过阈同 MAY）
+            Map<Long, String> injectedBy = new HashMap<>(rx.injectedBy());
+            List<L2Candidate> neighborKept = expandNeighbors(req.getQuery(), mergedTopK,
+                    queryPlan.strategies(), topK.get(topK.size() - 1).rerankScore());
+            if (!neighborKept.isEmpty()) {
+                neighborKept.forEach(c -> injectedBy.put(c.nodeId(), NEIGHBOR_INJECTED_BY));
+                mergedTopK = mergeRelationCandidates(mergedTopK, List.of(), neighborKept);
+            }
+
             // step8 evidence 装载（检索产物到此齐备；生成按需）
-            List<Evidence> evidence = step8LoadEvidence(mergedTopK, rx.injectedBy());
+            List<Evidence> evidence = step8LoadEvidence(mergedTopK, injectedBy);
             if (evidence.isEmpty()) {
                 return finishAbstain(trace, budget, t0, "NO_DENSE_HITS", req, l0, l1,
                         bm25Fallback[0], bm25OnlyCands, List.of());
@@ -606,6 +615,14 @@ public class RagRetrievalService {
                 }
             }
             List<L2Candidate> mergedTopK = mergeRelationCandidates(topK, relationMust, relationMay);
+
+            // step6.6 边界邻近扩展（WP2 Step3）：同 parent 相邻兄弟补入（per-kb 分组过阈）
+            List<L2Candidate> neighborKept = expandNeighbors(query, mergedTopK,
+                    queryPlanner.plan(query).strategies(), topK.get(topK.size() - 1).rerankScore());
+            if (!neighborKept.isEmpty()) {
+                neighborKept.forEach(c -> relationInjectedBy.put(c.nodeId(), NEIGHBOR_INJECTED_BY));
+                mergedTopK = mergeRelationCandidates(mergedTopK, List.of(), neighborKept);
+            }
 
             // I3 evidence 装载 + 预算截断
             List<Evidence> evidence = step8LoadEvidence(mergedTopK, relationInjectedBy);
@@ -1159,6 +1176,129 @@ public class RagRetrievalService {
     /** MAY_CITE 阈值过滤：重打分分 ≥ 原始 topK 最低分才进（规格 §3.2.5「能过阈值才进」）。 */
     static List<L2Candidate> keepMayAboveThreshold(List<L2Candidate> ranked, double minScore) {
         return ranked.stream().filter(c -> c.rerankScore() >= minScore).toList();
+    }
+
+    // ============================ step6.6 边界邻近扩展（WP2 Step3） ============================
+
+    /** 截断标记字样（附件注入块「（已截断…」/解析摘要「文档内容（已截断）」共用）。 */
+    private static final String TRUNCATION_MARK = "已截断";
+    /** step6.6 注入标（Evidence.injectedBy/trace 可辨「邻近补全」来源）。 */
+    private static final String NEIGHBOR_INJECTED_BY = "NEIGHBOR";
+    /** 纯函数扩展器（无依赖，直接实例化——不进 ctor，测试构造点零变化）。 */
+    private final com.superprogrammer.knowledge.context.NeighborExpander neighborExpander =
+            new com.superprogrammer.knowledge.context.NeighborExpander();
+
+    /**
+     * 边界证据判定（规格 §5.2）：①content 含截断标记（原文被截，下文在相邻节点——
+     * 表格行/长文块/附件块同口径）；②证据位于同 parent 组首/尾且 content 短于阈（分块缺上下文侧）。
+     * 中部且完整 → 非边界（零扩展，零回归门）。
+     */
+    static boolean isBoundaryEvidence(Long nodeId, String content, List<RagQueryRow.L2Row> siblings,
+                                      int shortContentChars) {
+        if (content != null && content.contains(TRUNCATION_MARK)) {
+            return true;
+        }
+        if (siblings == null || siblings.size() <= 1) {
+            return false;   // 无兄弟 → 无可扩
+        }
+        int idx = -1;
+        for (int i = 0; i < siblings.size(); i++) {
+            if (siblings.get(i).getNodeId().equals(nodeId)) {
+                idx = i;
+                break;
+            }
+        }
+        if (idx < 0) {
+            return false;
+        }
+        boolean atEnd = idx == 0 || idx == siblings.size() - 1;
+        boolean shortContent = (content == null ? 0 : content.length()) < shortContentChars;
+        return atEnd && shortContent;
+    }
+
+    /**
+     * step6.6：边界证据 → 相邻兄弟节点补入证据池。门=QueryPlan NEIGHBOR 策略 + kill switch
+     * （rag.retrieval.neighbor.enabled）。过阈口径同 MAY_CITE：真实重打分 ≥ round0 topK 最低分
+     * 才进——种子分=边界证据自身 rerankScore（DISABLED 直通模式下相邻内容天然继承，真实
+     * rerank 模式被重打分覆盖）。失败/超时降级丢弃不伤主链；maxNodesPerQuery 全局上限。
+     */
+    private List<L2Candidate> expandNeighbors(String query, List<L2Candidate> evidence,
+            List<String> strategies, double minScore) {
+        if (!retrievalProps.getNeighbor().isEnabled() || evidence.isEmpty()
+                || strategies == null || !strategies.contains("NEIGHBOR")) {
+            return List.of();
+        }
+        try {
+            List<RagQueryRow.L2Row> rows = queryMapper.fetchSiblingRows(
+                    evidence.stream().map(L2Candidate::nodeId).toList());
+            if (rows.isEmpty()) {
+                return List.of();
+            }
+            Map<Long, List<RagQueryRow.L2Row>> byKb = new LinkedHashMap<>();
+            for (RagQueryRow.L2Row r : rows) {
+                byKb.computeIfAbsent(r.getKbId(), k -> new ArrayList<>()).add(r);
+            }
+            List<L2Candidate> out = new ArrayList<>();
+            for (Map.Entry<Long, List<RagQueryRow.L2Row>> e : byKb.entrySet()) {
+                out.addAll(expandNeighborsOfKb(e.getKey(), query, evidence, e.getValue(), minScore));
+            }
+            if (out.size() > retrievalProps.getNeighbor().getMaxNodesPerQuery()) {
+                out = new ArrayList<>(out.subList(0, retrievalProps.getNeighbor().getMaxNodesPerQuery()));
+            }
+            return out;
+        } catch (RuntimeException e) {
+            log.warn("step6.6 邻近扩展失败（降级丢弃，不影响主链）: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
+    /** 单 kb 内的邻近扩展：建组内邻接表 → 边界判定 → NeighborExpander → 种子分池 → 过阈。 */
+    private List<L2Candidate> expandNeighborsOfKb(Long kbId, String query, List<L2Candidate> evidence,
+            List<RagQueryRow.L2Row> rows, double minScore) {
+        Map<Long, List<RagQueryRow.L2Row>> byParent = new LinkedHashMap<>();
+        for (RagQueryRow.L2Row r : rows) {
+            if (r.getParentId() != null) {
+                byParent.computeIfAbsent(r.getParentId(), k -> new ArrayList<>()).add(r);
+            }
+        }
+        Map<Long, List<Long>> adjacency = new LinkedHashMap<>();
+        Set<Long> authorized = new LinkedHashSet<>();
+        for (List<RagQueryRow.L2Row> group : byParent.values()) {
+            for (int i = 0; i < group.size(); i++) {
+                RagQueryRow.L2Row r = group.get(i);
+                authorized.add(r.getNodeId());
+                List<Long> adj = new ArrayList<>(2);
+                if (i > 0) {
+                    adj.add(group.get(i - 1).getNodeId());
+                }
+                if (i < group.size() - 1) {
+                    adj.add(group.get(i + 1).getNodeId());
+                }
+                adjacency.put(r.getNodeId(), adj);
+            }
+        }
+        List<L2Candidate> boundary = evidence.stream()
+                .filter(c -> adjacency.containsKey(c.nodeId()) && isBoundaryEvidence(c.nodeId(), c.content(),
+                        byParent.get(c.parentId()), retrievalProps.getNeighbor().getShortContentChars()))
+                .toList();
+        if (boundary.isEmpty()) {
+            return List.of();
+        }
+        // 种子分=边界证据分（∈topK ⇒ ≥minScore，DISABLED 直通天然过阈；真实 rerank 覆盖）
+        double seed = boundary.stream().mapToDouble(L2Candidate::rerankScore).max().orElse(minScore);
+        Set<Long> inEvidence = evidence.stream().map(L2Candidate::nodeId)
+                .collect(java.util.stream.Collectors.toSet());
+        List<Long> expanded = neighborExpander.expand(
+                boundary.stream().map(L2Candidate::nodeId).toList(), adjacency, authorized);
+        List<L2Candidate> pool = rows.stream()
+                .filter(r -> expanded.contains(r.getNodeId()) && !inEvidence.contains(r.getNodeId()))
+                .map(r -> new L2Candidate(r.getNodeId(), r.getDocumentId(), r.getParentId(),
+                        r.getTitle(), r.getContent(), r.getContentHash(), 0, null, seed, false, 0))
+                .toList();
+        if (pool.isEmpty()) {
+            return List.of();
+        }
+        return keepMayAboveThreshold(rankWithTrace(kbId, query, pool, pool.size()), minScore);
     }
 
     /**

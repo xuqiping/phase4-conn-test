@@ -459,4 +459,110 @@ class RagRetrievalServiceTest {
         assertTrue(vo.getEvidenceL2().stream().anyMatch(e -> e.getContent().contains("V2.1 版差旅条款原文")));
         verify(queryExpansionService, times(1)).expand(eq("V2.1"), anyString(), any(), anyBoolean());
     }
+
+    // ---- C3 Step3：边界邻近扩展（截断/首尾短证据补相邻兄弟）----
+
+    private RagQueryRow.L2Row siblingRow(Long nodeId, Long docId, Long parentId,
+            String title, String content, String hash) {
+        RagQueryRow.L2Row r = l2Row(nodeId, docId, parentId, title, content, hash);
+        r.setKbId(1L);
+        return r;
+    }
+
+    @Test
+    void boundaryDetection_staticRules() {
+        // 截断标记命中（表格行/附件块/摘要同口径）
+        assertTrue(RagRetrievalService.isBoundaryEvidence(11L, "表格行1-100（已截断）", List.of(), 200));
+        // 首+短命中
+        assertTrue(RagRetrievalService.isBoundaryEvidence(11L, "短首段",
+                List.of(siblingRow(11L, 99L, 10L, "t", "短首段", "h1"),
+                        siblingRow(12L, 99L, 10L, "t", "中段长内容", "h2")), 200));
+        // 尾+短命中
+        assertTrue(RagRetrievalService.isBoundaryEvidence(12L, "短尾段",
+                List.of(siblingRow(11L, 99L, 10L, "t", "长长长长长长长长长长长长长长长", "h1"),
+                        siblingRow(12L, 99L, 10L, "t", "短尾段", "h2")), 200));
+        // 中部（即使短）不扩
+        assertFalse(RagRetrievalService.isBoundaryEvidence(12L, "短中段",
+                List.of(siblingRow(11L, 99L, 10L, "t", "前段", "h1"),
+                        siblingRow(12L, 99L, 10L, "t", "短中段", "h2"),
+                        siblingRow(13L, 99L, 10L, "t", "后段", "h3")), 200));
+        // 首但长内容不扩；无兄弟不扩
+        assertFalse(RagRetrievalService.isBoundaryEvidence(11L, "A".repeat(300),
+                List.of(siblingRow(11L, 99L, 10L, "t", "A".repeat(300), "h1"),
+                        siblingRow(12L, 99L, 10L, "t", "后段", "h2")), 200));
+        assertFalse(RagRetrievalService.isBoundaryEvidence(11L, "短", null, 200));
+    }
+
+    @Test
+    void tableTruncated_evidenceExpandsNextSibling() {
+        KnowledgeBase kb = kb(1L);
+        stubReadableAll(kb);
+        stubExpandSingle();
+        when(queryPlanner.plan(anyString())).thenReturn(new com.superprogrammer.knowledge.query.QueryPlan(
+                "PROCEDURE", "ORDERED_STEPS", java.util.Map.of(),
+                List.of("SPARSE", "DENSE", "NEIGHBOR"), true, true, false));
+        when(queryMapper.denseRecallL0(anyLong(), anyString(), anyBoolean(), anyList(), any(), anyInt()))
+                .thenReturn(List.of(denseRow(10L, 99L, "报销表格", 0.6)));
+        when(queryMapper.fetchL2Children(anyLong(), anyList(), anyList()))
+                .thenReturn(List.of(l2Row(11L, 99L, 10L, "报销表格", "表格行1-100（已截断）", "hash11")));
+        when(queryMapper.bm25HitsJieba(anyLong(), anyString(), anyList())).thenReturn(List.of());
+        when(queryMapper.fetchSiblingRows(anyList())).thenReturn(List.of(
+                siblingRow(11L, 99L, 10L, "报销表格", "表格行1-100（已截断）", "hash11"),
+                siblingRow(12L, 99L, 10L, "报销表格", "表格行101-200 续", "hash12")));
+        when(queryMapper.reverifyNode(eq(11L))).thenReturn(hashRow("hash11"));
+        when(queryMapper.reverifyNode(eq(12L))).thenReturn(hashRow("hash12"));
+
+        RagRetrieveVO vo = service.retrieve(req(1L, "报销表格后半段"), 7L);
+
+        // 截断证据 → 相邻下一段补入证据池
+        assertTrue(vo.getEvidenceL2().stream().anyMatch(e -> e.getContent().contains("表格行101-200 续")));
+    }
+
+    @Test
+    void nonBoundaryEvidence_zeroNeighborExpansion() {
+        KnowledgeBase kb = kb(1L);
+        stubReadableAll(kb);
+        stubExpandSingle();
+        when(queryPlanner.plan(anyString())).thenReturn(new com.superprogrammer.knowledge.query.QueryPlan(
+                "PROCEDURE", "ORDERED_STEPS", java.util.Map.of(),
+                List.of("SPARSE", "DENSE", "NEIGHBOR"), true, true, false));
+        when(queryMapper.denseRecallL0(anyLong(), anyString(), anyBoolean(), anyList(), any(), anyInt()))
+                .thenReturn(List.of(denseRow(10L, 99L, "报销制度", 0.6)));
+        when(queryMapper.fetchL2Children(anyLong(), anyList(), anyList()))
+                .thenReturn(List.of(l2Row(11L, 99L, 10L, "报销制度", "完整长段落。".repeat(30), "hash11")));
+        when(queryMapper.bm25HitsJieba(anyLong(), anyString(), anyList())).thenReturn(List.of());
+        when(queryMapper.fetchSiblingRows(anyList())).thenReturn(List.of(
+                siblingRow(11L, 99L, 10L, "报销制度", "完整长段落。".repeat(30), "hash11"),
+                siblingRow(12L, 99L, 10L, "报销制度", "相邻段", "hash12")));
+        when(queryMapper.reverifyNode(eq(11L))).thenReturn(hashRow("hash11"));
+
+        RagRetrieveVO vo = service.retrieve(req(1L, "报销制度"), 7L);
+
+        // 非边界（中部+完整+无标记）→ 零扩展，证据仅 round0 命中
+        verify(queryMapper, times(1)).fetchSiblingRows(anyList());
+        assertEquals(1, vo.getEvidenceL2().size());
+        assertTrue(vo.getEvidenceL2().stream().noneMatch(e -> e.getContent().contains("相邻段")));
+    }
+
+    @Test
+    void neighborKillSwitch_zeroSiblingQuery() {
+        retrievalProps.getNeighbor().setEnabled(false);
+        KnowledgeBase kb = kb(1L);
+        stubReadableAll(kb);
+        stubExpandSingle();
+        when(queryPlanner.plan(anyString())).thenReturn(new com.superprogrammer.knowledge.query.QueryPlan(
+                "PROCEDURE", "ORDERED_STEPS", java.util.Map.of(),
+                List.of("SPARSE", "DENSE", "NEIGHBOR"), true, true, false));
+        when(queryMapper.denseRecallL0(anyLong(), anyString(), anyBoolean(), anyList(), any(), anyInt()))
+                .thenReturn(List.of(denseRow(10L, 99L, "报销表格", 0.6)));
+        when(queryMapper.fetchL2Children(anyLong(), anyList(), anyList()))
+                .thenReturn(List.of(l2Row(11L, 99L, 10L, "报销表格", "表格行1-100（已截断）", "hash11")));
+        when(queryMapper.bm25HitsJieba(anyLong(), anyString(), anyList())).thenReturn(List.of());
+        when(queryMapper.reverifyNode(eq(11L))).thenReturn(hashRow("hash11"));
+
+        RagRetrieveVO vo = service.retrieve(req(1L, "报销表格"), 7L);
+
+        verify(queryMapper, never()).fetchSiblingRows(anyList());
+        assertEquals(1, vo.getEvidenceL2().size());
+    }
 }

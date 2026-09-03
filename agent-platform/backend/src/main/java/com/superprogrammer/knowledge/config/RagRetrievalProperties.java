@@ -22,4 +22,17 @@ public class RagRetrievalProperties {
 
     /** 每轮补充 query 上限（规则版=未覆盖 filter 值，天然 ≤3）。 */
     private int supplementPerRound = 3;
+
+    /** 边界邻近扩展（WP2 Step3）：截断/首尾短证据补相邻节点。 */
+    private Neighbor neighbor = new Neighbor();
+
+    @Data
+    public static class Neighbor {
+        /** kill switch：false → 零扩展（检索行为回到无邻近基线）。 */
+        private boolean enabled = true;
+        /** 「首尾短证据」判定的 content 长度阈（字符）。 */
+        private int shortContentChars = 200;
+        /** 单次检索最多扩入的邻近节点数（防爆证据膨胀）。 */
+        private int maxNodesPerQuery = 4;
+    }
 }
