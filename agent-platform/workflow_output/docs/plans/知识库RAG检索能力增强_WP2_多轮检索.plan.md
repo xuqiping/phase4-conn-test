@@ -60,11 +60,18 @@ created-date: 2026-09-03
     - ④策略门=QueryPlan.strategies 含 NEIGHBOR（PROCEDURE 类）+ kill switch `rag.retrieval.neighbor.enabled`（默认 true）+ `max-nodes-per-query=4` 上限；两路径挂接（step6.5 后、step8 前，单库/多库同 helper `expandNeighbors`）
     - 验证：NeighborExpanderTest 3 + Service 4（边界判定静态 5 断言/表格截断扩下段/非边界零扩展/kill switch 零 sibling 查询）；全量 2824/2824
 
-- [ ] **Step 4：LlmQueryPlanner（开关+降级）**
+- [x] **Step 4：LlmQueryPlanner（开关+降级）**
   - **目标**：LLM 生成 QueryPlan 可选启用
   - **动作**：①`query/LlmQueryPlanner.java`：输入 query+KB 上下文→输出结构化 QueryPlan（分类/子意图列表/filters/策略集，JSON schema 约束）；2s 超时；失败/超时/解析异常→规则版 QueryPlanner 结果；②`rag.queryplanner.llm.enabled` 默认 false；③子意图列表供 Step 2 CoverageVerifier 与 supplement 使用；④计费归户当前用户
   - **文件**：`query/LlmQueryPlanner.java`（新）、`query/QueryPlanner.java`（路由入口加开关分支）、`RagConfig`、Test ×2
   - **依赖**：Step 2（子意图消费方）｜**验证**：单测——正常规划/超时回退/JSON 解析失败回退/开关关闭零 LLM 调用；灰度：黄金集 A/B（开关开 vs 关 Recall/MRR 对比）
+  - **实现注（2026-09-03，commit 6c782c30）**：
+    - ①落地形态=新增 `LlmQueryPlanner`（`planWithFallback` 返回 `PlanOutcome{plan, subIntents, llmUsed}`），**偏离 plan「QueryPlanner 路由入口加开关分支」**——路由放 service 层（两路统一 `planWithFallback`），避免 QueryPlanner↔LlmQueryPlanner 循环依赖；`QueryPlanner` 保持纯规则不动=规则版权威，`RagConfig` 无需改
+    - ②超时双保险：`CompletableFuture.supplyAsync().orTimeout(timeoutMs)` 守卫 + `.get(timeoutMs+500)` 兜底 + `LlmRequest.timeoutMs` provider 侧中止；任何异常→`PlanOutcome.rule(规则版)` 不伤主链
+    - ③防幻觉护栏：filters 以规则正则为**唯一权威**（LLM 不许造锚点——值必须出自 query 原文）；LLM 仅覆盖 queryType/answerShape/strategies/exhaustive/multiHop 且逐字段白名单校验（KNOWN_TYPES/SHAPES/STRATEGIES，非法保留规则版，strategies 空集回退规则版）；subIntents ≤3 条每条 ≤20 字去重，供 Step2 CoverageVerifier 必达判定
+    - ④计费归户：`gateway.chat(req, userId)` 当前用户；`disableThinking=true`（内部 JSON 蒸馏——思考与正文共享 max_tokens 预算）+ temperature 0.0 + maxTokens 512
+    - ⑤子意图接线：service 两路把 `llmSubIntents` 传入 `runIterativeLoop`→orchestrator expand→CoverageVerifier requiredFrom 合并；step6.6 邻近扩展 strategies 取最终规划结果
+    - 验证：LlmQueryPlannerTest 5（正常规划+护栏/非法字段保留规则版/超时回退/坏 JSON 回退/开关关 verifyNoInteractions 零调用）；三个服务测试类补 llmQueryPlanner 桩（ServiceTest 透传 lambda 保留 per-test queryPlanner.plan 覆写；AnswerModelTest 删已死 queryPlanner.plan 桩防 UnnecessaryStubbing）；全量 2829/2829。**黄金集 A/B 留 Step5 基线回归门一并做**
 
 - [ ] **Step 5：基线回归门**
   - **目标**：证明激活循环没有破坏现状
