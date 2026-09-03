@@ -27,11 +27,12 @@ created-date: 2026-09-03
   - **依赖**：无｜**验证**：结论+代码行号落备注 ✅
   - **核实结论**：**无时序风险**。`IndexJobWorker.cleanOriginalFileAfterIndex`（IndexJobWorker.java:248-272）对 **IMAGE/FILE docType 明确跳过清理**（:257-259——原件是回显资产必须保留，仅记 info 日志）；其余 docType 受 `app.files.retain-after-index` 控制（默认 false=清，D5 文件生命周期）。即 IMAGE 文档原件自上传起永久保留至文档删除→IMAGE 向量 job 在索引流程任意阶段读原件 bytes 均安全。附带确认：清理在 DB 事务外、删失败不回滚不阻塞（:265-271），与 IMAGE 无关。
 
-- [ ] **Step 1：多模态 embed 协议扩展**
+- [x] **Step 1：多模态 embed 协议扩展**（commit 2ffe581f，provider 28+route 8+gateway 25 绿）
   - **目标**：LlmGateway 可传图
   - **动作**：①`OpenAICompatibleProvider` EMBEDDING 行增重载：入参 List<ContentPart>（text/image_url data URI），按模型能力标记组装 content 数组或回退纯 text；②`LlmGateway.embedMultimodal(parts, model, owner)`；③模型多模态能力标记来源（llm_models 现有字段或配置，实施时定，最小改动优先）；④计费归户 owner
   - **文件**：`llm/provider/OpenAICompatibleProvider.java`、`llm/LlmGateway.java`、Test ×2
-  - **依赖**：Step 0（不影响协议，可并行）｜**验证**：单测两种协议拼装/mock 契约；真实模型手动验证一次（需人工介入：提供支持图输入的模型）
+  - **依赖**：Step 0（不影响协议，可并行）｜**验证**：单测两种协议拼装/mock 契约；真实模型手动验证一次（需人工介入：提供支持图输入的模型）——单测 ✅（Test ×3 实际），真实模型留 Phase4
+  - **实现注（偏离）**：①协议分派标记=**端点含 `/multimodal-embedding/`**（既有探测 `usesQwenMultimodalEmbeddingProtocol` 直接复用，零新增配置面——比计划「llm_models 能力列」改动更小；普通端点+图片段立即拒零 HTTP，纯文本段拼接回退）；②image 取值=URL 或裸 Base64（DashScope 协议口径，**不带 data: 前缀**——与计划写的 data URI 不同，按协议实际形态透传）；③熔断落 provider 静态表 provider|model→openUntil（10min，进程级自动恢复）；④响应解析两协议共用抽 `parseEmbedResult` 去重；⑤坑：接口加 List 重载致既有 5 处 mockito `embedWithUsage(any(), any())` 重载歧义编译炸→收紧 `anyString()`
 
 - [ ] **Step 2：IMAGE 向量索引双写**
   - **目标**：图片文档入库时追加图片向量行
