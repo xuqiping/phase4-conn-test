@@ -10,6 +10,7 @@ import com.superprogrammer.knowledge.service.KnowledgeDocumentService;
 import com.superprogrammer.knowledge.service.KnowledgeDocumentVersionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Component;
@@ -60,6 +61,24 @@ public class ConnectorSyncWorker {
             if (txService.tryClaim(connector.getId(), connector.getLastSyncAt())) {
                 syncConnector(connector);
             }
+        }
+    }
+
+    /**
+     * 手动「立即同步」（WP6 Step4）：异步执行（HTTP 抓取分钟级不占请求线程）。
+     * 认领语义同轮询（ENABLED+last_sync_at 未被并发推进）；service 侧已把 ERROR 复位为
+     * ENABLED 才调用——手动同步即运维重试入口（Step5）。
+     */
+    @Async("knowledgeTaskExecutor")
+    public void triggerManualSync(Long connectorId) {
+        KnowledgeConnector connector = txService.getConnector(connectorId);
+        if (connector == null || !KnowledgeConnector.STATUS_ENABLED.equals(connector.getStatus())) {
+            return;
+        }
+        if (txService.tryClaim(connector.getId(), connector.getLastSyncAt())) {
+            syncConnector(connector);
+        } else {
+            log.info("连接器手动同步撞上并发轮次，跳过 connectorId={}", connectorId);
         }
     }
 
@@ -182,6 +201,7 @@ public class ConnectorSyncWorker {
                                 new InMemoryMultipartFile(a.ext().displayName(),
                                         contentTypeFor(a.ext().displayName()), spi.fetch(a.ext())),
                                 null, null, null, null, null, null, null, creator, false);
+                        txService.markConnectorOrigin(vo.getId(), a.ext().externalId());
                         txService.insertMapping(connector.getId(), a.ext().externalId(),
                                 a.ext().etag(), vo.getId());
                         c.added++;

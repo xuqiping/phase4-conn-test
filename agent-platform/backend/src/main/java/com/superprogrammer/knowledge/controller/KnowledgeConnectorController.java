@@ -70,6 +70,29 @@ public class KnowledgeConnectorController {
         return ResponseEntity.ok(R.ok("连接器已删除（已同步文档保留，归手工管理）", null));
     }
 
+    @PostMapping("/connectors/{id}/enable")
+    @AuditLog(module = "kb", action = "connector_enable", targetType = "connector")
+    @RequirePermission("knowledge:manage")
+    public ResponseEntity<R<KnowledgeConnectorVO>> enable(@PathVariable Long id) {
+        return ResponseEntity.ok(R.ok("连接器已启用", connectorService.enable(id, getCurrentUserId(), isAdmin())));
+    }
+
+    @PostMapping("/connectors/{id}/disable")
+    @AuditLog(module = "kb", action = "connector_disable", targetType = "connector")
+    @RequirePermission("knowledge:manage")
+    public ResponseEntity<R<KnowledgeConnectorVO>> disable(@PathVariable Long id) {
+        return ResponseEntity.ok(R.ok("连接器已停用", connectorService.disable(id, getCurrentUserId(), isAdmin())));
+    }
+
+    /** 立即同步：异步执行（HTTP 抓取分钟级），结果见列表 lastSyncAt/lastSyncSummary 轮询刷新。 */
+    @PostMapping("/connectors/{id}/sync-now")
+    @AuditLog(module = "kb", action = "connector_sync", targetType = "connector")
+    @RequirePermission("knowledge:manage")
+    public ResponseEntity<R<Void>> syncNow(@PathVariable Long id) {
+        connectorService.syncNow(id, getCurrentUserId(), isAdmin());
+        return ResponseEntity.accepted().body(R.ok("已触发同步，结果稍后刷新查看", null));
+    }
+
     private Long getCurrentUserId() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         return auth == null ? null : (Long) auth.getPrincipal();

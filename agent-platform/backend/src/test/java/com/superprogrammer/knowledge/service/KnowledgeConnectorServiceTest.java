@@ -2,7 +2,9 @@ package com.superprogrammer.knowledge.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.common.exception.BusinessException;
+import com.superprogrammer.knowledge.connector.ConnectorSyncWorker;
 import com.superprogrammer.knowledge.dto.KnowledgeConnectorRequest;
+import com.superprogrammer.knowledge.dto.KnowledgeConnectorVO;
 import com.superprogrammer.knowledge.entity.KnowledgeBase;
 import com.superprogrammer.knowledge.entity.KnowledgeConnector;
 import com.superprogrammer.knowledge.mapper.KnowledgeBaseMapper;
@@ -14,6 +16,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.ObjectProvider;
 
 import java.util.Map;
 
@@ -23,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -39,6 +43,10 @@ class KnowledgeConnectorServiceTest {
     private KnowledgeBaseMapper knowledgeBaseMapper;
     @Mock
     private KnowledgeBaseService knowledgeBaseService;
+    @Mock
+    private ObjectProvider<ConnectorSyncWorker> workerProvider;
+    @Mock
+    private ConnectorSyncWorker worker;
 
     private KnowledgeConnectorService service;
 
@@ -47,7 +55,7 @@ class KnowledgeConnectorServiceTest {
         AesEncryptService aes = new AesEncryptService();
         aes.setSecret("unit-test-secret-0123456789ab");
         service = new KnowledgeConnectorService(connectorMapper, knowledgeBaseMapper,
-                knowledgeBaseService, aes, new ObjectMapper());
+                knowledgeBaseService, aes, new ObjectMapper(), workerProvider);
     }
 
     private KnowledgeBase kb(Long id, Long owner) {
@@ -166,5 +174,66 @@ class KnowledgeConnectorServiceTest {
         assertEquals("新名", existing.getName());
         assertTrue(existing.getSyncOnSourceDelete());
         verify(connectorMapper).updateById(existing);
+    }
+
+    // ============================ WP6 Step4：启停/立即同步 ============================
+
+    private KnowledgeConnector connectorRow(String status, Integer streak) {
+        KnowledgeConnector c = new KnowledgeConnector();
+        c.setId(11L);
+        c.setKbId(5L);
+        c.setType("URL_SITE");
+        c.setStatus(status);
+        c.setSyncErrorStreak(streak);
+        return c;
+    }
+
+    @Test
+    void enable_resetsStreak() {
+        when(connectorMapper.selectById(11L)).thenReturn(connectorRow(KnowledgeConnector.STATUS_ERROR, 3));
+        when(knowledgeBaseMapper.selectById(5L)).thenReturn(kb(5L, 7L));
+        when(knowledgeBaseService.isOwnerOrAdmin(any(), any(), anyBoolean())).thenReturn(true);
+
+        KnowledgeConnectorVO vo = service.enable(11L, 7L, false);
+
+        assertEquals(KnowledgeConnector.STATUS_ENABLED, vo.getStatus());
+        assertEquals(0, vo.getSyncErrorStreak());
+        verify(connectorMapper).updateById(any(KnowledgeConnector.class));
+    }
+
+    @Test
+    void disable_setsDisabled() {
+        when(connectorMapper.selectById(11L)).thenReturn(connectorRow(KnowledgeConnector.STATUS_ENABLED, 0));
+        when(knowledgeBaseMapper.selectById(5L)).thenReturn(kb(5L, 7L));
+        when(knowledgeBaseService.isOwnerOrAdmin(any(), any(), anyBoolean())).thenReturn(true);
+
+        assertEquals(KnowledgeConnector.STATUS_DISABLED, service.disable(11L, 7L, false).getStatus());
+    }
+
+    @Test
+    void syncNow_errorConnector_resetsAndTriggersManualSync() {
+        when(connectorMapper.selectById(11L)).thenReturn(connectorRow(KnowledgeConnector.STATUS_ERROR, 3));
+        when(knowledgeBaseMapper.selectById(5L)).thenReturn(kb(5L, 7L));
+        when(knowledgeBaseService.isOwnerOrAdmin(any(), any(), anyBoolean())).thenReturn(true);
+        when(workerProvider.getObject()).thenReturn(worker);
+
+        service.syncNow(11L, 7L, false);
+
+        ArgumentCaptor<KnowledgeConnector> cap = ArgumentCaptor.forClass(KnowledgeConnector.class);
+        verify(connectorMapper).updateById(cap.capture());
+        assertEquals(KnowledgeConnector.STATUS_ENABLED, cap.getValue().getStatus());
+        assertEquals(0, cap.getValue().getSyncErrorStreak());
+        verify(worker).triggerManualSync(11L);
+    }
+
+    @Test
+    void syncNow_nonOwner_forbidden_noTrigger() {
+        when(connectorMapper.selectById(11L)).thenReturn(connectorRow(KnowledgeConnector.STATUS_ENABLED, 0));
+        when(knowledgeBaseMapper.selectById(5L)).thenReturn(kb(5L, 7L));
+        when(knowledgeBaseService.isOwnerOrAdmin(any(), any(), anyBoolean())).thenReturn(false);
+
+        BusinessException e = assertThrows(BusinessException.class, () -> service.syncNow(11L, 8L, false));
+        assertEquals(403, e.getCode());
+        verify(workerProvider, never()).getObject();
     }
 }

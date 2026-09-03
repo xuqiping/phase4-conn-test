@@ -25,5 +25,7 @@ public class KnowledgeConnectorVO {
     private OffsetDateTime lastSyncAt;
     /** 最近一轮摘要（新增/更新/删除/错误计数，脱敏）。 */
     private String lastSyncSummary;
+    /** 连续同步错误轮数（WP6 Step4，≥3 即 ERROR——前端红标展开用）。 */
+    private Integer syncErrorStreak;
     private OffsetDateTime createdAt;
 }

@@ -165,6 +165,7 @@ class ConnectorSyncWorkerTest {
         assertEquals("b.pdf", file.getAllValues().get(1).getOriginalFilename());
         assertEquals("application/pdf", file.getAllValues().get(1).getContentType());
         verify(tx).insertMapping(5L, "a.md", "e-a", 101L);
+        verify(tx).markConnectorOrigin(101L, "a.md");   // 🔌 来源标（Step4 徽标数据面）
         verify(tx).insertMapping(5L, "b.pdf", "e-b", 102L);
         verify(tx).finishSuccess(eq(5L), org.mockito.ArgumentMatchers.contains("新增3"));
     }
@@ -318,5 +319,29 @@ class ConnectorSyncWorkerTest {
         assertFalse(msg.getValue().contains("user:secret"));
         assertTrue(msg.getValue().contains("***@"));
         verify(tx, never()).finishSuccess(anyLong(), anyString());
+    }
+
+    @Test
+    void manualSync_disabledConnector_skipped() {
+        KnowledgeConnector c = connector(false);
+        c.setStatus(KnowledgeConnector.STATUS_DISABLED);
+        when(tx.getConnector(5L)).thenReturn(c);
+
+        worker.triggerManualSync(5L);
+
+        verify(tx, never()).tryClaim(anyLong(), any());
+        verify(factory, never()).build(any());
+    }
+
+    @Test
+    void manualSync_claimed_runsRound() {
+        KnowledgeConnector c = connector(false);
+        when(tx.getConnector(5L)).thenReturn(c);
+        when(tx.tryClaim(eq(5L), any())).thenReturn(true);
+        stubRound(c, spi(List.of()), List.of());
+
+        worker.triggerManualSync(5L);
+
+        verify(tx).finishSuccess(eq(5L), anyString());
     }
 }

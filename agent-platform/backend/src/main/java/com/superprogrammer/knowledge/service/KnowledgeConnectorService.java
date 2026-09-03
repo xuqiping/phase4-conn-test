@@ -11,9 +11,11 @@ import com.superprogrammer.knowledge.entity.KnowledgeBase;
 import com.superprogrammer.knowledge.entity.KnowledgeConnector;
 import com.superprogrammer.knowledge.mapper.KnowledgeBaseMapper;
 import com.superprogrammer.knowledge.mapper.KnowledgeConnectorMapper;
+import com.superprogrammer.knowledge.connector.ConnectorSyncWorker;
 import com.superprogrammer.llm.service.AesEncryptService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Service;
 
@@ -41,6 +43,8 @@ public class KnowledgeConnectorService {
     private final KnowledgeBaseService knowledgeBaseService;
     private final AesEncryptService aesEncryptService;
     private final ObjectMapper objectMapper;
+    /** 惰性注入：worker→factory→本服务 会构造期成环，ObjectProvider 运行期解环。 */
+    private final ObjectProvider<ConnectorSyncWorker> syncWorker;
 
     public KnowledgeConnectorVO create(Long kbId, KnowledgeConnectorRequest request, Long userId, boolean admin) {
         KnowledgeBase kb = ensureKb(kbId);
@@ -104,6 +108,40 @@ public class KnowledgeConnectorService {
         KnowledgeConnector connector = ensureConnector(id);
         assertManageable(ensureKb(connector.getKbId()), userId, admin, "只有管理员或知识库创建者可删除连接器");
         connectorMapper.deleteById(id);
+    }
+
+    /** 启用（WP6 Step4）：ERROR → ENABLED 复位连续错误计数（重新给同步机会）；DISABLED → ENABLED。 */
+    public KnowledgeConnectorVO enable(Long id, Long userId, boolean admin) {
+        KnowledgeConnector connector = ensureConnector(id);
+        assertManageable(ensureKb(connector.getKbId()), userId, admin, "只有管理员或知识库创建者可管理连接器");
+        connector.setStatus(KnowledgeConnector.STATUS_ENABLED);
+        connector.setSyncErrorStreak(0);
+        connectorMapper.updateById(connector);
+        return toVO(connector);
+    }
+
+    /** 停用：worker 只扫 ENABLED——DISABLED 即停摆（配置与账本全保留）。 */
+    public KnowledgeConnectorVO disable(Long id, Long userId, boolean admin) {
+        KnowledgeConnector connector = ensureConnector(id);
+        assertManageable(ensureKb(connector.getKbId()), userId, admin, "只有管理员或知识库创建者可管理连接器");
+        connector.setStatus(KnowledgeConnector.STATUS_DISABLED);
+        connectorMapper.updateById(connector);
+        return toVO(connector);
+    }
+
+    /**
+     * 立即同步（WP6 Step4，运维手动重试入口）：ERROR 先复位 ENABLED（手动重试=重新给机会），
+     * 异步交给 worker（认领语义同轮询——撞上并发轮次自动让位）。
+     */
+    public void syncNow(Long id, Long userId, boolean admin) {
+        KnowledgeConnector connector = ensureConnector(id);
+        assertManageable(ensureKb(connector.getKbId()), userId, admin, "只有管理员或知识库创建者可触发同步");
+        if (KnowledgeConnector.STATUS_ERROR.equals(connector.getStatus())) {
+            connector.setStatus(KnowledgeConnector.STATUS_ENABLED);
+            connector.setSyncErrorStreak(0);
+            connectorMapper.updateById(connector);
+        }
+        syncWorker.getObject().triggerManualSync(id);
     }
 
     /** worker（Step3）用：解密 config 供连接器实例化。密文损坏抛业务异常（不落原文进日志）。 */
@@ -215,6 +253,7 @@ public class KnowledgeConnectorService {
                 .syncOnSourceDelete(Boolean.TRUE.equals(c.getSyncOnSourceDelete()))
                 .lastSyncAt(c.getLastSyncAt())
                 .lastSyncSummary(c.getLastSyncSummary())
+                .syncErrorStreak(c.getSyncErrorStreak() == null ? 0 : c.getSyncErrorStreak())
                 .createdAt(c.getCreatedAt())
                 .build();
     }

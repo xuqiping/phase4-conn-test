@@ -345,6 +345,34 @@ export interface RelationSuggestionAdoptRequest {
   note?: string
 }
 
+/** C6 连接器类型（后端 KnowledgeConnector 常量） */
+export type ConnectorType = 'URL_SITE' | 'S3' | 'WEBDAV'
+
+/** C6 连接器（对应后端 KnowledgeConnectorVO；**不含 config**——凭证只写不读） */
+export interface KnowledgeConnector {
+  id: number
+  kbId: number
+  type: ConnectorType
+  name: string
+  /** ENABLED / DISABLED / ERROR（连续 3 轮同步失败） */
+  status: 'ENABLED' | 'DISABLED' | 'ERROR'
+  scheduleCron: string
+  syncOnSourceDelete: boolean
+  lastSyncAt: string | null
+  lastSyncSummary: string | null
+  syncErrorStreak: number
+  createdAt: string
+}
+
+/** C6 连接器新建/更新（config 明文仅提交时在内存；type 创建后不可变） */
+export interface KnowledgeConnectorRequest {
+  name: string
+  type?: ConnectorType
+  config?: Record<string, unknown> | null
+  scheduleCron?: string
+  syncOnSourceDelete?: boolean
+}
+
 /** 检索调试响应（对应后端 RagRetrieveVO） */
 export interface RagRetrieveVO {
   traceId: string
@@ -709,6 +737,32 @@ export const knowledgeApi = {
   },
   ignoreRelationSuggestion(id: number) {
     return request.post<ApiResponse<void>>(`/knowledge/relations/suggestions/${id}/ignore`)
+  },
+
+  // ---- 连接器（C6，KB 治理级：owner/admin）----
+  /** GET /api/knowledge/kbs/{kbId}/connectors — 该 KB 的连接器列表（凭证只写不读，无 config 回显） */
+  listConnectors(kbId: number) {
+    return request.get<ApiResponse<KnowledgeConnector[]>>(`/knowledge/kbs/${kbId}/connectors`)
+  },
+  createConnector(kbId: number, data: KnowledgeConnectorRequest) {
+    return request.post<ApiResponse<KnowledgeConnector>>(`/knowledge/kbs/${kbId}/connectors`, data)
+  },
+  /** PUT config 传 null=保留原密文；重配=整表单重提交 */
+  updateConnector(id: number, data: KnowledgeConnectorRequest) {
+    return request.put<ApiResponse<KnowledgeConnector>>(`/knowledge/connectors/${id}`, data)
+  },
+  deleteConnector(id: number) {
+    return request.delete<ApiResponse<void>>(`/knowledge/connectors/${id}`)
+  },
+  enableConnector(id: number) {
+    return request.post<ApiResponse<KnowledgeConnector>>(`/knowledge/connectors/${id}/enable`)
+  },
+  disableConnector(id: number) {
+    return request.post<ApiResponse<KnowledgeConnector>>(`/knowledge/connectors/${id}/disable`)
+  },
+  /** 立即同步：202 异步执行，结果轮询列表 lastSyncAt/lastSyncSummary 刷新 */
+  syncConnectorNow(id: number) {
+    return request.post<ApiResponse<void>>(`/knowledge/connectors/${id}/sync-now`)
   },
 
   // ---- 权限 ----

@@ -58,6 +58,22 @@ public class ConnectorSyncTxService {
                 .eq(KnowledgeConnector::getStatus, KnowledgeConnector.STATUS_ENABLED));
     }
 
+    public KnowledgeConnector getConnector(Long id) {
+        return id == null ? null : connectorMapper.selectById(id);
+    }
+
+    /**
+     * 同步新文档打来源标（WP6 Step4 🔌 徽标数据面）：sourceType=CONNECTOR + sourceUri=external_id。
+     * upload() 管线不感知连接器（零改动承诺），落库后补一列轻量 update。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void markConnectorOrigin(Long docId, String externalId) {
+        documentMapper.update(null, new LambdaUpdateWrapper<KnowledgeDocument>()
+                .eq(KnowledgeDocument::getId, docId)
+                .set(KnowledgeDocument::getSourceType, "CONNECTOR")
+                .set(KnowledgeDocument::getSourceUri, externalId));
+    }
+
     /**
      * 认领到期连接器：行锁（SKIP LOCKED）内复核 status=ENABLED 且 last_sync_at 仍是 worker
      * 读到的旧值（防双节点同时判定到期），然后推 last_sync_at=now 作为本轮占位——

@@ -282,12 +282,15 @@ const columns: DataTableColumns<KnowledgeDocument> = [
   { title: 'ID', key: 'id', width: 60 },
   {
     title: '标题', key: 'title', ellipsis: { tooltip: true },
-    // C2：附件模式文档 📎 徽标（整件入库不切片，检索命中注入原件内容）
-    render: r => r.indexMode === 'ATTACHMENT'
+    // C2：附件模式 📎 徽标（整件入库不切片，命中注入原件内容）；C6：连接器同步文档 🔌 徽标（来源 external_id）
+    render: r => (r.indexMode === 'ATTACHMENT' || r.sourceType === 'CONNECTOR')
       ? h('span', { style: 'display:inline-flex;align-items:center;gap:4px' }, [
-          h('span', { title: '附件模式：整件入库，命中后注入原件内容', style: 'cursor:help' }, '📎'),
+          r.indexMode === 'ATTACHMENT'
+            && h('span', { title: '附件模式：整件入库，命中后注入原件内容', style: 'cursor:help' }, '📎'),
+          r.sourceType === 'CONNECTOR'
+            && h('span', { title: `连接器同步文档（源：${r.sourceUri || '未知'}），源端变更时自动更新`, style: 'cursor:help' }, '🔌'),
           r.title
-        ])
+        ].filter(Boolean))
       : r.title
   },
   { title: '类型', key: 'docType', width: 90, render: r => r.docType || '-' },

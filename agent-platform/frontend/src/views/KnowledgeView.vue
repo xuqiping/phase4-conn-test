@@ -31,6 +31,13 @@
           </n-drawer-content>
         </n-drawer>
 
+        <!-- 连接器抽屉（14x#7 C6：外部源定时同步，owner/admin） -->
+        <n-drawer v-model:show="showConnectorDrawer" :width="docDrawerWidth" placement="right">
+          <n-drawer-content :title="`连接器 · ${connectorKb?.name || ''}`" closable>
+            <ConnectorPanel v-if="connectorKb" :kb-id="connectorKb.id" />
+          </n-drawer-content>
+        </n-drawer>
+
         <!-- KB 表单弹窗 -->
         <KbFormModal v-model:show="showFormModal" :edit-data="editingKb" @saved="onSaved" />
 
@@ -81,6 +88,7 @@ import { knowledgeApi, type KnowledgeBase } from '@/api/knowledge'
 import KbFormModal from '@/components/knowledge/KbFormModal.vue'
 import KbPermissionModal from '@/components/knowledge/KbPermissionModal.vue'
 import DocumentManager from '@/components/knowledge/DocumentManager.vue'
+import ConnectorPanel from '@/components/knowledge/ConnectorPanel.vue'
 import RetrievalDebugPanel from '@/components/knowledge/RetrievalDebugPanel.vue'
 import RetrievalAuditPanel from '@/components/knowledge/RetrievalAuditPanel.vue'
 import RagAskPanel from '@/components/knowledge/RagAskPanel.vue'
@@ -105,6 +113,8 @@ const showFormModal = ref(false)
 const editingKb = ref<KnowledgeBase | null>(null)
 const showDocDrawer = ref(false)
 const docKb = ref<KnowledgeBase | null>(null)
+const showConnectorDrawer = ref(false)
+const connectorKb = ref<KnowledgeBase | null>(null)
 const showPermModal = ref(false)
 const permKb = ref<KnowledgeBase | null>(null)
 
@@ -134,9 +144,11 @@ const columns: DataTableColumns<KnowledgeBase> = [
     render: r => new Date(r.createdAt).toLocaleString('zh-CN')
   },
   {
-    title: '操作', key: 'actions', width: 240, fixed: 'right',
+    title: '操作', key: 'actions', width: 310, fixed: 'right',
     render: r => h(NSpace, { size: 4 }, () => [
       h(NButton, { size: 'small', onClick: () => openDocs(r) }, () => '文档'),
+      // 14x#7 C6：连接器管理（外部源定时同步）仅 owner/admin，与后端 isOwnerOrAdmin 对齐
+      canDestroy(r) && h(NButton, { size: 'small', onClick: () => openConnectors(r) }, () => '连接器'),
       // 14x#2：编辑/删除仅 owner/admin（per-KB，canManage 授予位不含销毁库）；全局 knowledge:write 不再放行他人库
       canDestroy(r) && h(NButton, { size: 'small', onClick: () => openEdit(r) }, () => '编辑'),
       r.canManage && h(NButton, { size: 'small', onClick: () => openPerm(r) }, () => '授权'),
@@ -163,6 +175,10 @@ function openEdit(kb: KnowledgeBase) {
 function openDocs(kb: KnowledgeBase) {
   docKb.value = kb
   showDocDrawer.value = true
+}
+function openConnectors(kb: KnowledgeBase) {
+  connectorKb.value = kb
+  showConnectorDrawer.value = true
 }
 function openPerm(kb: KnowledgeBase) {
   permKb.value = kb
