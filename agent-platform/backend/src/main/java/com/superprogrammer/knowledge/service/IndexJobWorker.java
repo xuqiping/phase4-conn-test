@@ -166,7 +166,8 @@ public class IndexJobWorker {
                         List.of(new com.superprogrammer.knowledge.opensearch.OpenSearchChunkDocument(
                                 node.getTenantId(), job.getKbId(), node.getDocumentId(), node.getVersionId(), node.getId(),
                                 List.of("tenant:" + node.getTenantId(), "kb:" + job.getKbId()), node.getStatus(),
-                                node.getContentHash(), contextHash, job.getPipelineVersion(), embedText, vector)));
+                                node.getContentHash(), contextHash, node.getContextualText(),
+                                job.getPipelineVersion(), embedText, vector)));
             }
 
             IndexJobTxService.IndexedDoc indexed = txService.completeUpsert(job.getId(), node.getId(), node.getDocumentId(),

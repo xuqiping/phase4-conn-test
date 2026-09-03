@@ -30,6 +30,7 @@ public record KnowledgeIndexSchema(int embeddingDimension, String pipelineVersio
                 "nodeId":{"type":"long"},"aclTokens":{"type":"keyword"},
                 "status":{"type":"keyword"},"contentHash":{"type":"keyword"},
                 "contextHash":{"type":"keyword"},"pipelineVersion":{"type":"keyword"},
+                "contextualText":{"type":"text","index":false},
                 "sparseText":{"type":"text"},
                 "denseVector":{"type":"knn_vector","dimension":%d,"method":{"name":"hnsw","space_type":"cosinesimil","engine":"lucene"}}
                 }}}

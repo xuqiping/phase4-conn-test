@@ -25,10 +25,15 @@ public class Contextualizer {
                                             KnowledgeDocumentVersion version,
                                             KnowledgeNode node) {
         String rawContent = value(node == null ? null : node.getContent(), "");
+        // WP3 C4：LLM 定位语行仅当 contextual_text 非空时拼入——存量行（NULL）产出与旧公式
+        // 逐字节一致的文本与 contextHash，存量 embedding 行/在途 job 照常复校通过（零迁移零重嵌）
+        String contextualText = node == null ? null : node.getContextualText();
+        String locatorLine = hasText(contextualText) ? "\n定位语：" + contextualText.trim() : "";
         String text = "文档：" + value(document == null ? null : document.getTitle(), UNKNOWN)
                 + "\n版本：" + versionLabel(version)
                 + "\n标题路径：" + titlePath(node)
                 + "\n所属背景：" + value(node == null ? null : node.getTitle(), UNKNOWN)
+                + locatorLine
                 + "\n原文：" + rawContent;
         String contentHash = node != null && hasText(node.getContentHash())
                 ? node.getContentHash() : HashUtil.sha256(rawContent);

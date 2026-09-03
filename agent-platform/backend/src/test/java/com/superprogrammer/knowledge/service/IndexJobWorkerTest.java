@@ -163,6 +163,43 @@ class IndexJobWorkerTest {
         verify(txService, never()).failJob(anyLong(), anyString());
     }
 
+    // WP3 C4：节点带定位语 → embed 文本含「定位语：」行且 hash 复校通过（CTX_LLM_V1 管线 worker 侧）
+    @Test
+    void contextualTextNode_embedsLocatorLineAndHashesMatch() {
+        KnowledgeIndexJob job = job(10L, 1L, "hash1");
+        job.setKbId(7L);
+        when(txService.claimBatch(anyInt())).thenReturn(List.of(job));
+        KnowledgeNode n = node("hash1", "ACTIVE");
+        n.setId(10L);
+        n.setDocumentId(99L);
+        n.setTitle("环境准备");
+        n.setVersionId(3L);
+        n.setContextualText("第1章 环境准备中的硬件要求清单");   // 先设定位语再算 hash → node/job/实际三方一致
+        KnowledgeDocument doc = new KnowledgeDocument();
+        doc.setId(99L);
+        doc.setTitle("部署手册");
+        when(documentMapper.selectById(99L)).thenReturn(doc);
+        com.superprogrammer.knowledge.entity.KnowledgeDocumentVersion version =
+                new com.superprogrammer.knowledge.entity.KnowledgeDocumentVersion();
+        version.setId(3L);
+        Contextualizer.ContextualContent contextual = new Contextualizer(objectMapper).contextualize(doc, version, n);
+        n.setContextHash(contextual.contextHash());
+        job.setContextHash(contextual.contextHash());
+        job.setEmbeddingModel("task-embedding-model");
+        when(nodeMapper.selectById(10L)).thenReturn(n);
+        org.mockito.ArgumentCaptor<String> embedText = org.mockito.ArgumentCaptor.forClass(String.class);
+        when(llmGateway.embed(embedText.capture(), eq("task-embedding-model"), any()))
+                .thenReturn(new float[HalfVecUtil.DIM]);
+
+        worker.poll();
+
+        org.junit.jupiter.api.Assertions.assertTrue(
+                embedText.getValue().contains("\n定位语：第1章 环境准备中的硬件要求清单"), embedText.getValue());
+        verify(txService).completeUpsert(eq(1L), eq(10L), eq(99L), eq(7L),
+                eq("task-embedding-model"), anyString(), eq("hash1"), eq(contextual.contextHash()));
+        verify(txService, never()).voidJob(anyLong(), anyString());
+    }
+
     @Test
     void snapshotRebuildWritesIsolatedPhysicalIndexInsteadOfLiveAlias() {
         org.springframework.test.util.ReflectionTestUtils.setField(worker, "openSearchChunkWriter", openSearchChunkWriter);

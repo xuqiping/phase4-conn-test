@@ -72,7 +72,8 @@ class DocumentParserInjectionScanTest {
                 mock(ParseArtifactService.class),
                 nodeMapper,
                 embeddingMapper,
-                docEmbeddingMapper);
+                docEmbeddingMapper,
+                mock(LlmContextualizer.class));
         ReflectionTestUtils.setField(service, "securityEventPublisher", publisher);
         ReflectionTestUtils.setField(service, "bizMetrics", mock(BizMetrics.class));
         when(systemSettingService.getAiKbScanEnabled()).thenReturn(true);

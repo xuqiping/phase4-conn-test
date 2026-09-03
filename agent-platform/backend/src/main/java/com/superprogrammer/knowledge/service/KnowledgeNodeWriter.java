@@ -65,6 +65,19 @@ public class KnowledgeNodeWriter {
     public void writeNodes(KnowledgeDocument doc, Long operatorId,
                            ExtractedDocument extracted, String l1Json, List<String> abstracts,
                            String metadataJson) {
+        writeNodes(doc, operatorId, extracted, l1Json, abstracts, metadataJson, Map.of());
+    }
+
+    /**
+     * @param contextualLocators C4 LLM 定位表（path→定位语，可为空 Map=纯规则基线）；
+     *                           非空时本批 job pipeline_version=CTX_LLM_V1（幂等键随之变化，
+     *                           新管线 job 与旧管线 job 天然隔离），L2 节点落 contextual_text，
+     *                           contextHash 含定位语（Contextualizer 新公式）
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void writeNodes(KnowledgeDocument doc, Long operatorId,
+                           ExtractedDocument extracted, String l1Json, List<String> abstracts,
+                           String metadataJson, Map<String, String> contextualLocators) {
         long startedAt = System.nanoTime();
         requireOwnership(doc);
         // 1. doc → EMBEDDING + l1_metadata，清 parse_error
@@ -90,6 +103,8 @@ public class KnowledgeNodeWriter {
 
         int c2Count = 0;
         int e3Count = 0;
+        boolean ctxLlm = contextualLocators != null && !contextualLocators.isEmpty();
+        String effectivePipeline = ctxLlm ? "CTX_LLM_V1" : null;   // null=默认（rag-index-v1）
         // 2. 每 section：1 个兼容 L0/S1（摘要）+ 其兼容 L2/C2|E3 子节点
         for (int i = 0; i < sections.size(); i++) {
             Section section = sections.get(i);
@@ -103,7 +118,7 @@ public class KnowledgeNodeWriter {
             nodeMapper.insert(l0);                  // id 回填
 
             indexJobMapper.insertNodeJobIgnoreConflict(
-                    buildUpsertJob(l0, doc.getKbId(), extracted.getParserVersion()));
+                    buildUpsertJob(l0, doc.getKbId(), extracted.getParserVersion(), effectivePipeline));
 
             List<ChunkDraft> chunks = chunkFactory.chunk(section);
             for (ChunkDraft chunk : chunks) {
@@ -113,6 +128,10 @@ public class KnowledgeNodeWriter {
                         chunk.content(), path, mergeChunkMetadata(metadataJson, doc, section, chunk, s1Path));
                 l2.setContentHash(HashUtil.sha256(chunk.content()));
                 l2.setTokenCount(chunk.tokenCount());
+                String locator = ctxLlm ? contextualLocators.get(path) : null;
+                if (locator != null) {
+                    l2.setContextualText(locator);   // 缺席项=该 chunk 降级纯规则前缀
+                }
                 com.superprogrammer.knowledge.entity.KnowledgeDocumentVersion version =
                         new com.superprogrammer.knowledge.entity.KnowledgeDocumentVersion();
                 version.setId(doc.getCurrentVersionId());
@@ -120,7 +139,7 @@ public class KnowledgeNodeWriter {
                 l2.setContextHash(contextual.contextHash());
                 nodeMapper.insert(l2);
                 indexJobMapper.insertNodeJobIgnoreConflict(
-                        buildContextualUpsertJob(l2, doc.getKbId(), extracted.getParserVersion()));
+                        buildContextualUpsertJob(l2, doc.getKbId(), extracted.getParserVersion(), effectivePipeline));
             }
         }
         bizMetrics.knowledgeChunked("S1", sections.size());
@@ -128,9 +147,40 @@ public class KnowledgeNodeWriter {
         bizMetrics.knowledgeChunked("E3", e3Count);
         Duration duration = Duration.ofNanos(System.nanoTime() - startedAt);
         bizMetrics.knowledgeChunkDuration(duration);
-        log.info("知识分块落库完成 docId={} versionId={} chunkerVersion={} s1={} c2={} e3={} elapsedMs={}",
+        log.info("知识分块落库完成 docId={} versionId={} chunkerVersion={} s1={} c2={} e3={} ctxLlm={} elapsedMs={}",
                 doc.getId(), doc.getCurrentVersionId(), CHUNKER_VERSION,
-                sections.size(), c2Count, e3Count, duration.toMillis());
+                sections.size(), c2Count, e3Count, ctxLlm, duration.toMillis());
+    }
+
+    /**
+     * C4 chunk 清单预览（非事务，供 LlmContextualizer 在 writeNodes 事务外生成定位表）。
+     * path 口径与 writeNodes 同源同构（同 chunkFactory+同拼式）；ATTACHMENT 描述召回豁免（规格 §6.3）。
+     */
+    public List<LlmContextualizer.ChunkBrief> previewChunks(KnowledgeDocument doc, ExtractedDocument extracted) {
+        if (doc == null || "ATTACHMENT".equals(doc.getDocType())
+                || extracted == null || extracted.getSections() == null) {
+            return List.of();
+        }
+        List<LlmContextualizer.ChunkBrief> briefs = new java.util.ArrayList<>();
+        List<Section> sections = extracted.getSections();
+        for (int i = 0; i < sections.size(); i++) {
+            Section section = sections.get(i);
+            for (ChunkDraft chunk : chunkFactory.chunk(section)) {
+                String path = "/L0-" + i + "/L2-" + chunk.ordinal();
+                briefs.add(new LlmContextualizer.ChunkBrief(path, section.getTitle(),
+                        firstLine(chunk.content())));
+            }
+        }
+        return briefs;
+    }
+
+    private static String firstLine(String content) {
+        if (content == null || content.isBlank()) {
+            return "";
+        }
+        String line = content.trim();
+        int nl = line.indexOf('\n');
+        return nl > 0 ? line.substring(0, nl) : line;
     }
 
     /** 摘要为空（BATCH 未匹配 / HYBRID 未覆盖 / LLM 失败）→ 兜底 section 原文前 ~400 字。禁止空 content L0。 */
@@ -228,29 +278,31 @@ public class KnowledgeNodeWriter {
         }
     }
 
-    /** UPSERT job：仅 L0。idempotency_key=sha256(nodeId:contentHash:UPSERT)（I4）。 */
-    private KnowledgeIndexJob buildUpsertJob(KnowledgeNode l0, Long kbId, String parserVersion) {
+    /** UPSERT job：仅 L0。idempotency_key=sha256(nodeId:contentHash:UPSERT)（I4）。effectivePipeline=null=默认。 */
+    private KnowledgeIndexJob buildUpsertJob(KnowledgeNode l0, Long kbId, String parserVersion,
+                                             String effectivePipeline) {
         KnowledgeIndexJob job = new KnowledgeIndexJob();
         job.setNodeId(l0.getId());
         job.setKbId(kbId);
         job.setJobType("UPSERT");
         job.setContentHash(l0.getContentHash());
-        fillVersionFingerprint(job, l0.getVersionId(), parserVersion, kbId);
+        fillVersionFingerprint(job, l0.getVersionId(), parserVersion, kbId, effectivePipeline);
         job.setIdempotencyKey(HashUtil.sha256(l0.getId() + ":" + l0.getContentHash() + ":"
                 + l0.getVersionId() + ":" + parserVersion + ":" + CHUNKER_VERSION + ":"
                 + job.getEmbeddingModel() + ":" + job.getPipelineVersion() + ":UPSERT"));
         return job;
     }
 
-    /** C2/E3 上下文化索引任务；正文或上下文任一变化都会生成新的幂等键。 */
-    private KnowledgeIndexJob buildContextualUpsertJob(KnowledgeNode node, Long kbId, String parserVersion) {
+    /** C2/E3 上下文化索引任务；正文或上下文任一变化都会生成新的幂等键。effectivePipeline=null=默认。 */
+    private KnowledgeIndexJob buildContextualUpsertJob(KnowledgeNode node, Long kbId, String parserVersion,
+                                                       String effectivePipeline) {
         KnowledgeIndexJob job = new KnowledgeIndexJob();
         job.setNodeId(node.getId());
         job.setKbId(kbId);
         job.setJobType("UPSERT");
         job.setContentHash(node.getContentHash());
         job.setContextHash(node.getContextHash());
-        fillVersionFingerprint(job, node.getVersionId(), parserVersion, kbId);
+        fillVersionFingerprint(job, node.getVersionId(), parserVersion, kbId, effectivePipeline);
         job.setIdempotencyKey(HashUtil.sha256(node.getId() + ":" + node.getContentHash()
                 + ":" + node.getContextHash() + ":" + node.getVersionId() + ":" + parserVersion + ":"
                 + CHUNKER_VERSION + ":" + job.getEmbeddingModel() + ":" + job.getPipelineVersion() + ":UPSERT"));
@@ -258,7 +310,7 @@ public class KnowledgeNodeWriter {
     }
 
     private void fillVersionFingerprint(KnowledgeIndexJob job, Long versionId,
-                                        String parserVersion, Long kbId) {
+                                        String parserVersion, Long kbId, String effectivePipeline) {
         String embeddingModel = knowledgeBaseService.ensure(kbId).getEmbeddingModel();
         if (embeddingModel == null || embeddingModel.isBlank()) {
             throw new IllegalStateException("知识库未配置可用 embedding 模型 kbId=" + kbId);
@@ -267,8 +319,9 @@ public class KnowledgeNodeWriter {
         job.setParserVersion(parserVersion);
         job.setChunkerVersion(CHUNKER_VERSION);
         job.setEmbeddingModel(embeddingModel.trim());
-        job.setPipelineVersion(pipelineVersion == null || pipelineVersion.isBlank()
-                ? "rag-index-v1" : pipelineVersion.trim());
+        String pipeline = effectivePipeline != null ? effectivePipeline : pipelineVersion;
+        job.setPipelineVersion(pipeline == null || pipeline.isBlank()
+                ? "rag-index-v1" : pipeline.trim());
     }
 
     /**
@@ -283,7 +336,7 @@ public class KnowledgeNodeWriter {
         job.setKbId(kbId);
         job.setJobType("UPSERT_L1");
         job.setContentHash(l1Hash);
-        fillVersionFingerprint(job, doc.getCurrentVersionId(), null, kbId);
+        fillVersionFingerprint(job, doc.getCurrentVersionId(), null, kbId, null);   // L1 无 parser/chunk，恒默认管线
         job.setIdempotencyKey(HashUtil.sha256(doc.getId() + ":" + l1Hash + ":"
                 + doc.getCurrentVersionId() + ":" + job.getEmbeddingModel() + ":"
                 + job.getPipelineVersion() + ":UPSERT_L1"));

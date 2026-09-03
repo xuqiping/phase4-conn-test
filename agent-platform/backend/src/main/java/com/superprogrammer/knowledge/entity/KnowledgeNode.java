@@ -43,6 +43,12 @@ public class KnowledgeNode extends BaseEntity {
 
     private String contextHash;
 
+    /** C4 LLM 定位语（≤50字，V171）；NULL=纯规则前缀=存量行为（contextHash 公式对 NULL 逐字节兼容） */
+    private String contextualText;
+
+    /** C5 内容形态预留（WP5）：TEXT/IMAGE；NULL=纯文本 */
+    private String modality;
+
     /** ACTIVE / STALE / ARCHIVED */
     private String status;
 

@@ -230,6 +230,69 @@ class KnowledgeNodeWriterStructuredMetadataTest {
                         + c2Job.getEmbeddingModel() + ":" + c2Job.getPipelineVersion() + ":UPSERT"));
     }
 
+    // ---- WP3 C4：定位表接线（7 参 writeNodes + previewChunks 同构） ----
+
+    @Test
+    void contextualLocators_wireToL2ContextualTextAndSwitchPipelineVersion() {
+        MapperBuilderAssistant assistant = new MapperBuilderAssistant(new MybatisConfiguration(), "test-ctx-llm");
+        assistant.setCurrentNamespace("test-ctx-llm");
+        TableInfoHelper.initTableInfo(assistant, KnowledgeDocument.class);
+        KnowledgeDocumentMapper documentMapper = mock(KnowledgeDocumentMapper.class);
+        KnowledgeNodeMapper nodeMapper = mock(KnowledgeNodeMapper.class);
+        KnowledgeIndexJobMapper jobMapper = mock(KnowledgeIndexJobMapper.class);
+        ObjectMapper objectMapper = new ObjectMapper();
+        KnowledgeNodeWriter writer = new KnowledgeNodeWriter(documentMapper, nodeMapper, jobMapper,
+                objectMapper, ChunkFactory.defaults(), mock(BizMetrics.class), kbService(),
+                new Contextualizer(objectMapper));
+        AtomicLong ids = new AtomicLong(50);
+        doAnswer(invocation -> {
+            invocation.<KnowledgeNode>getArgument(0).setId(ids.incrementAndGet());
+            return 1;
+        }).when(nodeMapper).insert(any(KnowledgeNode.class));
+        KnowledgeDocument doc = new KnowledgeDocument();
+        doc.setId(7L); doc.setKbId(8L); doc.setCurrentVersionId(9L); doc.setCreatedBy(3L);
+        String content = java.util.stream.IntStream.range(0, 12)
+                .mapToObj(i -> "段落" + i + "：" + "完整事实。".repeat(60))
+                .collect(java.util.stream.Collectors.joining("\n\n"));
+        Section section = Section.builder().sectionId("sec-ctx").nodeType("SECTION")
+                .title("环境准备").ordinal(0).content(content).build();
+        ExtractedDocument extracted = ExtractedDocument.builder().sections(List.of(section)).build();
+
+        // ① previewChunks（事务外清单）path 与 writeNodes 实际插入 L2 path 逐一同构
+        List<LlmContextualizer.ChunkBrief> briefs = writer.previewChunks(doc, extracted);
+        org.assertj.core.api.Assertions.assertThat(briefs.size()).isGreaterThan(1);
+        java.util.Map<String, String> locators = new java.util.LinkedHashMap<>();
+        for (int i = 1; i < briefs.size(); i++) {   // 首个 path 故意缺席=降级纯规则前缀
+            locators.put(briefs.get(i).path(), "第1章 定位语-" + i);
+        }
+
+        writer.writeNodes(doc, 3L, extracted, null, List.of("环境准备摘要"), "{}", locators);
+
+        ArgumentCaptor<KnowledgeNode> nodeCaptor = ArgumentCaptor.forClass(KnowledgeNode.class);
+        verify(nodeMapper, org.mockito.Mockito.atLeast(3)).insert(nodeCaptor.capture());
+        List<KnowledgeNode> l2Nodes = nodeCaptor.getAllValues().stream()
+                .filter(node -> "L2".equals(node.getLevel())).toList();
+        List<String> insertedPaths = l2Nodes.stream().map(KnowledgeNode::getPath).toList();
+        org.assertj.core.api.Assertions.assertThat(insertedPaths)
+                .containsExactlyElementsOf(briefs.stream()
+                        .map(LlmContextualizer.ChunkBrief::path).toList());
+        // ② 定位语接线：命中 path→contextualText 落值；缺席 path→null（降级，不报错）
+        for (KnowledgeNode l2 : l2Nodes) {
+            if (l2.getPath().equals(briefs.get(0).path())) {
+                org.assertj.core.api.Assertions.assertThat(l2.getContextualText()).isNull();
+            } else {
+                org.assertj.core.api.Assertions.assertThat(l2.getContextualText())
+                        .isEqualTo(locators.get(l2.getPath()));
+            }
+        }
+        // ③ 整批 job pipeline_version=CTX_LLM_V1（新旧管线幂等键隔离）
+        ArgumentCaptor<KnowledgeIndexJob> jobs = ArgumentCaptor.forClass(KnowledgeIndexJob.class);
+        verify(jobMapper, org.mockito.Mockito.atLeast(2)).insertNodeJobIgnoreConflict(jobs.capture());
+        org.assertj.core.api.Assertions.assertThat(jobs.getAllValues())
+                .allSatisfy(job -> org.assertj.core.api.Assertions
+                        .assertThat(job.getPipelineVersion()).isEqualTo("CTX_LLM_V1"));
+    }
+
     private KnowledgeBaseService kbService() {
         KnowledgeBaseService service = mock(KnowledgeBaseService.class);
         KnowledgeBase kb = new KnowledgeBase();

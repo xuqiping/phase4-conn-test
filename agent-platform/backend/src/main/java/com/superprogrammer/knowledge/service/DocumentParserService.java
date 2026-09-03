@@ -118,6 +118,7 @@ public class DocumentParserService {
     private final KnowledgeNodeMapper nodeMapper;
     private final KnowledgeEmbeddingMapper embeddingMapper;
     private final KnowledgeDocEmbeddingMapper docEmbeddingMapper;
+    private final LlmContextualizer llmContextualizer;
 
     /** 监听器入口。宽 catch 有意：LlmGateway 抛裸 RuntimeException、Tika 抛 IOException/TikaException，均汇入 markFailed。 */
     public void parse(Long documentId, Long operatorId) {
@@ -150,8 +151,14 @@ public class DocumentParserService {
                 default -> summarizePerSection(doc, extracted);
             };
             String l1Json = serializeL1(result.l1());
+            // C4 LLM 定位表（WP3 Step2）：与 SUMMARIZING 同批管线停留，输入复用 L1 摘要，
+            // 不做第二次文档级理解；事务外调用（writeNodes 前）；计费显式归户文档上传者。
+            // 开关关/ATTACHMENT/失败/烂尾缺项 → 对应 chunk 降级纯规则前缀，不阻断解析。
+            Map<String, String> contextualLocators = llmContextualizer.generateLocators(
+                    doc, result.l1() == null ? null : result.l1().getSummary(),
+                    knowledgeNodeWriter.previewChunks(doc, extracted), doc.getCreatedBy());
             knowledgeNodeWriter.writeNodes(doc, operatorId, extracted, l1Json, result.abstracts(),
-                    buildNodeMetadata(doc));
+                    buildNodeMetadata(doc), contextualLocators);
             log.info("文档解析完成 docId={} strategy={} sections={}",
                     documentId, strategy, extracted.getSections().size());
         } catch (Exception e) {
