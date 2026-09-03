@@ -40,6 +40,8 @@ export interface ClipboardItemSummary {
   useCount: number
   isFavorite: boolean
   isPinned: boolean
+  pinnedAt?: number
+  groupId?: string
   thumbnailPath?: string
   cacheBytes: number
   cacheState: 'none' | 'cached' | 'reference_only' | 'cleaned'
@@ -82,11 +84,20 @@ export interface ClipboardQuery {
   query?: string
   kind?: ClipboardKind | 'all'
   favoriteOnly?: boolean
+  groupId?: string | null
   sourceApp?: string
   startAt?: number
   endAt?: number
   limit: number
   offset: number
+}
+
+export interface ClipboardGroup {
+  id: string
+  name: string
+  sortOrder: number
+  createdAt: number
+  updatedAt: number
 }
 
 export interface ClipboardTypeLimitMb {

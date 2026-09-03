@@ -70,6 +70,8 @@ pub struct ClipboardItemSummary {
     pub use_count: i64,
     pub is_favorite: bool,
     pub is_pinned: bool,
+    pub pinned_at: Option<i64>,
+    pub group_id: Option<String>,
     pub thumbnail_path: Option<String>,
     pub cache_bytes: i64,
     pub cache_state: CacheState,
@@ -120,11 +122,22 @@ pub struct ClipboardQuery {
     pub query: Option<String>,
     pub kind: Option<String>,
     pub favorite_only: Option<bool>,
+    pub group_id: Option<String>,
     pub source_app: Option<String>,
     pub start_at: Option<i64>,
     pub end_at: Option<i64>,
     pub limit: i64,
     pub offset: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClipboardGroup {
+    pub id: String,
+    pub name: String,
+    pub sort_order: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

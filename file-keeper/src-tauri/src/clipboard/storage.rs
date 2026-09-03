@@ -24,8 +24,46 @@ impl ClipboardStorage {
     }
 
     pub fn init(&self) -> Result<(), String> {
-        self.connection.execute_batch(
-            "
+        self.connection
+            .execute_batch("BEGIN IMMEDIATE")
+            .map_err(|err| err.to_string())?;
+        let migration_result = self.run_migrations();
+        match migration_result {
+            Ok(()) => self
+                .connection
+                .execute_batch("COMMIT")
+                .map_err(|err| err.to_string()),
+            Err(error) => {
+                let _ = self.connection.execute_batch("ROLLBACK");
+                Err(error)
+            }
+        }
+    }
+
+    fn run_migrations(&self) -> Result<(), String> {
+        let current_version: i64 = self
+            .connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .map_err(|err| err.to_string())?;
+        if current_version > 2 {
+            return Err(format!(
+                "clipboard database schema is newer than this application: {current_version}"
+            ));
+        }
+
+        if current_version < 1 {
+            self.migrate_to_v1()?;
+        }
+        if current_version < 2 {
+            self.migrate_to_v2()?;
+        }
+        Ok(())
+    }
+
+    fn migrate_to_v1(&self) -> Result<(), String> {
+        self.connection
+            .execute_batch(
+                "
             CREATE TABLE IF NOT EXISTS clipboard_items (
                 id TEXT PRIMARY KEY,
                 kind TEXT NOT NULL,
@@ -62,69 +100,105 @@ impl ClipboardStorage {
                 color_rgb TEXT,
                 note TEXT
             );
-            CREATE INDEX IF NOT EXISTS idx_clipboard_items_created_at ON clipboard_items(created_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_clipboard_items_kind ON clipboard_items(kind);
             CREATE TABLE IF NOT EXISTS clipboard_settings (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+            ",
+            )
+            .map_err(|err| err.to_string())?;
+        for (name, definition) in [
+            ("files_json", "TEXT"),
+            ("image_path", "TEXT"),
+            ("image_width", "INTEGER"),
+            ("image_height", "INTEGER"),
+            ("image_format", "TEXT"),
+            ("ocr_text", "TEXT"),
+            ("html", "TEXT"),
+            ("sanitized_html", "TEXT"),
+            ("markdown", "TEXT"),
+            ("url", "TEXT"),
+            ("url_title", "TEXT"),
+            ("url_description", "TEXT"),
+            ("url_thumbnail_path", "TEXT"),
+            ("color_hex", "TEXT"),
+            ("color_rgb", "TEXT"),
+            ("note", "TEXT"),
+        ] {
+            self.ensure_column("clipboard_items", name, definition)?;
+        }
+        self.connection
+            .execute_batch(
+                "
+            CREATE INDEX IF NOT EXISTS idx_clipboard_items_created_at
+                ON clipboard_items(created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_clipboard_items_kind
+                ON clipboard_items(kind);
+            PRAGMA user_version = 1;
+            ",
+            )
+            .map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    fn migrate_to_v2(&self) -> Result<(), String> {
+        self.ensure_column("clipboard_items", "group_id", "TEXT")?;
+        self.ensure_column("clipboard_items", "pinned_at", "INTEGER")?;
+        self.connection.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS clipboard_groups (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                normalized_name TEXT NOT NULL UNIQUE,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_clipboard_items_group_created
+                ON clipboard_items(group_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_clipboard_items_pinned
+                ON clipboard_items(is_pinned DESC, pinned_at DESC, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_clipboard_groups_sort
+                ON clipboard_groups(sort_order, created_at);
+            UPDATE clipboard_items
+               SET group_id = NULL
+             WHERE group_id IS NOT NULL
+               AND NOT EXISTS (
+                   SELECT 1 FROM clipboard_groups WHERE clipboard_groups.id = clipboard_items.group_id
+               );
+            PRAGMA user_version = 2;
             "
         ).map_err(|err| err.to_string())?;
-        let _ = self
-            .connection
-            .execute("ALTER TABLE clipboard_items ADD COLUMN files_json TEXT", []);
-        let _ = self
-            .connection
-            .execute("ALTER TABLE clipboard_items ADD COLUMN image_path TEXT", []);
-        let _ = self.connection.execute(
-            "ALTER TABLE clipboard_items ADD COLUMN image_width INTEGER",
-            [],
-        );
-        let _ = self.connection.execute(
-            "ALTER TABLE clipboard_items ADD COLUMN image_height INTEGER",
-            [],
-        );
-        let _ = self.connection.execute(
-            "ALTER TABLE clipboard_items ADD COLUMN image_format TEXT",
-            [],
-        );
-        let _ = self
-            .connection
-            .execute("ALTER TABLE clipboard_items ADD COLUMN ocr_text TEXT", []);
-        let _ = self
-            .connection
-            .execute("ALTER TABLE clipboard_items ADD COLUMN html TEXT", []);
-        let _ = self.connection.execute(
-            "ALTER TABLE clipboard_items ADD COLUMN sanitized_html TEXT",
-            [],
-        );
-        let _ = self
-            .connection
-            .execute("ALTER TABLE clipboard_items ADD COLUMN markdown TEXT", []);
-        let _ = self
-            .connection
-            .execute("ALTER TABLE clipboard_items ADD COLUMN url TEXT", []);
-        let _ = self
-            .connection
-            .execute("ALTER TABLE clipboard_items ADD COLUMN url_title TEXT", []);
-        let _ = self.connection.execute(
-            "ALTER TABLE clipboard_items ADD COLUMN url_description TEXT",
-            [],
-        );
-        let _ = self.connection.execute(
-            "ALTER TABLE clipboard_items ADD COLUMN url_thumbnail_path TEXT",
-            [],
-        );
-        let _ = self
-            .connection
-            .execute("ALTER TABLE clipboard_items ADD COLUMN color_hex TEXT", []);
-        let _ = self
-            .connection
-            .execute("ALTER TABLE clipboard_items ADD COLUMN color_rgb TEXT", []);
-        let _ = self
-            .connection
-            .execute("ALTER TABLE clipboard_items ADD COLUMN note TEXT", []);
         Ok(())
+    }
+
+    fn ensure_column(&self, table: &str, name: &str, definition: &str) -> Result<(), String> {
+        if self.table_has_column(table, name)? {
+            return Ok(());
+        }
+        self.connection
+            .execute(
+                &format!("ALTER TABLE {table} ADD COLUMN {name} {definition}"),
+                [],
+            )
+            .map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    fn table_has_column(&self, table: &str, column: &str) -> Result<bool, String> {
+        let mut statement = self
+            .connection
+            .prepare(&format!("PRAGMA table_info({table})"))
+            .map_err(|err| err.to_string())?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|err| err.to_string())?;
+        for name in columns {
+            if name.map_err(|err| err.to_string())? == column {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     pub fn save_settings(&self, settings: &ClipboardSettings) -> Result<(), String> {
@@ -230,7 +304,8 @@ impl ClipboardStorage {
 
         let mut statement = self.connection.prepare(
             "SELECT id, kind, title, summary, source_process, source_title, source_pid, created_at,
-                    last_used_at, use_count, is_favorite, is_pinned, thumbnail_path, cache_bytes, cache_state, note
+                    last_used_at, use_count, is_favorite, is_pinned, thumbnail_path, cache_bytes, cache_state, note,
+                    pinned_at, group_id
              FROM clipboard_items
              WHERE (?1 IS NULL OR search_text LIKE ?1)
                AND (?2 IS NULL OR kind = ?2)
@@ -263,7 +338,8 @@ impl ClipboardStorage {
     pub fn get_item_summary(&self, id: &str) -> Result<Option<ClipboardItemSummary>, String> {
         let result = self.connection.query_row(
             "SELECT id, kind, title, summary, source_process, source_title, source_pid, created_at,
-                    last_used_at, use_count, is_favorite, is_pinned, thumbnail_path, cache_bytes, cache_state, note
+                    last_used_at, use_count, is_favorite, is_pinned, thumbnail_path, cache_bytes, cache_state, note,
+                    pinned_at, group_id
              FROM clipboard_items
              WHERE id = ?1",
             params![id],
@@ -710,6 +786,8 @@ fn map_summary_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClipboardItemSum
         use_count: row.get(9)?,
         is_favorite: row.get::<_, i64>(10)? == 1,
         is_pinned: row.get::<_, i64>(11)? == 1,
+        pinned_at: row.get(16)?,
+        group_id: row.get(17)?,
         thumbnail_path: row.get(12)?,
         cache_bytes: row.get(13)?,
         cache_state: parse_cache_state(row.get::<_, String>(14)?.as_str()),
@@ -750,11 +828,133 @@ fn current_millis() -> i64 {
 mod tests {
     use super::*;
 
+    #[test]
+    fn initializes_versioned_group_schema() {
+        let storage = ClipboardStorage::in_memory().unwrap();
+
+        storage.init().unwrap();
+
+        let version: i64 = storage
+            .connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        let group_table_count: i64 = storage
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'clipboard_groups'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let item_columns = table_columns(&storage.connection, "clipboard_items");
+
+        assert_eq!(version, 2);
+        assert_eq!(group_table_count, 1);
+        assert!(item_columns.contains(&"group_id".to_string()));
+        assert!(item_columns.contains(&"pinned_at".to_string()));
+    }
+
+    #[test]
+    fn upgrades_legacy_schema_without_losing_items() {
+        let storage = ClipboardStorage::in_memory().unwrap();
+        storage
+            .connection
+            .execute_batch(
+                "
+            CREATE TABLE clipboard_items (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                title TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                search_text TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                use_count INTEGER NOT NULL DEFAULT 0,
+                is_favorite INTEGER NOT NULL DEFAULT 0,
+                is_pinned INTEGER NOT NULL DEFAULT 0,
+                cache_bytes INTEGER NOT NULL DEFAULT 0,
+                cache_state TEXT NOT NULL DEFAULT 'none'
+            );
+            INSERT INTO clipboard_items (
+                id, kind, title, summary, search_text, created_at,
+                use_count, is_favorite, is_pinned, cache_bytes, cache_state
+            ) VALUES ('legacy-1', 'text', 'legacy', 'legacy', 'legacy', 1, 0, 0, 0, 0, 'none');
+            ",
+            )
+            .unwrap();
+
+        storage.init().unwrap();
+
+        let item_count: i64 = storage
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM clipboard_items WHERE id = 'legacy-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(item_count, 1);
+        assert_eq!(
+            table_columns(&storage.connection, "clipboard_items")
+                .iter()
+                .filter(|name| *name == "group_id")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn database_migration_is_idempotent() {
+        let storage = ClipboardStorage::in_memory().unwrap();
+
+        storage.init().unwrap();
+        storage.init().unwrap();
+
+        let group_index_count: i64 = storage
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_clipboard_items_group_created'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(group_index_count, 1);
+    }
+
+    #[test]
+    fn refuses_to_downgrade_a_newer_database_schema() {
+        let storage = ClipboardStorage::in_memory().unwrap();
+        storage
+            .connection
+            .execute_batch("PRAGMA user_version = 99")
+            .unwrap();
+
+        let error = storage.init().unwrap_err();
+
+        let version: i64 = storage
+            .connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert!(error.contains("newer"));
+        assert_eq!(version, 99);
+    }
+
+    fn table_columns(connection: &Connection, table: &str) -> Vec<String> {
+        let mut statement = connection
+            .prepare(&format!("PRAGMA table_info({table})"))
+            .unwrap();
+        statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+    }
+
     fn query() -> ClipboardQuery {
         ClipboardQuery {
             query: None,
             kind: None,
             favorite_only: None,
+            group_id: None,
             source_app: None,
             start_at: None,
             end_at: None,

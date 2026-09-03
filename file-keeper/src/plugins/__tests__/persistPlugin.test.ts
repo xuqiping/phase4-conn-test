@@ -106,4 +106,24 @@ describe('createPersistPlugin', () => {
     await store.$persistReady
     expect(store.count).toBe(42)
   })
+
+  it('加载旧数据时先执行 store 提供的迁移函数', async () => {
+    mockLoad.mockResolvedValueOnce({ count: 42 })
+    setupPinia()
+
+    const useStore = defineStore('test4', {
+      state: () => ({ count: 0 }),
+      persist: {
+        key: 'test4',
+        migrate: stored => ({
+          ...(stored as { count: number }),
+          count: (stored as { count: number }).count + 1
+        })
+      }
+    })
+
+    const store = useStore()
+    await store.$persistReady
+    expect(store.count).toBe(43)
+  })
 })

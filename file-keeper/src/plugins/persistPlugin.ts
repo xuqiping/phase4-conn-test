@@ -7,6 +7,7 @@ export interface StorePersistOptions {
   paths?: string[]
   importantActions?: string[]
   debounceMs?: number
+  migrate?: (stored: unknown) => Record<string, unknown>
 }
 
 declare module 'pinia' {
@@ -48,7 +49,8 @@ export function createPersistPlugin(): PiniaPlugin {
       path = 'file-keeper-data.json',
       paths,
       importantActions = [],
-      debounceMs = 500
+      debounceMs = 500,
+      migrate
     } = persist
 
     let api: PersistAPI | null = null
@@ -58,7 +60,8 @@ export function createPersistPlugin(): PiniaPlugin {
       api = await getAPI(path, debounceMs)
       const stored = await api.load<Partial<typeof store.$state>>(key, {} as any)
       if (stored && typeof stored === 'object' && Object.keys(stored).length > 0) {
-        store.$patch(stored)
+        const migrated = migrate ? migrate(stored) : stored
+        store.$patch(migrated as any)
       }
       loaded = true
     })()

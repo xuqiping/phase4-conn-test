@@ -40,6 +40,7 @@ export type ConfirmMode = 'always' | 'whitelist' | 'never'
 
 // Process settings
 export interface ProcessSettings {
+  version?: number
   columns: ColumnConfig[]
   autoRefresh: boolean
   refreshInterval: number
