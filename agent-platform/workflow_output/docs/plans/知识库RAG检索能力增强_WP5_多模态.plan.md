@@ -48,11 +48,12 @@ created-date: 2026-09-03
   - **依赖**：Step 2｜**验证**：单测——IMAGE 通道召回/混维度库仅 TEXT/同 node 双通道去重 ✅；手测：传产品截图问「这个界面哪里改配置」→图被召回（留 Phase4）
   - **实现注（偏离）**：①查询=`denseRecallImage` 全镜像 L1 SQL（FROM knowledge_image_embeddings_doubao JOIN doc/kb，kb.deleted=0/有效窗/e.embedding_model=kb.embedding_model/可见集+docTypes 过滤，ORDER BY cosine LIMIT maxImage）——「表即 modality」Step2 分表自然免过滤列；返回行/记录**双复用** `RagQueryRow.L1RecallRow`/`L1DocHit`（同为 doc 级锚，零新 DTO）；②通道=**独立 RRF 第三列表**：`multiDenseRecallImage` 多 query half 合并（同 L1 口径），单库/多库/补充检索三路径全接线，abstain 空判从「l0+l1」扩「l0+l1+img」；③RRF 同参 k=60，新权重 `rag.recall.rrf.weight-image-vector=0.8`（同 L1 量级，doc 级语义锚）；`fuseTopDDocs` 升三参（l0/l1/img 序列表非空才建 WeightedList——空通道零影响融合）；④**boost 槽位升级不新增槽**：`docL1Sim` 槽升义为「doc 级锚 sim = max(L1 元数据向量, IMAGE 图片向量)」（`merge(..., Math::max)`）——L2Candidate 记录零波及，rerank 语义自然「doc 级语义锚」；img 命中而 l0 未进 topM 的 doc 走 l1OnlyDocs 同路 fetchL2ChildrenByDoc 拉 L2（识图描述节点即证据，evidence=fileRef inline 现状零改动——fetchL1Metadata 已 JOIN stored_files）；⑤同 node 去重：L0 已进 topM 的 doc 不入 l1OnlyDocs（topDDocIds 差集口径），byNode map 跨通道按 nodeId 去重现状复用（测试③断言 fetchL2ChildrenByDoc 零调用+node 证据恰 1 次）；⑥RrfFusion **不改**（fuseWeighted 通用 List<WeightedList> 天然支持任意通道数，「通道注册」经 props 权重表达，无注册表需求）；⑦测试 +3：imageOnlyDoc 三通道独立救回（L0/L1 全空不 abstain+evidence 含识图描述节点）/imageChannel 空仅 TEXT 库回归门（verify 通道已接线+行为不变）/同 doc 双通道单次拉取不重复计数
 
-- [ ] **Step 4：ColPali 实验通道接口预留**
+- [x] **Step 4：ColPali 实验通道接口预留**（代码+测试全落，后端全量 2881/2881）
   - **目标**：sidecar 接口与开关就位（不部署不实现推理）
   - **动作**：①`multimodal/ColpaliGateway.java`：接口定义（pageImage→multi-vector、health）；HTTP 客户端骨架+健康探测失败自动禁用 WARN；②`rag.visual.colpali.enabled` 全局开关+KB 级开关（KB 配置扩展）；③影子对比接线点（V117）注释预留——通道真正接入等 sidecar 部署另立运维项
   - **文件**：`multimodal/ColpaliGateway.java`（新）、`RagConfig`、KB 配置、Test ×1
-  - **依赖**：无｜**验证**：单测探测失败禁用；开关关闭零调用
+  - **依赖**：无｜**验证**：单测探测失败禁用 ✅；开关关闭零调用 ✅
+  - **实现注（偏离）**：①全局开关**未入 RagConfig 而新建 `config/ColpaliProperties`**（prefix `rag.visual.colpali`，spec §7.2 钉死的 key）——RagConfig 是纯常量类无 yml 绑定，实验通道运维 kill switch 须可 yml 覆盖（仿 RagShadowProperties 先例）；②`ColpaliGateway` 单类即「接口+骨架」（@Component，无 interface/impl 拆分——预留期无第二实现，YAGNI）；三重闸 `availableFor(kb)`=全局 enabled ∧ kb.colpaliEnabled（V174 `ALTER TABLE knowledge_bases ADD COLUMN colpali_enabled BOOLEAN NOT NULL DEFAULT FALSE`，Entity/Request/VO/Service create-update-VO 全接线，update null=不动同 confidential 口径）∧ healthy() 探活；③探活：GET {baseUrl}/health 2s 超时，**冷却缓存**（reprobeIntervalMs=60s 内零重打，volatile 双检+synchronized 探测段），失败**自动禁用 WARN 一次**（warnedDown 标志：恢复 INFO+重置，再失败重告警不刷屏不哑）；全局关→恒 false **零出站调用**（测试 verifyNoInteractions 硬断言）；④embedPage 骨架：POST /embed base64→patchVectors float[][]（PageEmbedding record；MaxSim 打分留 sidecar/OpenSearch 侧，pgvector 不承载多向量）——sidecar 未部署 healthy 恒 false，实际不可达防御性抛 IllegalStateException；⑤HTTP 用 java.net.http.HttpClient+测试注入双构造器（SidecarHealthIndicator 先例，@Autowired 显式标注）；⑥影子接线点预留=ColpaliGateway javadoc（指向 RagShadowCoordinator.afterChampion challenger 形式+rag_shadow_comparisons 只记录不生效，增益验证后转正）——检索主链零接线零波及；⑦测试 +2（探活失败自动禁用+冷却期内第二次零 HTTP times(1)+压过 KB 级开/全局关 verifyNoInteractions 零出站+压过 KB 级开）。
 
 ## 联动点（WP5 专属细化）
 
@@ -65,6 +66,15 @@ created-date: 2026-09-03
 
 ## 验证汇总
 
-- [ ] 单测新增 ~8
-- [ ] 手测剧本：图片上传→双向量；文本 query 召回图片；混维度库降级；不支持图输入模型库仅 TEXT 无报错
-- [ ] ColPali：仅接口+开关+探测降级，sidecar 部署明确不在本版
+- [x] 单测新增 ~8 → **实际 +16**（Step1 协议 3：contents 拼装融合/普通端点拒图零请求/熔断 fast-fail；Step2 索引 8：Worker 成功-不支持-维度-fileRef 漂移/TxService 成功-换图/Writer 入队-TEXT 永不；Step3 检索 3：imageOnly 独立救回/仅 TEXT 回归门/同 doc 双通道去重；Step4 ColPali 2：探活失败禁用+冷却零重打/全局关零出站）
+- [x] 手测剧本（留 Phase4）：图片上传→双向量；文本 query 召回图片；混维度库降级；不支持图输入模型库仅 TEXT 无报错
+- [x] ColPali：仅接口+开关+探测降级，sidecar 部署明确不在本版（V174 KB 级开关+rag.visual.colpali 全局关默认，检索主链零接线）
+
+## WP5 联动点核对（实现注收口）
+
+| 触发 | 落地 | 备注 |
+|---|---|---|
+| 换 embedding 重建 | 蓝绿重建（node 级快照）不含 IMAGE doc 级 job——存量 IMAGE 换模型靠重解析触发（新幂等键 fileRef 指纹接管覆盖），快照式合并留后续按需 | Step2 实现注⑩ |
+| 模型下线/不支持图 | Step1 熔断 10min fast-fail（进程级自动恢复）+Step2 失败关闭 voidJob（无向量行=通道自然禁用，检索 TEXT 正常） | 不支持图=确定性 void 不重试；暂态=退避重试 |
+| C2 附件图片双路召回 | Step3 同 node 去重：byNode map 按 nodeId 现状复用+L0 已进 topM 不入 l1Only（fetchL2ChildrenByDoc 零调用测试锁定） | 注入内容走 C2 逻辑不动 |
+| 删除图片文档 | Step2 ⑦：doc 软删+QUARANTINED 两处挂 imageEmbeddingMapper.deleteByDocument+FK CASCADE 双兜底 | 对账不扩（无 orphan 路径） |

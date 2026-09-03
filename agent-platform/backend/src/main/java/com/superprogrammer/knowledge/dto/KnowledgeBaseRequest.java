@@ -27,4 +27,7 @@ public class KnowledgeBaseRequest {
 
     /** L0 摘要模式：PER_SECTION / BATCH / HYBRID，留空走默认 */
     private String summaryStrategy;
+
+    /** ColPali 实验通道 KB 级开关（WP5 Step4；update 时 null=不动既有开关） */
+    private Boolean colpaliEnabled;
 }

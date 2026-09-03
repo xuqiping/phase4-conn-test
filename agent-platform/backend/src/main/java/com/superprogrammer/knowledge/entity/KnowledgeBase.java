@@ -35,6 +35,9 @@ public class KnowledgeBase extends BaseEntity {
     /** L0 摘要生成模式：PER_SECTION / BATCH / HYBRID（阶段2 解析用，默认 PER_SECTION） */
     private String summaryStrategy;
 
+    /** ColPali 实验通道 KB 级开关（WP5 Step4，V174 默认 false；须全局 rag.visual.colpali.enabled 同开才可能生效）。 */
+    private Boolean colpaliEnabled;
+
     /** ACTIVE / ARCHIVED */
     private String status;
 

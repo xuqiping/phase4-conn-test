@@ -167,6 +167,8 @@ public class KnowledgeBaseService {
         assertConfidentialCompatible(kb.getVisibility(), request.getConfidential());
         kb.setConfidential(Boolean.TRUE.equals(request.getConfidential()));
         kb.setSummaryStrategy(normalizeStrategy(request.getSummaryStrategy()));
+        // WP5 Step4：ColPali 实验通道 KB 级开关（全局 rag.visual.colpali.enabled 同开才可能生效）
+        kb.setColpaliEnabled(Boolean.TRUE.equals(request.getColpaliEnabled()));
         kb.setStatus("ACTIVE");
         kb.setCreatedBy(userId);
         baseMapper.insert(kb);
@@ -202,6 +204,10 @@ public class KnowledgeBaseService {
         }
         if (request.getSummaryStrategy() != null && !request.getSummaryStrategy().isBlank()) {
             kb.setSummaryStrategy(normalizeStrategy(request.getSummaryStrategy()));
+        }
+        // WP5 Step4：ColPali KB 级开关（null=不动既有开关，同 confidential 口径）
+        if (request.getColpaliEnabled() != null) {
+            kb.setColpaliEnabled(request.getColpaliEnabled());
         }
         kb.setRerankModel(request.getRerankModel());
         kb.setAnswerModel(normalizeAnswerModel(request.getAnswerModel()));
@@ -332,6 +338,7 @@ public class KnowledgeBaseService {
                 .answerModel(kb.getAnswerModel())
                 .confidential(Boolean.TRUE.equals(kb.getConfidential()))
                 .summaryStrategy(kb.getSummaryStrategy())
+                .colpaliEnabled(Boolean.TRUE.equals(kb.getColpaliEnabled()))
                 .status(kb.getStatus())
                 .createdBy(kb.getCreatedBy())
                 .createdAt(kb.getCreatedAt())

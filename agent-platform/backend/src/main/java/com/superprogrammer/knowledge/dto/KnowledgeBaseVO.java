@@ -20,6 +20,8 @@ public class KnowledgeBaseVO {
     /** 14x#3：库级保密开关（前端徽标/入口隐藏依据） */
     private boolean confidential;
     private String summaryStrategy;
+    /** ColPali 实验通道 KB 级开关（WP5 Step4；实验通道默认全关，前端仅实验入口展示） */
+    private boolean colpaliEnabled;
     private String status;
     private Long createdBy;
     private OffsetDateTime createdAt;
