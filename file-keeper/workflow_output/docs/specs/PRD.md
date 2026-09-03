@@ -33,6 +33,8 @@
 | M9 | Office 效率增强 | Excel 拆分合并 / Word 批量替换 / PPT 合并外链 / AI 安全建议 | 免费规模 | ✅ | [Office 专项 PRD](Office效率增强功能.PRD.md) |
 | — | 公共基础设施 | 全局快捷键 / 托盘 / 主题 / i18n / 设置 | — | — | [01-公共基础设施](../feature-map/01-公共基础设施.feature-map.md) |
 
+文件、进程、公共桌面入口和剪贴板的人工测试问题修复，以 [人工测试问题 1—4 修复 PRD](人工测试问题1-4修复.PRD.md) 为专项真相源：包括收藏项独立快捷键、Windows `.lnk` 托管、窗口标题默认展示、悬浮球、剪贴板置顶和分组。
+
 > 早期 UI 基线（仅 M1/M2，v1.0）见 [功能需求总结](功能需求总结.md)；后续想法见 [我希望的额外功能](我希望的额外功能.md)。
 > Feature Map 总索引：[00-索引](../feature-map/00-索引.md)。
 
@@ -59,6 +61,7 @@
 - Rust cargo test：命令授权通过/拒绝两条路径。
 - 桌面端 GUI：关键路径自动化（tauri-driver / 可访问性 API）+ 次要路径人工走查；按 user-ops 手册逐项验证。范例见 [开发进度/interactive-ai-work-assistant/*-test-guide.md](../../开发进度/interactive-ai-work-assistant/)。
 - Office 专项按 [测试策略](Office效率增强功能.testing_strategy.md) 建立真实 Office 兼容样本、Worker 故障注入和人工交互测试。
+- 人工测试问题 1—4 按 [专项测试策略](人工测试问题1-4修复.testing_strategy.md) 覆盖本地迁移、Windows 真实快捷方式、进程多窗口、悬浮球和剪贴板交互。
 
 ## 8. 边界与不做（防 scope creep）
 
@@ -74,6 +77,7 @@
 |---|---|---|
 | 2026-07-15 | 建立 PRD 真相源，反映当前 8 模块全貌 | 引入编程类可迭代工作流（specs before code） |
 | 2026-08-25 | 同步取消旧模块门禁，并加入 Office 效率增强与 Office Pro 规模权益 | 用户批准 Office Phase 1 设计 |
+| 2026-09-03 | 增加人工测试问题 1—4 专项规格路由 | 用户批准六项本地桌面修复设计 |
 
 ## 10. 术语表（专业术语 · 大白话 · 案例）
 

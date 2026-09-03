@@ -38,6 +38,10 @@ file-keeper/                       # 代码根 = 上层 C:/AI Projects monorepo 
 | `项目规范约束/` | 横切 | AGENTS 索引 + 通用 / 模块约束（持续织入） |
 | `开发进度/` | P3 | 进度跟踪（总览 + 每功能逐步骤）+ 功能 README |
 
+### 当前 Phase 1 专项规格
+
+`docs/specs/人工测试问题1-4修复.*.md` 是文件管理、进程管理、悬浮球与剪贴板六项修复的规格组，包含 PRD、architecture、db_schema、security_strategy、performance_goals 和 testing_strategy。后续 Phase 2/3 必须以该规格组为输入，不得只依据人工测试问题中的一句描述直接改代码。
+
 ## 桌面端前端 `src/`
 
 | 目录 / 文件 | 说明 |
