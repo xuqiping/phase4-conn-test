@@ -66,6 +66,7 @@ file-keeper/                       # 代码根 = 上层 C:/AI Projects monorepo 
 | `office/`、`commands/office.rs`（规划） | Office 任务调度、SQLite、扫描、输出事务、Worker 与凭据适配 |
 | `src/bin/office_ooxml_worker.rs`（规划） | 跨平台 OOXML 隔离 Worker |
 | `clipboard/` | 剪贴板内部服务 |
+| `tests/clipboard_storage.rs` | 剪贴板存储隔离测试入口，避免无关桌面测试编译故障阻断本地数据库验证 |
 | `platform/` | 平台适配（`linux/` / `macos/` / `windows_file_matcher`） |
 | `types/` `utils/` | Rust 共享类型 / 工具 |
 
