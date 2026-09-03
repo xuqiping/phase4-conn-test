@@ -49,4 +49,7 @@ public class KnowledgeConnector extends BaseEntity {
 
     /** 最近一轮摘要（新增/更新/删除/错误计数+脱敏错误信息）。 */
     private String lastSyncSummary;
+
+    /** 连续同步错误轮数（WP6 Step3，V176）：≥3 → status=ERROR 停调度；成功一轮清零。 */
+    private Integer syncErrorStreak;
 }
