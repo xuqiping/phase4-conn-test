@@ -20,6 +20,8 @@ public class EvidenceResult {
     private Set<Integer> injectedIndexes;
     /** 引用元数据（index/documentId/title/nodeId），供 /ask CITATION 事件 + chat metadata。 */
     private List<RagRetrieveVO.CitationVO> citations;
+    /** step6.5「相关文档」区（MAY_BE_CITED 反向解释）：不进 systemPrompt，透传前端尾部推荐。 */
+    private List<RagRetrieveVO.RelatedDocVO> relatedDocs;
     private boolean abstained;
     private String abstainReason;
     private String answer;

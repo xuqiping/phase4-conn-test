@@ -46,6 +46,7 @@ class RagRetrievalServiceTest {
     @Mock private com.superprogrammer.knowledge.query.QueryPlanner queryPlanner;
     @Mock private com.superprogrammer.knowledge.ranking.RankingEngine rankingEngine;
     @Mock private com.superprogrammer.knowledge.retrieval.ProductionRetrievalGateway productionRetrievalGateway;
+    @Mock private com.superprogrammer.knowledge.relation.RelationGraphPostProcessor relationGraphPostProcessor;
     @Mock private com.superprogrammer.knowledge.context.EvidencePolicyService evidencePolicyService;
     @Mock private com.superprogrammer.knowledge.answer.GroundedAnswerService groundedAnswerService;
     @Mock private com.superprogrammer.knowledge.trace.RagTraceService ragTraceService;
@@ -68,7 +69,7 @@ class RagRetrievalServiceTest {
                 ragConfig, citationChecker, objectMapper, visibilitySetService,
                 answerCacheService, answerCacheProps, queryExpansionService, recallProps,
                 ragTraceService, rankingConfigService, queryPlanner, rankingEngine, productionRetrievalGateway,
-                evidencePolicyService, groundedAnswerService, ragRolloutService, ragShadowCoordinator);
+                relationGraphPostProcessor, evidencePolicyService, groundedAnswerService, ragRolloutService, ragShadowCoordinator);
         lenient().when(ragRolloutService.status(anyLong())).thenAnswer(invocation ->
                 new com.superprogrammer.knowledge.migration.RagRolloutService.RolloutState(
                         invocation.getArgument(0), 0, "champion", 0));
@@ -87,6 +88,9 @@ class RagRetrievalServiceTest {
             return candidates.stream().map(c -> new com.superprogrammer.knowledge.ranking.RankingResult(
                     c.id(), c.rawScore(), invocation.getArgument(0), invocation.getArgument(3))).toList();
         });
+        lenient().when(relationGraphPostProcessor.planExpansion(anyLong(), any(), anyBoolean(), any(), anyInt()))
+                .thenReturn(new com.superprogrammer.knowledge.relation.RelationGraphPostProcessor.ExpansionPlan(
+                        List.of(), List.of(), List.of(), 0, 0));
         lenient().when(evidencePolicyService.apply(anyString(), anyInt(), anyList(), anyInt(), anyDouble(), anyBoolean()))
                 .thenAnswer(invocation -> new com.superprogrammer.knowledge.context.EvidencePolicyService.PolicyResult(
                         invocation.getArgument(2), "SUPPORTED"));

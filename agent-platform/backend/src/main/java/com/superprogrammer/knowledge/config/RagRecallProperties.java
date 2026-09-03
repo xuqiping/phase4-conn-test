@@ -34,6 +34,17 @@ public class RagRecallProperties {
     /** 启发式精排权重（Phase2/3 多通道 blend；Phase1 仅 parentSim 主导）。 */
     private Rerank rerank = new Rerank();
 
+    /** C1 step6.5 文档关系图扩展（MUST/MAY 带出 + 相关文档区）。关 → 检索行为回到无关系基线。 */
+    private Relation relation = new Relation();
+
+    @Data
+    public static class Relation {
+        /** 扩展开关（运维 kill switch：边数据异常/误建边风暴时关掉即回基线，无需回滚发版）。 */
+        private boolean enabled = true;
+        /** 每带出文档的 L2 节点上限（独立于主池 perDocL2Cap，可单独收紧）。 */
+        private int perDocL2Cap = 5;
+    }
+
     @Data
     public static class Expansion {
         /** 扩展开关（关 → 仅规范 query）。 */

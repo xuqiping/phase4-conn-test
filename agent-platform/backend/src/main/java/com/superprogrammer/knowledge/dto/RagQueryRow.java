@@ -50,6 +50,25 @@ public class RagQueryRow {
         private String metadata;
     }
 
+    /** step6.5 关系带出文档的有效 L2 节点行（含文档标题，供 MUST/MAY 注入与「相关文档」区复用）。 */
+    @Data
+    public static class RelationDocRow {
+        private Long documentId;
+        private String docTitle;
+        private Long nodeId;
+        private Long parentId;
+        private String title;
+        private String content;
+        private String contentHash;
+    }
+
+    /** step6.5「相关文档」区标题行（仅有效文档）。 */
+    @Data
+    public static class DocTitleRow {
+        private Long documentId;
+        private String title;
+    }
+
     /** L1 文档元数据行（含 IMAGE/FILE 原件回显字段 file_ref/mime/original_name，LEFT JOIN stored_files）。 */
     @Data
     public static class L1Row {

@@ -27,6 +27,8 @@ public class RagRetrieveVO {
     /** 进入 rerank topK 的纯 BM25 候选（bm25Only=true，无 L0/L1 父锚，纯词法兜底命中）。空=bm25Fallback=false。 */
     private List<Bm25HitVO> candidatesBm25;
     private List<EvidenceVO> evidenceL2;
+    /** step6.5「相关文档」区（MAY_BE_CITED 反向解释）：不进证据/上下文，仅尾部推荐露出。空=无边触发。 */
+    private List<RelatedDocVO> relatedDocs;
     private TokenBudgetVO tokenBudget;
     private long latencyMs;
     /** QueryPlan → RRF → Ranking 调试时间线；不含 Query/Chunk 正文。 */
@@ -124,6 +126,19 @@ public class RagRetrieveVO {
         private String originalName;
         private int citationIndex;
         private double rerankScore;
+        /** 证据来源标记（C1 step6.5）：RELATION_MUST=关联强制带出 / RELATION_MAY=关联按需引用；
+         *  null=常规检索命中。前端据此打「🔗 关联带出」徽标。 */
+        private String injectedBy;
+    }
+
+    /** 「相关文档」区条目（MAY_BE_CITED 反向解释，规格 §3.4）：只推荐，不进证据。 */
+    @Data
+    @Builder
+    public static class RelatedDocVO {
+        private Long documentId;
+        private String title;
+        /** 原始边类型（MAY_BE_CITED） */
+        private String relationType;
     }
 
     @Data

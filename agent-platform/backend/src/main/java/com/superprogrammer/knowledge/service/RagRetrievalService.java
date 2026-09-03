@@ -18,6 +18,7 @@ import com.superprogrammer.knowledge.service.internal.CitationChecker;
 import com.superprogrammer.knowledge.service.internal.L1Metadata;
 import com.superprogrammer.knowledge.service.internal.RrfFusion;
 import com.superprogrammer.knowledge.service.internal.VisibleDocSet;
+import com.superprogrammer.knowledge.relation.RelationGraphPostProcessor;
 import com.superprogrammer.knowledge.util.TokenEstimator;
 import com.superprogrammer.knowledge.trace.RagTraceService;
 import com.superprogrammer.llm.LlmGateway;
@@ -76,6 +77,7 @@ public class RagRetrievalService {
     private final com.superprogrammer.knowledge.query.QueryPlanner queryPlanner;
     private final com.superprogrammer.knowledge.ranking.RankingEngine rankingEngine;
     private final com.superprogrammer.knowledge.retrieval.ProductionRetrievalGateway productionRetrievalGateway;
+    private final com.superprogrammer.knowledge.relation.RelationGraphPostProcessor relationGraphPostProcessor;
     private final com.superprogrammer.knowledge.context.EvidencePolicyService evidencePolicyService;
     private final com.superprogrammer.knowledge.answer.GroundedAnswerService groundedAnswerService;
 
@@ -112,17 +114,26 @@ public class RagRetrievalService {
     private record L1DocHit(Long documentId, String title, double cosineDistance, double cosineSim) {
     }
 
-    private record L2Candidate(Long nodeId, Long documentId, Long parentId, String title,
-                               String content, String contentHash,
-                               double parentL0Sim, Double bm25Rank, double rerankScore,
-                               boolean bm25Only, double docL1Sim) {
+    /** L2 候选（包级可见：step6.5 合并/阈值过滤单测需直接构造）。 */
+    record L2Candidate(Long nodeId, Long documentId, Long parentId, String title,
+                       String content, String contentHash,
+                       double parentL0Sim, Double bm25Rank, double rerankScore,
+                       boolean bm25Only, double docL1Sim) {
     }
 
+    /** injectedBy（C1 step6.5）：RELATION_MUST/RELATION_MAY/null=常规检索命中。 */
     private record Evidence(Long nodeId, Long documentId, String title, String content,
                             String contentHash, String docType,
                             String fileRef, String mime, String originalName,
                             String l1Outline, String l1Rules,
-                            int citationIndex, double rerankScore, LocatorData locator) {
+                            int citationIndex, double rerankScore, LocatorData locator,
+                            String injectedBy) {
+    }
+
+    /** step6.5 关系扩展产物（单次 expandRelations 调用结果；多 KB 路径逐库聚合）。 */
+    private record RelationExpansion(List<L2Candidate> mustCandidates, List<L2Candidate> mayCandidates,
+                                     Map<Long, String> injectedBy,
+                                     List<RagRetrieveVO.RelatedDocVO> relatedDocs) {
     }
 
     private record LocatorData(String canonical, String page, String article,
@@ -290,8 +301,16 @@ public class RagRetrievalService {
                         bm25Fallback[0], bm25OnlyCands, toEvidencePreview(topK));
             }
 
+            // step6.5 关系图扩展（C1 §3.2）：MUST 强制带出 / MAY 重打分过阈值 / MAY_BE_CITED 仅相关文档区。
+            // 位置在软拒答之后——关联不带救 LOW_CONFIDENCE（拒答口径不因边改变）。
+            Set<Long> hitDocIds = topK.stream().map(L2Candidate::documentId)
+                    .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+            RelationExpansion rx = expandRelations(req.getKbId(), req.getQuery(), hitDocIds, vs,
+                    topK.get(0).rerankScore(), topK.get(topK.size() - 1).rerankScore());
+            List<L2Candidate> mergedTopK = mergeRelationCandidates(topK, rx.mustCandidates(), rx.mayCandidates());
+
             // step8 evidence 装载（检索产物到此齐备；生成按需）
-            List<Evidence> evidence = step8LoadEvidence(topK);
+            List<Evidence> evidence = step8LoadEvidence(mergedTopK, rx.injectedBy());
             if (evidence.isEmpty()) {
                 return finishAbstain(trace, budget, t0, "NO_DENSE_HITS", req, l0, l1,
                         bm25Fallback[0], bm25OnlyCands, List.of());
@@ -323,6 +342,7 @@ public class RagRetrievalService {
             if (!req.isGenerateAnswer()) {
                 RagRetrieveVO retrieveOnlyVo = buildVo(traceId, false, null, "", List.of(), evidence,
                         pack.injected(), l0, l1, bm25Fallback[0], bm25OnlyCands, budget, t0);
+                retrieveOnlyVo.setRelatedDocs(rx.relatedDocs());
                 retrieveOnlyVo.setLowConfidence(grayZone);
                 retrieveOnlyVo.setConfidenceState(evidencePolicy.confidenceState());
                 writeTrace(trace, l0, pack.injected(), budget, verdict, t0, req);
@@ -353,6 +373,7 @@ public class RagRetrievalService {
 
             RagRetrieveVO vo = buildVo(traceId, false, null, answer, cited, evidence,
                     pack.injected(), l0, l1, bm25Fallback[0], bm25OnlyCands, budget, t0);
+            vo.setRelatedDocs(rx.relatedDocs());
             vo.setLowConfidence(grayZone);
             vo.setConfidenceState(grounded.conflict() ? "CONFLICT" : evidencePolicy.confidenceState());
             writeTrace(trace, l0, pack.injected(), budget, verdict, t0, req);
@@ -538,8 +559,31 @@ public class RagRetrievalService {
                 return com.superprogrammer.knowledge.dto.EvidenceResult.abstain(traceId, "LOW_CONFIDENCE", ABSTAIN_MSG);
             }
 
+            // step6.5 关系图扩展（C1 §3.2）：per-kb 扫边（边限同库，SQL kb_id 约束天然分组；
+            // 传入全集 hitDocIds，他库 doc_id 不命中该库边）。拒答口径同单库：LOW_CONFIDENCE 不因边得救。
+            Set<Long> allHitDocIds = topK.stream().map(L2Candidate::documentId)
+                    .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+            List<L2Candidate> relationMust = new ArrayList<>();
+            List<L2Candidate> relationMay = new ArrayList<>();
+            Map<Long, String> relationInjectedBy = new HashMap<>();
+            List<RagRetrieveVO.RelatedDocVO> allRelatedDocs = new ArrayList<>();
+            for (KbScopeCtx c : validScopes) {
+                RelationExpansion rx = expandRelations(c.kbId, query, allHitDocIds, c.vs,
+                        topK.get(0).rerankScore(), topK.get(topK.size() - 1).rerankScore());
+                relationMust.addAll(rx.mustCandidates());
+                relationMay.addAll(rx.mayCandidates());
+                relationInjectedBy.putAll(rx.injectedBy());
+                allRelatedDocs.addAll(rx.relatedDocs());
+                // 14x#3：受限库带出节点同样登记（citation 透传前端隐藏下载入口，口径与主池一致）
+                if (Boolean.TRUE.equals(kbRestricted.get(c.kbId))) {
+                    rx.mustCandidates().forEach(x -> confidentialNodes.add(x.nodeId()));
+                    rx.mayCandidates().forEach(x -> confidentialNodes.add(x.nodeId()));
+                }
+            }
+            List<L2Candidate> mergedTopK = mergeRelationCandidates(topK, relationMust, relationMay);
+
             // I3 evidence 装载 + 预算截断
-            List<Evidence> evidence = step8LoadEvidence(topK);
+            List<Evidence> evidence = step8LoadEvidence(mergedTopK, relationInjectedBy);
             if (evidence.isEmpty()) {
                 writeTraceMerged(trace, allL0, List.of(), budget, "NO_DENSE_HITS", t0, effectiveKbs, query, userId);
                 return com.superprogrammer.knowledge.dto.EvidenceResult.abstain(traceId, "NO_DENSE_HITS", ABSTAIN_MSG);
@@ -584,6 +628,7 @@ public class RagRetrievalService {
                     .systemPrompt(ctx)
                     .injectedIndexes(pack.injectedIndexes())
                     .citations(citations)
+                    .relatedDocs(allRelatedDocs)
                     .abstained(false)
                     .traceId(traceId)
                     .build();
@@ -641,7 +686,8 @@ public class RagRetrievalService {
                     "nodeId", e.nodeId(), "documentId", e.documentId(),
                     "title", String.valueOf(e.title()),
                     "contentHash", String.valueOf(e.contentHash()),
-                    "citationIndex", e.citationIndex())).toList()));
+                    "citationIndex", e.citationIndex(),
+                    "injectedBy", String.valueOf(e.injectedBy()))).toList()));
             trace.setTokenBudget(toJson(budget));
             logMapper.insertTrace(trace);
         } catch (Exception e) {
@@ -937,6 +983,86 @@ public class RagRetrievalService {
         return pool.subList(0, Math.min(k, pool.size()));
     }
 
+    // ============================ step6.5 关系图扩展（C1） ============================
+
+    /**
+     * 关系扩展 → 候选带打分（规格 §3.2.5）：
+     * MUST 节点 rerankScore = 原始 topK 最高分 + ε（过 EvidencePolicyService 的 score 排序 Selection，
+     * 保证「必须引用」不被条数预算挤掉）；MAY 节点经 rankWithTrace 真实重打分，
+     * 仅保留 ≥ 原始 topK 最低分（「能过阈值才进」）。重打分失败/超时降级丢弃 MAY，不伤主链。
+     */
+    private RelationExpansion expandRelations(Long kbId, String query, Set<Long> hitDocIds, VisibleSet vs,
+                                              double topScore, double minScore) {
+        // 运维 kill switch：rag.recall.relation.enabled=false → 直接空扩展（检索行为回到无关系基线）
+        if (!recallProps.getRelation().isEnabled()) {
+            return new RelationExpansion(List.of(), List.of(), Map.of(), List.of());
+        }
+        RelationGraphPostProcessor.ExpansionPlan plan = relationGraphPostProcessor.planExpansion(
+                kbId, hitDocIds, vs.allDocs(), vs.docIds(), recallProps.getRelation().getPerDocL2Cap());
+        double mustScore = topScore + 0.001;
+        List<L2Candidate> mustCands = plan.mustNodes().stream()
+                .map(n -> new L2Candidate(n.nodeId(), n.documentId(), n.parentId(), n.title(),
+                        n.content(), n.contentHash(), 0, null, mustScore, false, 0))
+                .toList();
+        List<L2Candidate> mayKept = List.of();
+        if (!plan.mayNodes().isEmpty()) {
+            try {
+                List<L2Candidate> mayPool = plan.mayNodes().stream()
+                        .map(n -> new L2Candidate(n.nodeId(), n.documentId(), n.parentId(), n.title(),
+                                n.content(), n.contentHash(), 0, null, 0, false, 0))
+                        .toList();
+                mayKept = keepMayAboveThreshold(
+                        rankWithTrace(kbId, query, mayPool, mayPool.size()), minScore);
+            } catch (RuntimeException e) {
+                log.warn("step6.5 MAY_CITE 重打分失败（降级丢弃按需引用，不影响主链）kb={}: {}",
+                        kbId, e.getMessage());
+            }
+        }
+        Map<Long, String> injectedBy = new HashMap<>();
+        mustCands.forEach(c -> injectedBy.put(c.nodeId(), RelationGraphPostProcessor.INJECTED_BY_MUST));
+        mayKept.forEach(c -> injectedBy.put(c.nodeId(), RelationGraphPostProcessor.INJECTED_BY_MAY));
+        List<RagRetrieveVO.RelatedDocVO> related = plan.relatedDocs().stream()
+                .map(r -> RagRetrieveVO.RelatedDocVO.builder()
+                        .documentId(r.documentId()).title(r.title()).relationType(r.relationType()).build())
+                .toList();
+        return new RelationExpansion(mustCands, mayKept, injectedBy, related);
+    }
+
+    /** MAY_CITE 阈值过滤：重打分分 ≥ 原始 topK 最低分才进（规格 §3.2.5「能过阈值才进」）。 */
+    static List<L2Candidate> keepMayAboveThreshold(List<L2Candidate> ranked, double minScore) {
+        return ranked.stream().filter(c -> c.rerankScore() >= minScore).toList();
+    }
+
+    /**
+     * step6.5 合并序：必须引用 > 原始命中 > 按需引用（规格 §3.2.6）。
+     * fitToBudget 按列表顺序装填 → 预算挤占天然从 MAY_CITE 开始；MUST 前置 ⇒ 拿最小编号与最高预算优先。
+     * nodeId 去重防御（理论不撞：目标 ∉ H 文档；保守保留）。无边 → 原样返回（零回归不变式）。
+     */
+    static List<L2Candidate> mergeRelationCandidates(List<L2Candidate> original,
+                                                     List<L2Candidate> must, List<L2Candidate> may) {
+        if ((must == null || must.isEmpty()) && (may == null || may.isEmpty())) {
+            return original;
+        }
+        List<L2Candidate> merged = new ArrayList<>(original.size() + must.size() + may.size());
+        Set<Long> seen = new HashSet<>();
+        for (L2Candidate c : must) {
+            if (seen.add(c.nodeId())) {
+                merged.add(c);
+            }
+        }
+        for (L2Candidate c : original) {
+            if (seen.add(c.nodeId())) {
+                merged.add(c);
+            }
+        }
+        for (L2Candidate c : may) {
+            if (seen.add(c.nodeId())) {
+                merged.add(c);
+            }
+        }
+        return merged;
+    }
+
     public GroundedAskResult retrieveGroundedAnswer(List<Long> effectiveKbs, String query,
                                                      Long userId, boolean admin) {
         com.superprogrammer.knowledge.dto.EvidenceResult evidence =
@@ -975,7 +1101,7 @@ public class RagRetrievalService {
         while (matcher.find()) {
             int index = Integer.parseInt(matcher.group(1));
             result.add(new Evidence(null, null, matcher.group(2).trim(), matcher.group(3).trim(),
-                    null, null, null, null, null, null, null, index, 0, null));
+                    null, null, null, null, null, null, null, index, 0, null, null));
         }
         return result;
     }
@@ -1004,8 +1130,9 @@ public class RagRetrievalService {
         return new ArrayList<>(merged.values());
     }
 
-    /** step8：I3 复校（content_hash 现值）+ L1 装载 + 编号。失配丢弃并记 REINDEX。 */
-    private List<Evidence> step8LoadEvidence(List<L2Candidate> topK) {
+    /** step8：I3 复校（content_hash 现值）+ L1 装载 + 编号。失配丢弃并记 REINDEX。
+     *  injectedBy：nodeId → RELATION_MUST/RELATION_MAY（step6.5 带出），null=常规命中。 */
+    private List<Evidence> step8LoadEvidence(List<L2Candidate> topK, Map<Long, String> injectedBy) {
         List<Evidence> out = new ArrayList<>();
         int idx = 1;
         for (L2Candidate c : topK) {
@@ -1018,7 +1145,8 @@ public class RagRetrievalService {
             L1Outline l1 = loadL1(c.documentId());
             out.add(new Evidence(c.nodeId(), c.documentId(), c.title(), c.content(),
                     c.contentHash(), l1.docType, l1.fileRef, l1.mime, l1.originalName,
-                    l1.outline, l1.rules, idx, c.rerankScore(), parseLocator(hv.getMetadata())));
+                    l1.outline, l1.rules, idx, c.rerankScore(), parseLocator(hv.getMetadata()),
+                    injectedBy == null ? null : injectedBy.get(c.nodeId())));
             idx++;
         }
         return out;
@@ -1030,7 +1158,8 @@ public class RagRetrievalService {
         for (Evidence e : evidence) {
             result.add(new Evidence(e.nodeId(), e.documentId(), e.title(), e.content(),
                     e.contentHash(), e.docType(), e.fileRef(), e.mime(), e.originalName(),
-                    e.l1Outline(), e.l1Rules(), citationIndex++, e.rerankScore(), e.locator()));
+                    e.l1Outline(), e.l1Rules(), citationIndex++, e.rerankScore(), e.locator(),
+                    e.injectedBy()));
         }
         return result;
     }
@@ -1349,7 +1478,8 @@ public class RagRetrievalService {
                     "nodeId", e.nodeId(), "documentId", e.documentId(),
                     "title", String.valueOf(e.title()),
                     "contentHash", String.valueOf(e.contentHash()),
-                    "citationIndex", e.citationIndex())).toList()));
+                    "citationIndex", e.citationIndex(),
+                    "injectedBy", String.valueOf(e.injectedBy()))).toList()));
             trace.setTokenBudget(toJson(budget));
             logMapper.insertTrace(trace);
         } catch (Exception e) {
@@ -1395,7 +1525,7 @@ public class RagRetrievalService {
         int idx = 1;
         for (L2Candidate c : topK) {
             out.add(new Evidence(c.nodeId(), c.documentId(), c.title(), c.content(),
-                    c.contentHash(), null, null, null, null, null, null, idx, c.rerankScore(), null));
+                    c.contentHash(), null, null, null, null, null, null, idx, c.rerankScore(), null, null));
             idx++;
         }
         return out;
@@ -1456,7 +1586,8 @@ public class RagRetrievalService {
                 .nodeId(e.nodeId()).documentId(e.documentId()).title(e.title())
                 .content(e.content()).contentHash(e.contentHash()).docType(e.docType())
                 .fileRef(e.fileRef()).mime(e.mime()).originalName(e.originalName())
-                .citationIndex(e.citationIndex()).rerankScore(e.rerankScore()).build()).toList();
+                .citationIndex(e.citationIndex()).rerankScore(e.rerankScore())
+                .injectedBy(e.injectedBy()).build()).toList();
     }
 
     /** Phase3：RRF 融合 L0 doc 序 + L1 doc 序 → top-D doc（两通道分数尺度不可比，按排名归一）。 */

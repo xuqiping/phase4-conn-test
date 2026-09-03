@@ -233,19 +233,77 @@ public interface RagRetrievalQueryMapper {
             """)
     RagQueryRow.HashVerifyRow reverifyNode(@Param("nodeId") Long nodeId);
 
-    /** 当前知识快照：只返回 Hash，不返回任何文档或 Chunk 正文。 */
+    /** 当前知识快照（P3 校验链组成）：只返回 Hash，不返回任何文档或 Chunk 正文。
+     *  C1 step6.5 起 nodes 聚合 + 关系边聚合 双段 md5——边增删改 → 快照变 → 旧缓存 miss
+     *  （AnswerCache 对关系图的失效路径；算法变更当日存量缓存全量 miss 一次属预期）。 */
     @Select("""
             <script>
-            SELECT md5(COALESCE(string_agg(
+            SELECT md5(
+              (SELECT COALESCE(string_agg(
                        n.id::text || ':' || COALESCE(n.content_hash, '') || ':' || n.status,
-                       '|' ORDER BY n.id), ''))
-            FROM knowledge_nodes n
-            WHERE n.deleted = 0
-              AND n.kb_id IN
-              <foreach collection="kbIds" item="kbId" open="(" separator="," close=")">#{kbId}</foreach>
+                       '|' ORDER BY n.id), '')
+               FROM knowledge_nodes n
+               WHERE n.deleted = 0
+                 AND n.kb_id IN
+                 <foreach collection="kbIds" item="kbId" open="(" separator="," close=")">#{kbId}</foreach>)
+              || '|' ||
+              (SELECT COALESCE(string_agg(
+                       r.doc_id::text || ':' || r.related_doc_id::text || ':' || r.relation_type,
+                       '|' ORDER BY r.doc_id, r.related_doc_id, r.relation_type), '')
+               FROM knowledge_document_relations r
+               WHERE r.kb_id IN
+                 <foreach collection="kbIds" item="kbId" open="(" separator="," close=")">#{kbId}</foreach>)
+            )
             </script>
             """)
     String computeKnowledgeSnapshot(@Param("kbIds") List<Long> kbIds);
+
+    /**
+     * step6.5（C1）：关系带出文档的有效 L2 节点 + 文档标题。
+     * 与 fetchL2ChildrenByDoc 区别：JOIN knowledge_documents 施加文档级有效性
+     * （deleted/current_version/生效窗）——关系边不级联删（DocumentRelationService 悬挂边口径），
+     * 过期/已删/未建版本文档的节点在此自然过滤。
+     */
+    @Select("""
+            <script>
+            SELECT n.document_id AS document_id, d.title AS doc_title,
+                   n.id AS node_id, n.parent_id AS parent_id,
+                   n.title AS title, n.content AS content, n.content_hash AS content_hash
+            FROM knowledge_nodes n
+            JOIN knowledge_documents d ON d.id = n.document_id
+            WHERE n.kb_id = #{kbId}
+              AND n.level = 'L2'
+              AND n.status = 'ACTIVE'
+              AND n.deleted = 0
+              AND d.deleted = 0
+              AND d.current_version_id IS NOT NULL
+              AND (d.effective_at IS NULL OR d.effective_at &lt;= now())
+              AND (d.expired_at IS NULL OR d.expired_at &gt; now())
+              AND n.document_id IN
+              <foreach collection="docIds" item="did" open="(" separator="," close=")">#{did}</foreach>
+            ORDER BY n.document_id, n.id
+            </script>
+            """)
+    List<RagQueryRow.RelationDocRow> fetchRelationDocL2(@Param("kbId") Long kbId,
+                                                        @Param("docIds") List<Long> docIds);
+
+    /** step6.5：「相关文档」区标题（仅有效文档，同 fetchRelationDocL2 文档级有效性口径）。 */
+    @Select("""
+            <script>
+            SELECT d.id AS document_id, d.title AS title
+            FROM knowledge_documents d
+            WHERE d.kb_id = #{kbId}
+              AND d.deleted = 0
+              AND d.current_version_id IS NOT NULL
+              AND (d.effective_at IS NULL OR d.effective_at &lt;= now())
+              AND (d.expired_at IS NULL OR d.expired_at &gt; now())
+              AND d.id IN
+              <foreach collection="docIds" item="did" open="(" separator="," close=")">#{did}</foreach>
+            ORDER BY d.id
+            </script>
+            """)
+    List<RagQueryRow.DocTitleRow> listValidDocTitles(@Param("kbId") Long kbId,
+                                                     @Param("docIds") List<Long> docIds);
 
     /** step8：L1 文档元数据（outline/importantRules 注入用）+ IMAGE/FILE 原件回显字段（JOIN stored_files）。 */
     @Select("""
