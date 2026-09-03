@@ -195,6 +195,72 @@ class OpenAICompatibleProviderTest {
         assertTrue(error.getMessage().contains("embedding"));
     }
 
+    // ---- C5 多模态 embed（WP5 Step1）：contents 拼装 / 协议拒绝 / 熔断 ----
+
+    @Test
+    void multimodalEmbed_imageAndTextParts_useContentsArray() throws Exception {
+        // 多模态协议端点：text+image 两段 → contents 数组按序透传（image=Base64/URL 原样）
+        OpenAICompatibleProvider embedProvider = new OpenAICompatibleProvider(
+                "qwen-mm-a",
+                server.url("/v1/services/embeddings/multimodal-embedding/multimodal-embedding").toString(),
+                "k", List.of("mm-1"), mapper);
+        StringBuilder vector = new StringBuilder();
+        for (int i = 0; i < 2048; i++) {
+            if (i > 0) vector.append(',');
+            vector.append(i == 0 ? "0.5" : "0.0");
+        }
+        server.enqueue(new MockResponse()
+                .setBody("{\"output\":{\"embeddings\":[{\"embedding\":[" + vector
+                        + "]}]},\"usage\":{\"input_tokens\":13}}")
+                .setHeader("Content-Type", "application/json"));
+
+        EmbedResult result = embedProvider.embedWithUsage(
+                List.of(com.superprogrammer.llm.dto.EmbedContentPart.ofText("产品截图"),
+                        com.superprogrammer.llm.dto.EmbedContentPart.ofImage("aGVsbG8=")),
+                "mm-1");
+
+        RecordedRequest request = server.takeRequest();
+        JsonNode body = mapper.readTree(request.getBody().readUtf8());
+        assertEquals("产品截图", body.at("/input/contents/0/text").asText());
+        assertEquals("aGVsbG8=", body.at("/input/contents/1/image").asText());
+        assertTrue(body.at("/parameters/enable_fusion").asBoolean());
+        assertEquals(2048, result.getEmbedding().length);
+        assertEquals(0.5f, result.getEmbedding()[0], 1e-6);
+        assertEquals(13, result.getUsage().getPromptTokens());
+    }
+
+    @Test
+    void multimodalEmbed_plainEndpointRejectsImagePartWithoutRequest() {
+        // 普通 /embeddings 端点 + 图片段 → 立即拒绝且不发 HTTP（协议不同形，不盲试）
+        OpenAICompatibleProvider embedProvider = new OpenAICompatibleProvider(
+                "plain-emb", server.url("/v1/embeddings").toString(), "k", List.of("emb-1"), mapper);
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                () -> embedProvider.embedWithUsage(
+                        List.of(com.superprogrammer.llm.dto.EmbedContentPart.ofImage("aGVsbG8=")), "emb-1"));
+
+        assertTrue(error.getMessage().contains("不支持图片输入"));
+        assertEquals(0, server.getRequestCount());
+    }
+
+    @Test
+    void multimodalEmbed_failureOpensBreaker_fastFailWithoutRetry() throws Exception {
+        // 失败一次 → 熔断 10min：紧随的第二次调用 fast-fail，不发第二笔 HTTP
+        OpenAICompatibleProvider embedProvider = new OpenAICompatibleProvider(
+                "qwen-mm-b",
+                server.url("/v1/services/embeddings/multimodal-embedding/multimodal-embedding").toString(),
+                "k", List.of("mm-2"), mapper);
+        server.enqueue(new MockResponse().setResponseCode(500).setBody("{}"));
+
+        assertThrows(RuntimeException.class, () -> embedProvider.embedWithUsage(
+                List.of(com.superprogrammer.llm.dto.EmbedContentPart.ofImage("aGVsbG8=")), "mm-2"));
+        RuntimeException second = assertThrows(RuntimeException.class, () -> embedProvider.embedWithUsage(
+                List.of(com.superprogrammer.llm.dto.EmbedContentPart.ofImage("aGVsbG8=")), "mm-2"));
+
+        assertTrue(second.getMessage().contains("熔断"));
+        assertEquals(1, server.getRequestCount());   // 只打了第一笔，第二笔被熔断拦截
+    }
+
     @Test
     void rerank_shouldSendQwenRequestAndPreserveProviderOrder() throws Exception {
         OpenAICompatibleProvider rerankProvider = new OpenAICompatibleProvider(

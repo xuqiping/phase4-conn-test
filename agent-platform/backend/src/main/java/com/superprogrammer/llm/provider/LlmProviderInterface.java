@@ -49,6 +49,14 @@ public interface LlmProviderInterface {
         return new EmbedResult(embed(text, model), null);
     }
 
+    /**
+     * C5 多模态 embed（WP5 Step1）：contents 数组（text/image 段，DashScope multimodal-embedding 协议）。
+     * 默认不支持——仅具备多模态协议能力的 provider 覆写；调用方按异常失败关闭（IMAGE 通道禁用），不回落文本。
+     */
+    default EmbedResult embedWithUsage(List<com.superprogrammer.llm.dto.EmbedContentPart> contents, String model) {
+        throw new UnsupportedOperationException("Provider 不支持多模态 embed: " + getName());
+    }
+
     /** 专用重排能力；未实现的 Provider 必须失败关闭，禁止回落到 Chat。 */
     default RerankResult rerank(RerankRequest request) {
         throw new UnsupportedOperationException("Provider 不支持专用重排");

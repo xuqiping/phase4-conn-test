@@ -540,7 +540,7 @@ class LlmGatewayTest {
     void embed_withGroup_billsGroup() {
         when(llmConfig.getEmbedProviders()).thenReturn(List.of(openaiProvider));
         when(openaiProvider.supports("text-embedding-3")).thenReturn(true);
-        when(openaiProvider.embedWithUsage(any(), any())).thenReturn(EmbedResult.builder()
+        when(openaiProvider.embedWithUsage(anyString(), anyString())).thenReturn(EmbedResult.builder()
                 .embedding(new float[]{0.1f})
                 .usage(TokenUsage.builder().promptTokens(8).completionTokens(0).totalTokens(8).build())
                 .build());

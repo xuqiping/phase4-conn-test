@@ -125,7 +125,7 @@ class LlmGatewayRouteTest {
 
     @Test
     void embed_withEmbeddingRowModel_shouldRouteToEmbedProvider() {
-        when(embedProvider.embedWithUsage(any(), any()))
+        when(embedProvider.embedWithUsage(anyString(), anyString()))
                 .thenReturn(EmbedResult.builder().embedding(new float[]{0.1f, 0.2f}).build());
 
         float[] vec = gateway.embed("hello", "text-embedding-3");
@@ -149,7 +149,7 @@ class LlmGatewayRouteTest {
     @Test
     void embed_withUserId_shouldStillUseGlobalEmbedOnly() {
         // 用户级 provider 是 CHAT-only 覆盖：embed 带 userId 也只走全局 EMBEDDING 行
-        when(embedProvider.embedWithUsage(any(), any()))
+        when(embedProvider.embedWithUsage(anyString(), anyString()))
                 .thenReturn(EmbedResult.builder().embedding(new float[]{0.5f}).build());
 
         float[] vec = gateway.embed("hello", "text-embedding-3", 42L);
@@ -185,7 +185,7 @@ class LlmGatewayRouteTest {
     @Test
     void embed_withRealUsage_chargesEmbedSuccess() {
         TokenUsage usage = TokenUsage.builder().promptTokens(8).completionTokens(0).totalTokens(8).build();
-        when(embedProvider.embedWithUsage(any(), any()))
+        when(embedProvider.embedWithUsage(anyString(), anyString()))
                 .thenReturn(EmbedResult.builder().embedding(new float[]{0.1f}).usage(usage).build());
         when(embedProvider.getId()).thenReturn(9L);
         when(embedProvider.getProviderScope()).thenReturn("GLOBAL");
@@ -200,7 +200,7 @@ class LlmGatewayRouteTest {
     @Test
     void embed_withoutUsage_estimatesAndRecordsEstimated() {
         // usage=null → 估算 input（"hello" 5 chars → est 1），status=ESTIMATED
-        when(embedProvider.embedWithUsage(any(), any()))
+        when(embedProvider.embedWithUsage(anyString(), anyString()))
                 .thenReturn(EmbedResult.builder().embedding(new float[]{0.1f}).build());
         when(embedProvider.getId()).thenReturn(9L);
 

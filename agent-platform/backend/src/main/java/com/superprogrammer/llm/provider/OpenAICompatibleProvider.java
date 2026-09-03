@@ -39,6 +39,11 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
     /** 单次响应超时。兜底 .block(Duration)，杜绝无超时 .block() 钉死线程。 */
     private static final Duration RESPONSE_TIMEOUT = Duration.ofSeconds(30);
     private static final int QWEN_MULTIMODAL_EMBEDDING_DIMENSION = 2048;
+    /** C5 多模态熔断窗口（WP5 坑点：探测失败后冷却，防反复打挂索引链路）。 */
+    private static final long MULTIMODAL_BREAKER_MS = 10 * 60 * 1000L;
+    /** 熔断开断表：key=providerName|model → openUntil 时间戳（毫秒）。进程级，重启即复位。 */
+    private static final java.util.concurrent.ConcurrentHashMap<String, Long> MULTIMODAL_OPEN_UNTIL =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     public OpenAICompatibleProvider(String name, String endpoint, String apiKey, List<String> models, ObjectMapper objectMapper) {
         this(name, endpoint, apiKey, models, objectMapper, null, "GLOBAL");
@@ -207,44 +212,116 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
                     .retrieve()
                     .bodyToMono(String.class)
                     .block(RESPONSE_TIMEOUT);
-            JsonNode root = objectMapper.readTree(responseJson);
-            JsonNode arr = qwenMultimodalProtocol
-                    ? root.at("/output/embeddings/0/embedding")
-                    : root.at("/data/0/embedding");
-            if (arr == null || !arr.isArray() || arr.isEmpty()) {
-                // 安全审计 #3：响应体可能含 SSRF 取回的内网/云元数据内容，禁止回显进异常消息（防泄露）。
-                // 仅记录响应长度，避免正文、向量或上游细节进入日志。
-                log.warn("embedding 响应格式非预期 provider={} bodyLen={}", name, responseJson.length());
-                throw new RuntimeException("embedding 响应格式非预期（provider=" + name + "）");
-            }
-            if (qwenMultimodalProtocol && arr.size() != QWEN_MULTIMODAL_EMBEDDING_DIMENSION) {
-                log.warn("embedding 维度不匹配 provider={} expected={} actual={}",
-                        name, QWEN_MULTIMODAL_EMBEDDING_DIMENSION, arr.size());
-                throw new RuntimeException("embedding 响应维度非预期（provider=" + name + "）");
-            }
-            float[] vec = new float[arr.size()];
-            for (int i = 0; i < arr.size(); i++) {
-                vec[i] = (float) arr.get(i).asDouble();
-            }
-            // usage：embed 多只回 prompt_tokens（input），无 completion
-            JsonNode usageNode = root.path("usage");
-            TokenUsage usage = null;
-            if (usageNode.isObject() && !usageNode.isEmpty()) {
-                int prompt = qwenMultimodalProtocol
-                        ? usageNode.path("input_tokens").asInt(0)
-                        : usageNode.path("prompt_tokens").asInt(0);
-                usage = TokenUsage.builder()
-                        .promptTokens(prompt)
-                        .completionTokens(0)
-                        .totalTokens(usageNode.path("total_tokens").asInt(prompt))
-                        .build();
-            }
-            return EmbedResult.builder().embedding(vec).usage(usage).build();
+            return parseEmbedResult(responseJson, qwenMultimodalProtocol);
         } catch (Exception e) {
             // 安全审计 #3：不把 e.getMessage()（可能含响应片段/内部细节）拼进对外异常，仅服务端日志。
             log.warn("embedding 调用失败 provider={}: {}", name, e.getMessage());
             throw new RuntimeException("embedding 调用失败（provider=" + name + "）", e);
         }
+    }
+
+    /**
+     * C5 多模态 embed（WP5 Step1）：contents 数组（text/image 段）。
+     * <p>协议分派（坑点：DashScope 多模态与 OpenAI 兼容 /embeddings 不同形）——
+     * 端点含 {@code /multimodal-embedding/} → contents 数组+fusion/2048 维；否则普通 /embeddings
+     * <b>不支持图片段</b>（立即拒，不发请求），纯文本段拼接回退单串走既有路径。
+     * <p>熔断：多模态调用失败一次 → 该 provider+model 多模态通道开断 10 分钟（fast-fail 不发请求），
+     * 防止不可用模型反复打挂索引链路（自动恢复，无需人工介入）。
+     */
+    @Override
+    public EmbedResult embedWithUsage(List<com.superprogrammer.llm.dto.EmbedContentPart> contents, String model) {
+        if (contents == null || contents.isEmpty()) {
+            throw new IllegalArgumentException("多模态 embed contents 为空");
+        }
+        boolean hasImage = contents.stream().anyMatch(p -> p.image() != null && !p.image().isBlank());
+        if (!usesQwenMultimodalEmbeddingProtocol()) {
+            if (hasImage) {
+                throw new IllegalArgumentException(
+                        "embedding 端点不支持图片输入（需 /multimodal-embedding/ 协议）: " + name);
+            }
+            // 纯文本段：拼接回退单串（行为等同既有 embedWithUsage(String,...)）
+            return embedWithUsage(contents.stream()
+                    .map(p -> p.text() == null ? "" : p.text())
+                    .filter(t -> !t.isBlank())
+                    .reduce((a, b) -> a + "\n" + b)
+                    .orElse(""), model);
+        }
+        String breakerKey = name + "|" + model;
+        long openUntil = MULTIMODAL_OPEN_UNTIL.getOrDefault(breakerKey, 0L);
+        if (System.currentTimeMillis() < openUntil) {
+            throw new IllegalStateException("多模态 embed 熔断中（" + ((openUntil - System.currentTimeMillis()) / 1000)
+                    + "s 后自动恢复）provider=" + name);
+        }
+        try {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("model", model);
+            List<Map<String, Object>> parts = new ArrayList<>();
+            for (com.superprogrammer.llm.dto.EmbedContentPart p : contents) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                if (p.text() != null && !p.text().isBlank()) {
+                    m.put("text", p.text());
+                }
+                if (p.image() != null && !p.image().isBlank()) {
+                    m.put("image", p.image());
+                }
+                if (!m.isEmpty()) {
+                    parts.add(m);
+                }
+            }
+            body.put("input", Map.of("contents", parts));
+            body.put("parameters", Map.of(
+                    "enable_fusion", true,
+                    "dimension", QWEN_MULTIMODAL_EMBEDDING_DIMENSION));
+            String responseJson = webClient.post()
+                    .uri(endpoint)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(body)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block(RESPONSE_TIMEOUT);
+            return parseEmbedResult(responseJson, true);
+        } catch (Exception e) {
+            MULTIMODAL_OPEN_UNTIL.put(breakerKey, System.currentTimeMillis() + MULTIMODAL_BREAKER_MS);
+            log.warn("多模态 embedding 调用失败（熔断 {}ms）provider={}: {}", MULTIMODAL_BREAKER_MS, name, e.getMessage());
+            throw new RuntimeException("多模态 embedding 调用失败（provider=" + name + "）", e);
+        }
+    }
+
+    /** embed 响应统一解析（文本/多模态两协议共用）：向量提取 + 维度校验 + usage。 */
+    private EmbedResult parseEmbedResult(String responseJson, boolean qwenMultimodalProtocol) throws Exception {
+        JsonNode root = objectMapper.readTree(responseJson);
+        JsonNode arr = qwenMultimodalProtocol
+                ? root.at("/output/embeddings/0/embedding")
+                : root.at("/data/0/embedding");
+        if (arr == null || !arr.isArray() || arr.isEmpty()) {
+            // 安全审计 #3：响应体可能含 SSRF 取回的内网/云元数据内容，禁止回显进异常消息（防泄露）。
+            // 仅记录响应长度，避免正文、向量或上游细节进入日志。
+            log.warn("embedding 响应格式非预期 provider={} bodyLen={}", name, responseJson.length());
+            throw new RuntimeException("embedding 响应格式非预期（provider=" + name + "）");
+        }
+        if (qwenMultimodalProtocol && arr.size() != QWEN_MULTIMODAL_EMBEDDING_DIMENSION) {
+            log.warn("embedding 维度不匹配 provider={} expected={} actual={}",
+                    name, QWEN_MULTIMODAL_EMBEDDING_DIMENSION, arr.size());
+            throw new RuntimeException("embedding 响应维度非预期（provider=" + name + "）");
+        }
+        float[] vec = new float[arr.size()];
+        for (int i = 0; i < arr.size(); i++) {
+            vec[i] = (float) arr.get(i).asDouble();
+        }
+        // usage：embed 多只回 prompt_tokens（input），无 completion
+        JsonNode usageNode = root.path("usage");
+        TokenUsage usage = null;
+        if (usageNode.isObject() && !usageNode.isEmpty()) {
+            int prompt = qwenMultimodalProtocol
+                    ? usageNode.path("input_tokens").asInt(0)
+                    : usageNode.path("prompt_tokens").asInt(0);
+            usage = TokenUsage.builder()
+                    .promptTokens(prompt)
+                    .completionTokens(0)
+                    .totalTokens(usageNode.path("total_tokens").asInt(prompt))
+                    .build();
+        }
+        return EmbedResult.builder().embedding(vec).usage(usage).build();
     }
 
     private boolean usesQwenMultimodalEmbeddingProtocol() {

@@ -375,6 +375,53 @@ public class LlmGateway {
         }
     }
 
+    /**
+     * C5 多模态 embed（WP5 Step1）：contents（text/image 段）→ 单融合向量。
+     * 路由/计费/trace 同 {@link #embed(String, String, Long)}（EMBEDDING 行、KIND_EMBED 归户 owner）；
+     * provider 不支持多模态协议时抛 UnsupportedOperationException（调用方失败关闭禁 IMAGE 通道，不回落文本）。
+     * 估算兜底仅计文本段（usage 回真值则 SUCCESS 记账）。
+     */
+    public float[] embedMultimodal(List<com.superprogrammer.llm.dto.EmbedContentPart> contents,
+                                   String model, Long userId) {
+        model = resolveEmbeddingModel(model);
+        Long uid = resolveBillingUser(userId, model);
+        LlmProviderInterface provider = findEmbedProvider(model);
+        String joinedText = contents == null ? "" : contents.stream()
+                .map(p -> p.text() == null ? "" : p.text())
+                .filter(t -> !t.isBlank())
+                .reduce((a, b) -> a + "\n" + b)
+                .orElse("");
+        log.info("多模态 embedding 调用 model={} provider={} userId={} parts={}",
+                model, provider.getName(), uid, contents == null ? 0 : contents.size());
+        requireAffordableFor(uid, null, LlmUsageLogEntity.KIND_EMBED);
+        long startNanos = System.nanoTime();
+        var ragCall = ragTraceService.beginModelCall(model, provider.getName(), joinedText, "IMAGE_EMBEDDING");
+        try (ragCall) {
+            EmbedResult res = provider.embedWithUsage(contents, model);
+            TokenUsage usage = res.getUsage();
+            Integer in;
+            String status;
+            if (usage != null) {
+                in = usage.getPromptTokens();
+                status = LlmUsageLogEntity.STATUS_SUCCESS;
+            } else {
+                in = TokenEstimator.estimate(joinedText);
+                status = LlmUsageLogEntity.STATUS_ESTIMATED;
+            }
+            billingService.onSuccess(uid, provider.getId(), provider.getProviderScope(),
+                    model, LlmUsageLogEntity.KIND_EMBED, in, 0, status, null, null);
+            recordLlmSuccess(provider.getName(), model, in, 0, startNanos);
+            ragCall.succeed(null, in, 0);
+            return res.getEmbedding();
+        } catch (RuntimeException e) {
+            ragCall.fail(e.getMessage());
+            billingService.onFailure(uid, provider.getId(), provider.getProviderScope(),
+                    model, LlmUsageLogEntity.KIND_EMBED, e.getMessage());
+            recordLlmTerminal(provider.getName(), model, BizMetrics.RESULT_FAIL, startNanos);
+            throw e;
+        }
+    }
+
     public RerankResult rerank(RerankRequest request) {
         return rerank(request, null);
     }
