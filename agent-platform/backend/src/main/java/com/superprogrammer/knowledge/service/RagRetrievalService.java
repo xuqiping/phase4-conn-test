@@ -76,6 +76,7 @@ public class RagRetrievalService {
     private final RagTraceService ragTraceService;
     private final RankingConfigService rankingConfigService;
     private final com.superprogrammer.knowledge.query.QueryPlanner queryPlanner;
+    private final com.superprogrammer.knowledge.query.LlmQueryPlanner llmQueryPlanner;
     private final com.superprogrammer.knowledge.ranking.RankingEngine rankingEngine;
     private final com.superprogrammer.knowledge.retrieval.ProductionRetrievalGateway productionRetrievalGateway;
     private final com.superprogrammer.knowledge.relation.RelationGraphPostProcessor relationGraphPostProcessor;
@@ -203,7 +204,12 @@ public class RagRetrievalService {
         RagRetrievalLog trace = newLog(traceId, userId, req, mode);
         try {
             KnowledgeBase kb = knowledgeBaseService.ensure(req.getKbId());
-            com.superprogrammer.knowledge.query.QueryPlan queryPlan = queryPlanner.plan(req.getQuery());
+            // WP2 Step4：LLM 规划（开关 rag.queryplanner.llm.enabled，默认关=规则版）——
+            // 子意图供给 Step2 补充轮（CoverageVerifier 必达判定）
+            com.superprogrammer.knowledge.query.LlmQueryPlanner.PlanOutcome planOutcome =
+                    llmQueryPlanner.planWithFallback(req.getQuery(), userId);
+            com.superprogrammer.knowledge.query.QueryPlan queryPlan = planOutcome.plan();
+            List<String> llmSubIntents = planOutcome.subIntents();
             boolean admin = req.isAdminHint();
             if (!knowledgeBaseService.canRead(kb, userId, admin)) {
                 throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该知识库");
@@ -311,7 +317,7 @@ public class RagRetrievalService {
             // 单库路径无 confidential 登记——保密库成员已被 14x#3 守卫挡在检索调试之外）
             LoopResult loopRes = runIterativeLoop(req.getQuery(), queryPlan, topK,
                     List.of(new KbScopeCtx(req.getKbId(), vs)), maxL0, bm25Fallback,
-                    new java.util.HashSet<>(), Map.of(), userId, budget);
+                    new java.util.HashSet<>(), Map.of(), userId, budget, llmSubIntents);
             topK = loopRes.topK();
             bestSim = loopRes.bestSim();
             grayZone = bestSim < recallProps.getAbstain().getSoft();
@@ -328,7 +334,7 @@ public class RagRetrievalService {
             // step6.6 边界邻近扩展（WP2 Step3）：截断/首尾短证据补相邻兄弟（NEIGHBOR 策略门+过阈同 MAY）
             Map<Long, String> injectedBy = new HashMap<>(rx.injectedBy());
             List<L2Candidate> neighborKept = expandNeighbors(req.getQuery(), mergedTopK,
-                    queryPlan.strategies(), topK.get(topK.size() - 1).rerankScore());
+                    planOutcome.plan().strategies(), topK.get(topK.size() - 1).rerankScore());
             if (!neighborKept.isEmpty()) {
                 neighborKept.forEach(c -> injectedBy.put(c.nodeId(), NEIGHBOR_INJECTED_BY));
                 mergedTopK = mergeRelationCandidates(mergedTopK, List.of(), neighborKept);
@@ -584,11 +590,15 @@ public class RagRetrievalService {
                 return com.superprogrammer.knowledge.dto.EvidenceResult.abstain(traceId, "LOW_CONFIDENCE", ABSTAIN_MSG);
             }
 
-            // C3 有界循环（WP2 Step2，规格 §5.1）：round0 判缺口（必达子意图=EXACT filter 值）
-            // → 缺则补充轮（补充 query=未覆盖 filter 锚点值，继承 KB/权限/版本范围）→ 并集重排一次。
-            // 零回归门：无 filter → rounds=0 零开销；max-rounds=1 → 直接跳过（=基线）。
-            LoopResult loopRes = runIterativeLoop(query, queryPlanner.plan(query), topK, validScopes,
-                    maxL0, bm25Fallback, confidentialNodes, kbRestricted, userId, budget);
+            // C3 有界循环（WP2 Step2，规格 §5.1）：round0 判缺口（必达子意图=EXACT filter 值
+            // + LLM 子意图（Step4，默认关））→ 缺则补充轮（补充 query=未覆盖锚点值，继承
+            // KB/权限/版本范围）→ 并集重排一次。零回归门：无 filter → rounds=0 零开销；
+            // max-rounds=1 → 直接跳过（=基线）。
+            com.superprogrammer.knowledge.query.LlmQueryPlanner.PlanOutcome planOutcome =
+                    llmQueryPlanner.planWithFallback(query, userId);
+            LoopResult loopRes = runIterativeLoop(query, planOutcome.plan(), topK, validScopes,
+                    maxL0, bm25Fallback, confidentialNodes, kbRestricted, userId, budget,
+                    planOutcome.subIntents());
             topK = loopRes.topK();
             bestSim = loopRes.bestSim();
             grayZone = bestSim < recallProps.getAbstain().getSoft();
@@ -618,7 +628,7 @@ public class RagRetrievalService {
 
             // step6.6 边界邻近扩展（WP2 Step3）：同 parent 相邻兄弟补入（per-kb 分组过阈）
             List<L2Candidate> neighborKept = expandNeighbors(query, mergedTopK,
-                    queryPlanner.plan(query).strategies(), topK.get(topK.size() - 1).rerankScore());
+                    planOutcome.plan().strategies(), topK.get(topK.size() - 1).rerankScore());
             if (!neighborKept.isEmpty()) {
                 neighborKept.forEach(c -> relationInjectedBy.put(c.nodeId(), NEIGHBOR_INJECTED_BY));
                 mergedTopK = mergeRelationCandidates(mergedTopK, List.of(), neighborKept);
@@ -862,11 +872,11 @@ public class RagRetrievalService {
     private LoopResult runIterativeLoop(String query, com.superprogrammer.knowledge.query.QueryPlan plan,
             List<L2Candidate> topK, List<KbScopeCtx> scopes, int maxL0, boolean[] bm25Fallback,
             Set<Long> confidentialNodes, Map<Long, Boolean> kbRestricted, Long userId,
-            RagRetrieveVO.TokenBudgetVO budget) {
+            RagRetrieveVO.TokenBudgetVO budget, List<String> llmSubIntents) {
         Map<String, L2Candidate> supplementPool = new LinkedHashMap<>();
         com.superprogrammer.knowledge.retrieval.IterativeRetrievalOrchestrator.Outcome loop =
                 iterativeRetrievalOrchestrator.expand(query, plan, toRetrievalCandidates(topK),
-                        retrievalProps.getMaxRounds(), retrievalProps.getSupplementPerRound(), null,
+                        retrievalProps.getMaxRounds(), retrievalProps.getSupplementPerRound(), llmSubIntents,
                         suppQuery -> recallSupplement(suppQuery, scopes, maxL0, bm25Fallback,
                                 confidentialNodes, kbRestricted, userId, supplementPool));
         budget.setRounds(loop.roundsExecuted());

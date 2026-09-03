@@ -43,6 +43,7 @@ class RagRetrievalServiceAnswerModelTest {
     @Mock private QueryExpansionService queryExpansionService;
     @Mock private RankingConfigService rankingConfigService;
     @Mock private com.superprogrammer.knowledge.query.QueryPlanner queryPlanner;
+    @Mock private com.superprogrammer.knowledge.query.LlmQueryPlanner llmQueryPlanner;
     @Mock private com.superprogrammer.knowledge.ranking.RankingEngine rankingEngine;
     @Mock private com.superprogrammer.knowledge.retrieval.ProductionRetrievalGateway productionRetrievalGateway;
     @Mock private com.superprogrammer.knowledge.relation.RelationGraphPostProcessor relationGraphPostProcessor;
@@ -74,7 +75,7 @@ class RagRetrievalServiceAnswerModelTest {
         service = new RagRetrievalService(queryMapper, logMapper, knowledgeBaseService, llmGateway,
                 ragConfig, citationChecker, objectMapper, visibilitySetService,
                 answerCacheService, answerCacheProps, queryExpansionService, recallProps,
-                ragTraceService, rankingConfigService, queryPlanner, rankingEngine, productionRetrievalGateway,
+                ragTraceService, rankingConfigService, queryPlanner, llmQueryPlanner, rankingEngine, productionRetrievalGateway,
                 relationGraphPostProcessor, documentMapper, attachmentContentInjector,
                 iterativeRetrievalOrchestrator, retrievalProps,
                 evidencePolicyService, groundedAnswerService, ragRolloutService, ragShadowCoordinator);
@@ -89,8 +90,13 @@ class RagRetrievalServiceAnswerModelTest {
                         RankingConfigService.Source.ADMIN_DEFAULT));
         lenient().when(ragTraceService.beginRanking(anyString(), anyString(), any(), anyString(),
                 anyInt(), anyString(), nullable(String.class))).thenReturn(rankingScope);
-        lenient().when(queryPlanner.plan(anyString())).thenReturn(new com.superprogrammer.knowledge.query.QueryPlan(
-                "SEMANTIC", "DIRECT", java.util.Map.of(), List.of("DENSE", "SPARSE"), false, false, true));
+        // WP2 Step4：LLM 规划桩（固定 SEMANTIC 无 filter——补轮/邻近零触发，口径=该类历史行为；
+        // 原 queryPlanner.plan 桩已死——service 全走 llmQueryPlanner，strict stubs 下保留会报 Unnecessary）
+        lenient().when(llmQueryPlanner.planWithFallback(anyString(), any())).thenReturn(
+                new com.superprogrammer.knowledge.query.LlmQueryPlanner.PlanOutcome(
+                        new com.superprogrammer.knowledge.query.QueryPlan(
+                                "SEMANTIC", "DIRECT", java.util.Map.of(), List.of("DENSE", "SPARSE"),
+                                false, false, true), List.of(), false));
         lenient().when(relationGraphPostProcessor.planExpansion(anyLong(), any(), anyBoolean(), any(), anyInt()))
                 .thenReturn(new com.superprogrammer.knowledge.relation.RelationGraphPostProcessor.ExpansionPlan(
                         List.of(), List.of(), List.of(), 0, 0));

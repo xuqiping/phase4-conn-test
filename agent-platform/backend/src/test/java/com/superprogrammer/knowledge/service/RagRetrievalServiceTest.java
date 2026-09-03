@@ -46,6 +46,7 @@ class RagRetrievalServiceTest {
     @Mock private QueryExpansionService queryExpansionService;
     @Mock private RankingConfigService rankingConfigService;
     @Mock private com.superprogrammer.knowledge.query.QueryPlanner queryPlanner;
+    @Mock private com.superprogrammer.knowledge.query.LlmQueryPlanner llmQueryPlanner;
     @Mock private com.superprogrammer.knowledge.ranking.RankingEngine rankingEngine;
     @Mock private com.superprogrammer.knowledge.retrieval.ProductionRetrievalGateway productionRetrievalGateway;
     @Mock private com.superprogrammer.knowledge.relation.RelationGraphPostProcessor relationGraphPostProcessor;
@@ -76,7 +77,7 @@ class RagRetrievalServiceTest {
         service = new RagRetrievalService(queryMapper, logMapper, knowledgeBaseService, llmGateway,
                 ragConfig, citationChecker, objectMapper, visibilitySetService,
                 answerCacheService, answerCacheProps, queryExpansionService, recallProps,
-                ragTraceService, rankingConfigService, queryPlanner, rankingEngine, productionRetrievalGateway,
+                ragTraceService, rankingConfigService, queryPlanner, llmQueryPlanner, rankingEngine, productionRetrievalGateway,
                 relationGraphPostProcessor, documentMapper, attachmentContentInjector,
                 iterativeRetrievalOrchestrator, retrievalProps,
                 evidencePolicyService, groundedAnswerService, ragRolloutService, ragShadowCoordinator);
@@ -93,6 +94,10 @@ class RagRetrievalServiceTest {
                 anyInt(), anyString(), nullable(String.class))).thenReturn(rankingScope);
         lenient().when(queryPlanner.plan(anyString())).thenReturn(new com.superprogrammer.knowledge.query.QueryPlan(
                 "SEMANTIC", "DIRECT", java.util.Map.of(), List.of("DENSE", "SPARSE"), false, false, true));
+        // WP2 Step4：LLM 规划默认关（mock 透传规则版，子意图空）——各用例按需覆写
+        lenient().when(llmQueryPlanner.planWithFallback(anyString(), any())).thenAnswer(inv ->
+                new com.superprogrammer.knowledge.query.LlmQueryPlanner.PlanOutcome(
+                        queryPlanner.plan(inv.getArgument(0)), List.of(), false));
         lenient().when(rankingEngine.rank(anyString(), anyString(), anyList(), any())).thenAnswer(invocation -> {
             List<com.superprogrammer.knowledge.retrieval.RetrievalCandidate> candidates = invocation.getArgument(2);
             return candidates.stream().map(c -> new com.superprogrammer.knowledge.ranking.RankingResult(
