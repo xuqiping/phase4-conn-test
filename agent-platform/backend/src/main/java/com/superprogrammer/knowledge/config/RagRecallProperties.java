@@ -91,6 +91,8 @@ public class RagRecallProperties {
         private double weightL0Vector = 1.0;
         /** L1 向量通道权重（Phase3）。 */
         private double weightL1Vector = 0.8;
+        /** IMAGE 图片向量通道权重（WP5 Step3，doc 级语义锚同 L1 量级）。 */
+        private double weightImageVector = 0.8;
         /** jieba-BM25 通道权重（Phase2）。 */
         private double weightBm25 = 0.6;
     }

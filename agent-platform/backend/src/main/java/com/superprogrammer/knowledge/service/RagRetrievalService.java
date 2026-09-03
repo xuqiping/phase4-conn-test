@@ -301,15 +301,16 @@ public class RagRetrievalService {
             int maxL0 = req.getMaxL0() != null ? req.getMaxL0() : ragConfig.getMaxL0Candidates();
             List<RecallHit> l0 = multiDenseRecallL0(req.getKbId(), qHalfs, scope, req.getDocTypes(), maxL0);
             List<L1DocHit> l1 = multiDenseRecallL1(req.getKbId(), qHalfs, scope, req.getDocTypes(), maxL0);
+            List<L1DocHit> img = multiDenseRecallImage(req.getKbId(), qHalfs, scope, req.getDocTypes(), maxL0);
             trace.setCandidatesL1(l1HitsToJson(l1));   // Phase3 L1 trace 列（短路前未算的路径留 null）
-            if (l0.isEmpty() && l1.isEmpty() && productionHits.isEmpty()) {
+            if (l0.isEmpty() && l1.isEmpty() && img.isEmpty() && productionHits.isEmpty()) {
                 return finishAbstain(trace, budget, t0, "NO_DENSE_HITS", req, List.of(), List.of(),
                         false, List.of(), List.of());
             }
 
-            // step6 L2 候选 + rerank 代理（Phase3：L1 doc 级语义锚跨通道融合）
+            // step6 L2 候选 + rerank 代理（Phase3：L1 doc 级语义锚；WP5 Step3：IMAGE 图片向量第三通道同融合）
             boolean[] bm25Fallback = {false};
-            List<L2Candidate> pool = step6L2Candidates(req.getQuery(), l0, req.getKbId(), bm25Fallback, l1);
+            List<L2Candidate> pool = step6L2Candidates(req.getQuery(), l0, req.getKbId(), bm25Fallback, l1, img);
             pool = mergeProductionCandidates(pool, productionHits);
             if (pool.size() > ragConfig.getMaxRerankPairs()) {
                 throw new IllegalStateException("B3 违规: rerank pool=" + pool.size()
@@ -572,12 +573,13 @@ public class RagRetrievalService {
                 step4DirectoryRouting(query, kbId);
                 List<RecallHit> l0 = multiDenseRecallL0(kbId, qHalfs, scope, null, maxL0);
                 List<L1DocHit> l1 = multiDenseRecallL1(kbId, qHalfs, scope, null, maxL0);
-                if (l0.isEmpty() && l1.isEmpty()) {
+                List<L1DocHit> imgK = multiDenseRecallImage(kbId, qHalfs, scope, null, maxL0);
+                if (l0.isEmpty() && l1.isEmpty() && imgK.isEmpty()) {
                     continue;
                 }
                 allL0.addAll(l0);
                 allL1.addAll(l1);
-                List<L2Candidate> poolK = gatherL2Candidates(query, l0, kbId, bm25Fallback, l1);
+                List<L2Candidate> poolK = gatherL2Candidates(query, l0, kbId, bm25Fallback, l1, imgK);
                 if (poolK.size() > ragConfig.getMaxRerankPairs()) {
                     throw new IllegalStateException("B3 违规(per-kb): pool=" + poolK.size()
                             + " > maxRerankPairs=" + ragConfig.getMaxRerankPairs());
@@ -867,12 +869,32 @@ public class RagRetrievalService {
     }
 
     /**
+     * step5（WP5 Step3）：多 qvec dense IMAGE 图片向量召回，按 documentId 去重保留 max 余弦 sim。
+     * 图片原生向量语义锚：文本描述 chunk 漏召回时，图片像素语义向量仍可命中
+     * （复用 L1DocHit 行形；RRF 通道独立成列，boost 并入 doc 级锚槽位 max(L1, IMAGE)）。
+     */
+    private List<L1DocHit> multiDenseRecallImage(Long kbId, List<String> qHalfs, FilterScope scope,
+                                                  List<String> docTypes, int maxImage) {
+        Map<Long, L1DocHit> best = new LinkedHashMap<>();
+        for (String qh : qHalfs) {
+            for (RagQueryRow.L1RecallRow r : queryMapper.denseRecallImage(
+                    kbId, qh, scope.allDocs, scope.docIds, docTypes, maxImage)) {
+                double dist = r.getCosineDistance() == null ? 2.0 : r.getCosineDistance();
+                L1DocHit h = new L1DocHit(r.getDocumentId(), r.getTitle(), dist, 1.0 - dist);
+                best.merge(h.documentId(), h, (a, b) -> b.cosineSim() > a.cosineSim() ? b : a);
+            }
+        }
+        return new ArrayList<>(best.values());
+    }
+
+    /**
      * step6：单 KB — gather + 按 KB 内 maxBm 加 boost 排序（行为与重构前一致）。
      * R1：L2 不重嵌。B4：无额外 embed。BM25 仅 boost（'simple' 中文弱）。
      */
     private List<L2Candidate> step6L2Candidates(String query, List<RecallHit> l0,
-                                                Long kbId, boolean[] bm25Fallback, List<L1DocHit> l1Hits) {
-        List<L2Candidate> gathered = gatherL2Candidates(query, l0, kbId, bm25Fallback, l1Hits);
+                                                Long kbId, boolean[] bm25Fallback, List<L1DocHit> l1Hits,
+                                                List<L1DocHit> imageHits) {
+        List<L2Candidate> gathered = gatherL2Candidates(query, l0, kbId, bm25Fallback, l1Hits, imageHits);
         double maxBm = gathered.stream().map(L2Candidate::bm25Rank)
                 .filter(java.util.Objects::nonNull).mapToDouble(Double::doubleValue).max().orElse(0);
         return rerankWithBoost(gathered, maxBm);
@@ -947,10 +969,11 @@ public class RagRetrievalService {
                 }
                 List<RecallHit> l0 = multiDenseRecallL0(c.kbId, halfs, scope, null, maxL0);
                 List<L1DocHit> l1 = multiDenseRecallL1(c.kbId, halfs, scope, null, maxL0);
-                if (l0.isEmpty() && l1.isEmpty()) {
+                List<L1DocHit> img = multiDenseRecallImage(c.kbId, halfs, scope, null, maxL0);
+                if (l0.isEmpty() && l1.isEmpty() && img.isEmpty()) {
                     continue;
                 }
-                List<L2Candidate> pool = gatherL2Candidates(suppQuery, l0, c.kbId, bm25Fallback, l1);
+                List<L2Candidate> pool = gatherL2Candidates(suppQuery, l0, c.kbId, bm25Fallback, l1, img);
                 if (Boolean.TRUE.equals(kbRestricted.get(c.kbId))) {
                     pool.forEach(cand -> confidentialNodes.add(cand.nodeId()));
                 }
@@ -986,11 +1009,13 @@ public class RagRetrievalService {
      */
     private List<L2Candidate> gatherL2Candidates(String query, List<RecallHit> l0,
                                                  Long kbId, boolean[] bm25Fallback,
-                                                 List<L1DocHit> l1Hits) {
+                                                 List<L1DocHit> l1Hits, List<L1DocHit> imageHits) {
         int topM = Math.min(ragConfig.getDenseTopM(), l0.size());
         List<RecallHit> topMHits = l0.subList(0, topM);
 
-        // L1 doc 语义锚：documentId → max L1 sim；L1 doc 序（按 sim 降序去重，供 RRF 融合）
+        // L1 doc 语义锚：documentId → max L1 sim；L1 doc 序（按 sim 降序去重，供 RRF 融合）。
+        // WP5 Step3：docL1Sim 槽位升级为「doc 级锚 sim」= max(L1 元数据向量, IMAGE 图片向量)——
+        // 两通道同为 doc 级语义锚、boost 同槽（rerankWithBoost 口径不变）；RRF 排名融合仍各列独立。
         Map<Long, Double> docL1Sim = new LinkedHashMap<>();
         List<Long> l1DocOrder = new ArrayList<>();
         Set<Long> l1Seen = new LinkedHashSet<>();
@@ -1005,6 +1030,20 @@ public class RagRetrievalService {
             }
         }
 
+        // IMAGE 图片向量 doc 序（独立 RRF 通道；sim 并入 docL1Sim 锚槽取 max）
+        List<Long> imgDocOrder = new ArrayList<>();
+        if (imageHits != null) {
+            List<L1DocHit> imgSorted = new ArrayList<>(imageHits);
+            imgSorted.sort((a, b) -> Double.compare(b.cosineSim(), a.cosineSim()));
+            Set<Long> imgSeen = new LinkedHashSet<>();
+            for (L1DocHit h : imgSorted) {
+                docL1Sim.merge(h.documentId(), h.cosineSim(), Math::max);
+                if (imgSeen.add(h.documentId())) {
+                    imgDocOrder.add(h.documentId());
+                }
+            }
+        }
+
         // L0 doc 序（按 L0 命中序去重）
         LinkedLongSet topDDocsSet = new LinkedLongSet();
         List<Long> l0DocOrder = new ArrayList<>();
@@ -1014,8 +1053,9 @@ public class RagRetrievalService {
             }
         }
 
-        // top-D 文档：RRF 融合 L0 doc 序 + L1 doc 序（L1 命中可把低 L0 排名的 doc 拉进 top-D）
-        List<Long> topDDocIds = fuseTopDDocs(l0DocOrder, l1DocOrder, ragConfig.getDenseTopD());
+        // top-D 文档：RRF 融合 L0 doc 序 + L1 doc 序 + IMAGE doc 序（WP5 Step3 第三通道，
+        // L1/IMAGE 命中可把低 L0 排名的 doc 拉进 top-D）
+        List<Long> topDDocIds = fuseTopDDocs(l0DocOrder, l1DocOrder, imgDocOrder, ragConfig.getDenseTopD());
         if (topDDocIds.isEmpty()) {
             return List.of();
         }
@@ -1052,7 +1092,7 @@ public class RagRetrievalService {
             }
         }
 
-        // Phase3：L1 命中但 L0 父未进 topM 的文档，其 L2 经 doc 维度补召（不限 parent∈topM）
+        // Phase3：L1/IMAGE 命中但 L0 父未进 topM 的文档，其 L2 经 doc 维度补召（不限 parent∈topM）
         List<Long> l1OnlyDocs = new ArrayList<>();
         for (Long docId : topDDocIds) {
             if (!topML0Docs.contains(docId)) {
@@ -2178,18 +2218,39 @@ public class RagRetrievalService {
                 .injectedBy(e.injectedBy()).attachment(e.attachment()).build()).toList();
     }
 
-    /** Phase3：RRF 融合 L0 doc 序 + L1 doc 序 → top-D doc（两通道分数尺度不可比，按排名归一）。 */
-    private List<Long> fuseTopDDocs(List<Long> l0DocOrder, List<Long> l1DocOrder, int topD) {
-        if (l1DocOrder.isEmpty()) {
-            return l0DocOrder.stream().limit(topD).toList();
+    /**
+     * Phase3：RRF 融合 L0 doc 序 + L1 doc 序 → top-D doc（两通道分数尺度不可比，按排名归一）。
+     * WP5 Step3：+IMAGE 图片向量 doc 序第三通道（同参 k=60，独立权重 weightImageVector）。
+     */
+    private List<Long> fuseTopDDocs(List<Long> l0DocOrder, List<Long> l1DocOrder,
+                                    List<Long> imgDocOrder, int topD) {
+        List<List<Long>> nonEmpty = new ArrayList<>();
+        if (!l0DocOrder.isEmpty()) {
+            nonEmpty.add(l0DocOrder);
         }
-        if (l0DocOrder.isEmpty()) {
-            return l1DocOrder.stream().limit(topD).toList();
+        if (!l1DocOrder.isEmpty()) {
+            nonEmpty.add(l1DocOrder);
+        }
+        if (!imgDocOrder.isEmpty()) {
+            nonEmpty.add(imgDocOrder);
+        }
+        if (nonEmpty.size() == 1) {
+            return nonEmpty.get(0).stream().limit(topD).toList();
+        }
+        if (nonEmpty.isEmpty()) {
+            return List.of();
         }
         int k = recallProps.getRrf().getK();
-        List<RrfFusion.WeightedList<Long>> lists = List.of(
-                new RrfFusion.WeightedList<>(l0DocOrder, recallProps.getRrf().getWeightL0Vector()),
-                new RrfFusion.WeightedList<>(l1DocOrder, recallProps.getRrf().getWeightL1Vector()));
+        List<RrfFusion.WeightedList<Long>> lists = new ArrayList<>(3);
+        if (!l0DocOrder.isEmpty()) {
+            lists.add(new RrfFusion.WeightedList<>(l0DocOrder, recallProps.getRrf().getWeightL0Vector()));
+        }
+        if (!l1DocOrder.isEmpty()) {
+            lists.add(new RrfFusion.WeightedList<>(l1DocOrder, recallProps.getRrf().getWeightL1Vector()));
+        }
+        if (!imgDocOrder.isEmpty()) {
+            lists.add(new RrfFusion.WeightedList<>(imgDocOrder, recallProps.getRrf().getWeightImageVector()));
+        }
         return RrfFusion.sortByScoreDesc(RrfFusion.fuseWeighted(lists, k)).stream().limit(topD).toList();
     }
 

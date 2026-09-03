@@ -281,6 +281,83 @@ class RagRetrievalServiceTest {
                 candidates.size() == 1 && "PostgreSQL16 安装".equals(candidates.get(0).content())), eq("ranking-chat"));
     }
 
+    // ============================ WP5 Step3 IMAGE 检索通道 ============================
+
+    @Test
+    void imageOnlyDoc_entersTopDViaThirdChannel() {
+        KnowledgeBase kb = kb(1L);
+        stubReadableAll(kb);
+        stubExpandSingle();
+        when(queryMapper.denseRecallL0(anyLong(), anyString(), anyBoolean(), anyList(), any(), anyInt()))
+                .thenReturn(List.of());   // L0/L1 全空——图片向量独立救回
+        when(queryMapper.denseRecallL1(anyLong(), anyString(), anyBoolean(), anyList(), any(), anyInt()))
+                .thenReturn(List.of());
+        when(queryMapper.denseRecallImage(anyLong(), anyString(), anyBoolean(), anyList(), any(), anyInt()))
+                .thenReturn(List.of(l1RecallRow(33L, "部署架构图", 0.1)));   // sim 0.9 > soft
+        when(queryMapper.fetchL2ChildrenByDoc(eq(1L), eq(List.of(33L))))
+                .thenReturn(List.of(l2Row(21L, 33L, null, "识图描述", "三台服务器组成集群的部署架构图", "hash21")));
+        when(queryMapper.bm25HitsJieba(anyLong(), anyString(), anyList())).thenReturn(List.of());
+        when(queryMapper.reverifyNode(21L)).thenReturn(hashRow("hash21"));
+
+        RagRetrieveVO vo = service.retrieve(req(1L, "架构图长什么样"), 7L);
+
+        assertFalse(vo.isAbstained(), vo.toString());   // 无图片通道时本应 NO_DENSE_HITS
+        verify(queryMapper).denseRecallImage(eq(1L), eq("[0.1]"), eq(true), anyList(), any(), anyInt());
+        assertTrue(vo.getEvidenceL2().stream().anyMatch(e -> e.getNodeId().equals(21L)),   // 证据=图片文本描述
+                vo.getEvidenceL2().toString());
+    }
+
+    @Test
+    void imageChannelEmpty_textOnlyLibraryUnaffected() {
+        KnowledgeBase kb = kb(1L);
+        stubReadableAll(kb);
+        stubExpandSingle();
+        when(queryMapper.denseRecallL0(anyLong(), anyString(), anyBoolean(), anyList(), any(), anyInt()))
+                .thenReturn(List.of(denseRow(10L, 99L, "安装步骤", 0.4)));   // sim 0.6 自信
+        when(queryMapper.fetchL2Children(anyLong(), anyList(), anyList()))
+                .thenReturn(List.of(l2Row(11L, 99L, 10L, "安装步骤", "PostgreSQL16 安装", "hash11")));
+        when(queryMapper.bm25HitsJieba(anyLong(), anyString(), anyList())).thenReturn(List.of());
+        when(queryMapper.reverifyNode(11L)).thenReturn(hashRow("hash11"));
+        // denseRecallImage 不打桩——mock 默认空（混维度库无图片行）→ 行为与接入前一致
+
+        RagRetrieveVO vo = service.retrieve(req(1L, "如何安装"), 7L);
+
+        assertFalse(vo.isAbstained(), vo.toString());
+        verify(queryMapper).denseRecallImage(anyLong(), anyString(), anyBoolean(), anyList(), any(), anyInt());
+        assertTrue(vo.getEvidenceL2().stream().anyMatch(e -> e.getNodeId().equals(11L)));
+    }
+
+    @Test
+    void imageAndL0SameDoc_singleL2FetchNoDoubleCount() {
+        KnowledgeBase kb = kb(1L);
+        stubReadableAll(kb);
+        stubExpandSingle();
+        when(queryMapper.denseRecallL0(anyLong(), anyString(), anyBoolean(), anyList(), any(), anyInt()))
+                .thenReturn(List.of(denseRow(10L, 99L, "识图文档", 0.4)));
+        when(queryMapper.denseRecallImage(anyLong(), anyString(), anyBoolean(), anyList(), any(), anyInt()))
+                .thenReturn(List.of(l1RecallRow(99L, "识图文档", 0.2)));   // 同 doc 双通道命中
+        when(queryMapper.fetchL2Children(anyLong(), anyList(), anyList()))
+                .thenReturn(List.of(l2Row(11L, 99L, 10L, "识图描述", "部署架构图描述", "hash11")));
+        when(queryMapper.bm25HitsJieba(anyLong(), anyString(), anyList())).thenReturn(List.of());
+        when(queryMapper.reverifyNode(11L)).thenReturn(hashRow("hash11"));
+
+        RagRetrieveVO vo = service.retrieve(req(1L, "架构图"), 7L);
+
+        assertFalse(vo.isAbstained(), vo.toString());
+        // doc99 已进 topM L0（非 l1Only）→ L2 只走 parent 锚定一路，无 doc 维度二次拉取/重复计数
+        verify(queryMapper, never()).fetchL2ChildrenByDoc(anyLong(), anyList());
+        long n11 = vo.getEvidenceL2().stream().filter(e -> e.getNodeId().equals(11L)).count();
+        assertEquals(1, n11, "同 node 双通道命中只入池一次");
+    }
+
+    private RagQueryRow.L1RecallRow l1RecallRow(Long docId, String title, double distance) {
+        RagQueryRow.L1RecallRow r = new RagQueryRow.L1RecallRow();
+        r.setDocumentId(docId);
+        r.setTitle(title);
+        r.setCosineDistance(distance);
+        return r;
+    }
+
     // ============================ helpers ============================
 
     /** 扩展 mock：返回单规范 halfvec（非空，让流程进入 step5）。 */

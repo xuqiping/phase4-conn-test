@@ -104,6 +104,49 @@ public interface RagRetrievalQueryMapper {
                                                   @Param("docTypes") List<String> docTypes,
                                                   @Param("maxL1") int maxL1);
 
+    /**
+     * step5（WP5 Step3）：dense IMAGE 图片向量召回（HNSW cosine，doc 级）。
+     * 查 V173 knowledge_image_embeddings_doubao（每 IMAGE 文档 1 行图片原生向量），
+     * 行形与 denseRecallL1 同（doc 级三元组）→ 复用 L1RecallRow。
+     * 召回时不复校 content_hash（同 L1 理由：doc 级无 node 比对，drift 靠重解析新 job 接管）。
+     * 图片向量模型与 kb.embedding_model 对齐（Step2 口径）；docTypes 过滤天然生效
+     * （IMAGE 文档命中需 d.doc_type ∈ docTypes，若用户过滤只选 TEXT 则图片通道自然空）。
+     * <code>&lt;=&gt;</code> = pgvector halfvec cosine 距离 [0,2]，sim = 1 - distance。
+     */
+    @Select("""
+            <script>
+            SELECT d.id AS document_id,
+                   d.title AS title,
+                   (e.embedding &lt;=&gt; #{qHalf}::halfvec) AS cosine_distance
+            FROM knowledge_image_embeddings_doubao e
+            JOIN knowledge_documents d ON d.id = e.document_id
+            JOIN knowledge_bases kb    ON kb.id = d.kb_id
+            WHERE kb.id = #{kbId}
+              AND kb.deleted = 0
+              AND d.deleted = 0
+              AND d.current_version_id IS NOT NULL
+              AND (d.effective_at IS NULL OR d.effective_at &lt;= now())
+              AND (d.expired_at IS NULL OR d.expired_at &gt; now())
+              AND e.embedding_model = kb.embedding_model
+              <if test="!allDocs">
+                AND d.id IN
+                <foreach collection="docIds" item="did" open="(" separator="," close=")">#{did}</foreach>
+              </if>
+              <if test="docTypes != null and docTypes.size() > 0">
+                AND d.doc_type IN
+                <foreach collection="docTypes" item="dt" open="(" separator="," close=")">#{dt}</foreach>
+              </if>
+            ORDER BY e.embedding &lt;=&gt; #{qHalf}::halfvec
+            LIMIT #{maxImage}
+            </script>
+            """)
+    List<RagQueryRow.L1RecallRow> denseRecallImage(@Param("kbId") Long kbId,
+                                                     @Param("qHalf") String qHalf,
+                                                     @Param("allDocs") boolean allDocs,
+                                                     @Param("docIds") List<Long> docIds,
+                                                     @Param("docTypes") List<String> docTypes,
+                                                     @Param("maxImage") int maxImage);
+
     /** step6：取 top-M L0 的 L2 子节点（parent-anchored），限候选文档。 */
     @Select("""
             <script>
