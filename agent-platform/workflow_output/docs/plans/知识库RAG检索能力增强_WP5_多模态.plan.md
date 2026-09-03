@@ -20,11 +20,12 @@ created-date: 2026-09-03
 
 ## 实现步骤
 
-- [ ] **Step 0：原件生命周期核实（半天调查）**
+- [x] **Step 0：原件生命周期核实（半天调查）**（2026-09-03 核实毕）
   - **目标**：确认图片原件在索引后是否保留（决定 IMAGE 向量生成时机）
   - **动作**：读 `IndexJobWorker.cleanOriginalFileAfterIndex`（:174 调用处）实现：删除条件是什么（全 INDEXED 后删？FILE 型保留？）；若原件会被清理→IMAGE 向量生成必须提前到清理前，或对 IMAGE 文档豁免清理；结论写本 plan 备注
   - **文件**：只读核实
-  - **依赖**：无｜**验证**：结论+代码行号落备注
+  - **依赖**：无｜**验证**：结论+代码行号落备注 ✅
+  - **核实结论**：**无时序风险**。`IndexJobWorker.cleanOriginalFileAfterIndex`（IndexJobWorker.java:248-272）对 **IMAGE/FILE docType 明确跳过清理**（:257-259——原件是回显资产必须保留，仅记 info 日志）；其余 docType 受 `app.files.retain-after-index` 控制（默认 false=清，D5 文件生命周期）。即 IMAGE 文档原件自上传起永久保留至文档删除→IMAGE 向量 job 在索引流程任意阶段读原件 bytes 均安全。附带确认：清理在 DB 事务外、删失败不回滚不阻塞（:265-271），与 IMAGE 无关。
 
 - [ ] **Step 1：多模态 embed 协议扩展**
   - **目标**：LlmGateway 可传图
