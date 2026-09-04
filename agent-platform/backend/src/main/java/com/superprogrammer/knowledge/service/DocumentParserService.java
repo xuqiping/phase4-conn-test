@@ -425,9 +425,12 @@ public class DocumentParserService {
             }
             if (attach) {
                 m.put("attachMode", true);
-                String attachmentText = loadAttachmentText(doc);
-                if (attachmentText != null) {
-                    m.put("attachmentText", attachmentText);
+                AttachExtract at = loadAttachmentText(doc);
+                if (at != null) {
+                    m.put("attachmentText", at.text());
+                    if (at.truncated()) {
+                        m.put("attachmentTruncated", true);   // 注入侧据此补「已截断」标注
+                    }
                 }
             }
             return objectMapper.writeValueAsString(m);
@@ -444,12 +447,19 @@ public class DocumentParserService {
     private static final int ATTACHMENT_TEXT_MAX_CHARS = 8000;
 
     /**
+     * 附件全文预提取产物：text=截断后全文；truncated=原文件超上限被截（Phase4 实测修复：
+     * 注入侧只比长度判截断，此处先截 8000 后长度恰好相等 → 「已截断，可下载原件」标注永不
+     * 触发，证据静默断句。截断事实必须随 metadata 透传到注入侧）。
+     */
+    record AttachExtract(String text, boolean truncated) {}
+
+    /**
      * 附件全文预提取（buildNodeMetadata 内调用，单次读）：
      * 图片 → null（不预提取，检索时实时 VLM）；文本白名单 → UTF-8 直读；
      * 其余（PDF/DOCX/XLSX 等）→ Tika 抽取。统一截断 {@value ATTACHMENT_TEXT_MAX_CHARS} 字；
      * 抽取失败/空 → null 降级（Step6 注入时以「原件内容暂缺」标注，描述召回不受影响）。
      */
-    String loadAttachmentText(KnowledgeDocument doc) {   // 包私有供单测（buildNodeMetadata 调用）
+    AttachExtract loadAttachmentText(KnowledgeDocument doc) {   // 包私有供单测（buildNodeMetadata 调用）
         String ref = doc.getFileRef() == null ? "" : doc.getFileRef().toLowerCase();
         if (ref.endsWith(".png") || ref.endsWith(".jpg") || ref.endsWith(".jpeg")
                 || ref.endsWith(".gif") || ref.endsWith(".webp") || ref.endsWith(".bmp")) {
@@ -470,8 +480,8 @@ public class DocumentParserService {
                 return null;
             }
             return text.length() > ATTACHMENT_TEXT_MAX_CHARS
-                    ? text.substring(0, ATTACHMENT_TEXT_MAX_CHARS)
-                    : text;
+                    ? new AttachExtract(text.substring(0, ATTACHMENT_TEXT_MAX_CHARS), true)
+                    : new AttachExtract(text, false);
         } catch (Exception e) {
             log.warn("附件全文预提取失败（降级仅描述召回）docId={}: {}", doc.getId(), e.getMessage());
             return null;

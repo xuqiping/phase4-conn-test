@@ -109,6 +109,18 @@ class AttachmentContentInjectorTest {
     }
 
     @Test
+    void textAttachment_preTruncatedFlag_markEvenAtEqualLength() {
+        // Phase4 实测修复：解析侧已截 8000 → metadata 透传标志；注入文本长度恰好=上限时
+        // 比长度判不出截断（实测证据静默断句），标志命中也必须补「已截断」标注
+        recallProps.getAttachment().setMaxInjectChars(8000);
+        Map<String, Object> m = textMeta("长".repeat(8000));
+        m.put("attachmentTruncated", true);
+        String block = injector.inject(attachDoc(null), m);
+
+        assertTrue(block.endsWith("（已截断，可下载原件查看全文）"));
+    }
+
+    @Test
     void nonImage_noText_returnsNull() {
         Map<String, Object> m = imageMeta();
         m.put("fileRef", "/api/files/f1.pdf");
@@ -150,7 +162,7 @@ class AttachmentContentInjectorTest {
         ArgumentCaptor<LlmRequest> reqCap = ArgumentCaptor.forClass(LlmRequest.class);
         verify(llmGateway).chat(reqCap.capture(), eq(OWNER));
         assertEquals("qwen-vl", reqCap.getValue().getModel());
-        assertEquals(2500, reqCap.getValue().getTimeoutMs());
+        assertEquals(30000, reqCap.getValue().getTimeoutMs());   // Phase4 实测：真实 VL 首图 24s
         // 识图文本写缓存（下次同图同模型直取）
         verify(visionCache).put(eq(key), eq("该图展示三层架构"));
     }
@@ -187,6 +199,36 @@ class AttachmentContentInjectorTest {
 
         assertTrue(injector.inject(attachDoc("{\"visionModel\":\"qwen-vl\"}"), imageMeta())
                 .contains("原件内容暂缺"));
+    }
+
+    @Test
+    void imageVlmPoliteRefusal_degradesAndNotCached() throws Exception {
+        // Phase4 实测修复（Bug #7）：纯文本模型被配成 visionModel → 礼貌回绝「无法查看」非空文本，
+        // 不得当描述入缓存/注入，须降级占位
+        when(visionCache.get(anyString())).thenReturn(null);
+        when(fileStorageService.load(eq("f1.png"), eq(OWNER), anyBoolean()))
+                .thenReturn(new ByteArrayResource("IMG".getBytes(StandardCharsets.UTF_8)));
+        when(llmGateway.chat(any(), any())).thenReturn(LlmResponse.builder()
+                .content("抱歉，我无法查看这张图片。虽然消息中包含了图片链接，但该图像内容未能实际加载。").build());
+
+        String block = injector.inject(attachDoc("{\"visionModel\":\"glm-5.1\"}"), imageMeta());
+
+        assertTrue(block.contains("原件内容暂缺"));
+        assertFalse(block.contains("抱歉"));
+        verify(visionCache, never()).put(anyString(), anyString());
+    }
+
+    @Test
+    void imageVlmEnglishRefusal_degrades() throws Exception {
+        when(visionCache.get(anyString())).thenReturn(null);
+        when(fileStorageService.load(eq("f1.png"), eq(OWNER), anyBoolean()))
+                .thenReturn(new ByteArrayResource("IMG".getBytes(StandardCharsets.UTF_8)));
+        when(llmGateway.chat(any(), any())).thenReturn(LlmResponse.builder()
+                .content("Sorry, I cannot view this image as it was provided as an external URL.").build());
+
+        assertTrue(injector.inject(attachDoc("{\"visionModel\":\"qwen-vl\"}"), imageMeta())
+                .contains("原件内容暂缺"));
+        verify(visionCache, never()).put(anyString(), anyString());
     }
 
     @Test

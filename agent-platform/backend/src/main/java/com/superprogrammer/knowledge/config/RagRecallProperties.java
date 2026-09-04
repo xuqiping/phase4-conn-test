@@ -46,8 +46,14 @@ public class RagRecallProperties {
         private boolean enabled = true;
         /** 单附件注入内容上限（字符）。超限截断并标注「可下载原件」。 */
         private int maxInjectChars = 8000;
-        /** 图片实时识图超时（ms）：超时降级为仅描述 + 「原件内容暂缺」标注，不阻塞检索主链。 */
-        private int visionTimeoutMs = 2500;
+        /**
+         * 图片实时识图超时（ms）：超时降级为仅描述 + 「原件内容暂缺」标注，不阻塞检索主链。
+         * Phase4 实测调整：旧默认 2500 只够拒绝式快回（glm-5.1 秒拒不看图）；真实 VL 模型
+         * （qwen3-vl-plus 识 1000x700 架构图，1024 max_tokens）首图实测 24s，2.5s/15s 均必
+         * 超时 → 图片附件注入永远降级。提到 30s：首问换慢、命中 Redis 缓存后零等待
+         * （超时仍降级不阻塞，可在 yml 按网关实况收紧）。
+         */
+        private int visionTimeoutMs = 30000;
         /** 图片识图 max_tokens（识图文本即注入内容，无需长文）。 */
         private int visionMaxTokens = 1024;
         /** 识图结果 Redis 缓存 TTL（天）——文档删除/换版后自然过期兜底，无主动清理。 */

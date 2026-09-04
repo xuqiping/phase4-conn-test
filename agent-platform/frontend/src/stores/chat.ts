@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { chatApi } from '@/api/chat'
+import { useAuthStore } from './auth'
 import type { ChatSession, ChatMessage, ChatResponse, ChatAttachmentRef } from '@/api/chat'
 import type { RecalledFileCard } from '@/api/memory'
 import { tryRefreshAccessToken, redirectToLogin } from '@/api/request'
@@ -46,6 +47,10 @@ export const useChatStore = defineStore('chat', () => {
   // 5x 四轮 U6：当前流式请求的 abort 控制器（停止生成）；stopping 标记区分「用户停止」与「真失败」（后者才走 REST 回退）
   let streamAbortController: AbortController | null = null
   const stoppingStream = ref(false)
+  // Phase4 实测修复（Bug #8）：登出代际标记。resetForLogout 时 +1；在途流的收尾
+  // （DONE 落消息/ERROR 提示/无数据与异常的 REST 回退——回退会拿新 token 重发，把上一用户
+  // 的问题计费给下一用户）全部跳过，防止把已清空的 store 写回上一用户的残余内容。
+  let streamEpoch = 0
 
   // ============================================================
   // 9x#11 聊天队列：生成中再发消息 → 排队，当前轮结束后 FIFO 自动续发。
@@ -259,6 +264,7 @@ export const useChatStore = defineStore('chat', () => {
       return
     }
     const attachmentFileIds = attachments?.map(a => a.fileId)
+    const epoch = streamEpoch   // Bug #8：登出后残余流不再写态/不再回退重发
     sending.value = true
     streamingContent.value = ''
     streamingThinking.value = ''
@@ -310,6 +316,7 @@ export const useChatStore = defineStore('chat', () => {
       ])
 
       if (!response.ok || !response.body) {
+        if (epoch !== streamEpoch) return   // Bug #8：已登出换人，不再 REST 回退重发（防计费串户）
         sending.value = false
         messages.value.pop()
         return sendMessage(content, undefined, undefined, ragEnabled, webSearchEnabled, attachments, kbIds, projectGroupId, thinkingLevel)
@@ -321,6 +328,7 @@ export const useChatStore = defineStore('chat', () => {
       let gotData = false
 
       while (true) {
+        if (epoch !== streamEpoch) { streamAbortController?.abort(); return }   // Bug #8：登出即弃流
         const { done, value } = await reader.read()
         if (done) break
 
@@ -431,6 +439,7 @@ export const useChatStore = defineStore('chat', () => {
       }
       // If stream ended with no data, fall back to REST
       if (!gotData) {
+        if (epoch !== streamEpoch) return   // Bug #8：已登出换人，不再回退重发
         sending.value = false
         streamingContent.value = ''
         streamingThinking.value = ''
@@ -440,6 +449,8 @@ export const useChatStore = defineStore('chat', () => {
         return sendMessage(content, undefined, undefined, ragEnabled, webSearchEnabled, attachments, kbIds, projectGroupId, thinkingLevel)
       }
     } catch (e) {
+      // Bug #8：已登出换人——残余流既不落部分内容也不 REST 回退（防内容残留/计费串户）
+      if (epoch !== streamEpoch) return
       // U6：用户停止（abort 使 read 抛 AbortError）→ 保留部分内容收尾，严禁走 REST 回退（双倍计费）
       if (stoppingStream.value) {
         finalizeStoppedMessage()
@@ -739,6 +750,34 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  /**
+   * Phase4 实测修复（Bug #8）：登出清态。此前 Pinia chat store 在登出后原样存活，同浏览器
+   * 下一账号登录 ChatView 直接显示上一用户的会话/消息（实测 pm_tester 登录后看到 admin 的
+   * 完整问答与引用——纯前端内存残留，接口层无越权：换号后未再拉任何 /chat 消息接口）。
+   * 由下方 watch 驱动：auth.userInfo 从有值变 null（登出）→ 全清 + 弃在途流。
+   */
+  function resetForLogout() {
+    streamEpoch++
+    streamAbortController?.abort()
+    disconnectWS()
+    clearMessageQueue()
+    sessions.value = []
+    currentSessionId.value = null
+    messages.value = []
+    loading.value = false
+    sending.value = false
+    streamingContent.value = ''
+    streamingThinking.value = ''
+    streamingCitations.value = null
+    streamingFileCards.value = null
+    pendingInput.value = null
+    pendingInclusionConfirm.value = null
+  }
+
+  watch(() => useAuthStore().userInfo, (u, prev) => {
+    if (!u && prev) resetForLogout()
+  })
+
   function setSelectedModel(model: string | null) {
     selectedModel.value = model || null
     if (model) setStorage(STORAGE_KEYS.CHAT_SELECTED_MODEL, model)
@@ -815,6 +854,8 @@ export const useChatStore = defineStore('chat', () => {
     confirmInclusion,
     connectWS,
     disconnectWS,
+    /** Bug #8：登出清态（watch auth.userInfo 驱动；导出供测试直调）。 */
+    resetForLogout,
     startConflictPoll,
     stopConflictPoll,
     loadActiveConflicts

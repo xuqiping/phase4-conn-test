@@ -262,7 +262,10 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
                     m.put("text", p.text());
                 }
                 if (p.image() != null && !p.image().isBlank()) {
-                    m.put("image", p.image());
+                    // Phase4 实测修复（Bug #6）：该网关要求 Base64 带 data:image/xxx;base64, 前缀，
+                    // 裸 Base64 直接 400（InternalError.Algo.InvalidParameter: Base64 must start
+                    // with 'image/xxx;base64'）。EmbedContentPart 不带 mime，按 Base64 头魔数嗅探补前缀。
+                    m.put("image", toImageDataUri(p.image()));
                 }
                 if (!m.isEmpty()) {
                     parts.add(m);
@@ -326,6 +329,32 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
 
     private boolean usesQwenMultimodalEmbeddingProtocol() {
         return endpoint.contains("/multimodal-embedding/");
+    }
+
+    /**
+     * Phase4 实测修复（Bug #6）：多模态 embed 图片段统一转 data URI。
+     * 已是 {@code data:} 开头原样返回；否则按 Base64 首字节魔数嗅探 mime
+     * （PNG/JPEG/GIF/WebP/BMP），嗅不出默认 png（网关按实际字节解码，前缀仅作声明）。
+     */
+    static String toImageDataUri(String image) {
+        if (image.startsWith("data:")) {
+            return image;
+        }
+        String mime;
+        if (image.startsWith("iVBORw0KGgo")) {
+            mime = "image/png";
+        } else if (image.startsWith("/9j/")) {
+            mime = "image/jpeg";
+        } else if (image.startsWith("R0lGOD")) {
+            mime = "image/gif";
+        } else if (image.startsWith("UklGR")) {
+            mime = "image/webp";
+        } else if (image.startsWith("Qk")) {
+            mime = "image/bmp";
+        } else {
+            mime = "image/png";
+        }
+        return "data:" + mime + ";base64," + image;
     }
 
     @Override

@@ -199,7 +199,8 @@ class OpenAICompatibleProviderTest {
 
     @Test
     void multimodalEmbed_imageAndTextParts_useContentsArray() throws Exception {
-        // 多模态协议端点：text+image 两段 → contents 数组按序透传（image=Base64/URL 原样）
+        // 多模态协议端点：text+image 两段 → contents 数组按序透传；
+        // Phase4 实测修复（Bug #6）：image 段须带 data URI 前缀（裸 Base64 网关 400）
         OpenAICompatibleProvider embedProvider = new OpenAICompatibleProvider(
                 "qwen-mm-a",
                 server.url("/v1/services/embeddings/multimodal-embedding/multimodal-embedding").toString(),
@@ -222,11 +223,29 @@ class OpenAICompatibleProviderTest {
         RecordedRequest request = server.takeRequest();
         JsonNode body = mapper.readTree(request.getBody().readUtf8());
         assertEquals("产品截图", body.at("/input/contents/0/text").asText());
-        assertEquals("aGVsbG8=", body.at("/input/contents/1/image").asText());
+        assertEquals("data:image/png;base64,aGVsbG8=", body.at("/input/contents/1/image").asText());
         assertTrue(body.at("/parameters/enable_fusion").asBoolean());
         assertEquals(2048, result.getEmbedding().length);
         assertEquals(0.5f, result.getEmbedding()[0], 1e-6);
         assertEquals(13, result.getUsage().getPromptTokens());
+    }
+
+    @Test
+    void toImageDataUri_magicPrefixAndPassthrough() {
+        // Phase4 实测修复（Bug #6）：Base64 头魔数嗅探 → data URI；已是 data: 原样
+        assertEquals("data:image/png;base64,iVBORw0KGgoAAA",
+                OpenAICompatibleProvider.toImageDataUri("iVBORw0KGgoAAA"));
+        assertEquals("data:image/jpeg;base64,/9j/4AAQ",
+                OpenAICompatibleProvider.toImageDataUri("/9j/4AAQ"));
+        assertEquals("data:image/gif;base64,R0lGODlh",
+                OpenAICompatibleProvider.toImageDataUri("R0lGODlh"));
+        assertEquals("data:image/webp;base64,UklGRpoA",
+                OpenAICompatibleProvider.toImageDataUri("UklGRpoA"));
+        // 嗅不出（如短串/异形编码）默认 png；已是 data URI 不重复包
+        assertEquals("data:image/png;base64,aGVsbG8=",
+                OpenAICompatibleProvider.toImageDataUri("aGVsbG8="));
+        assertEquals("data:image/png;base64,iVBORw0KGgo",
+                OpenAICompatibleProvider.toImageDataUri("data:image/png;base64,iVBORw0KGgo"));
     }
 
     @Test

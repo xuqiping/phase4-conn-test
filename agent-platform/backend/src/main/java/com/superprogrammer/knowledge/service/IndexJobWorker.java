@@ -248,7 +248,7 @@ public class IndexJobWorker {
 
     /**
      * UPSERT_IMAGE（WP5 Step2，doc 级图片向量）：读 IMAGE 文档原件 bytes → Base64 →
-     * embedMultimodal（裸 Base64，DashScope 口径）→ completeUpsertImage（tx 内复校 fileRef 未换 + upsert）。
+     * embedMultimodal（Base64 图片段，provider 侧补 data URI 前缀）→ completeUpsertImage（tx 内复校 fileRef 未换 + upsert）。
      * 失败关闭语义：模型/provider 不支持图输入（UnsupportedOperation/IllegalArgument）或维度不符
      * → voidJob 作废 + WARN（本库 IMAGE 通道自然禁用=无向量行，检索侧 Step3 无图可召回，文本通道不受影响）；
      * 暂态异常（网络/熔断中）→ failJob 指数退避重试。

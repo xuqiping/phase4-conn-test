@@ -484,3 +484,49 @@ describe('chat store WS 首消息鉴权（修复VIII B2）', () => {
     expect(store.wsConnected).toBe(false)
   })
 })
+
+// ============================================================
+// Phase4 实测修复（Bug #8）：登出清 chat store——此前登出后换号登录，
+// ChatView 直接显示上一用户会话/消息（Pinia 状态跨登录存活，纯前端内存残留）。
+// ============================================================
+import { nextTick } from 'vue'
+import { useAuthStore } from './auth'
+
+describe('chat store · Bug #8 登出清态', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  it('auth.userInfo 置空 → 会话/消息/流态全清（登出后换号不串台）', async () => {
+    const auth = useAuthStore()
+    auth.userInfo = { id: 1, username: 'admin', email: null, avatar: null, roles: [], permissions: [] } as any
+
+    const store = useChatStore()
+    store.sessions = [{ id: 9, title: '旧用户会话', updatedAt: '' } as any]
+    store.messages = [{ id: 1, sessionId: 9, role: 'USER', content: '上一用户消息', metadata: null, createdAt: '' } as any]
+    store.currentSessionId = 9
+    store.streamingContent = '半截流式回答'
+    store.sending = true
+
+    auth.userInfo = null   // 登出
+    await nextTick()       // pre-flush watch 生效
+
+    expect(store.sessions).toHaveLength(0)
+    expect(store.messages).toHaveLength(0)
+    expect(store.currentSessionId).toBeNull()
+    expect(store.streamingContent).toBe('')
+    expect(store.sending).toBe(false)
+  })
+
+  it('登录/换号（null → 有值）不清态——清态只绑登出沿', async () => {
+    const auth = useAuthStore()
+    const store = useChatStore()
+    store.messages = [{ id: 2, role: 'USER', content: 'x', metadata: null, createdAt: '' } as any]
+
+    auth.userInfo = { id: 2, username: 'pm_tester', email: null, avatar: null, roles: [], permissions: [] } as any
+    await nextTick()
+
+    expect(store.messages).toHaveLength(1)
+  })
+})

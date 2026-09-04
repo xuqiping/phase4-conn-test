@@ -4,9 +4,15 @@ import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.knowledge.entity.KnowledgeBase;
 import com.superprogrammer.knowledge.entity.KnowledgeDocument;
 import com.superprogrammer.knowledge.entity.KnowledgeDocumentVersion;
+import com.superprogrammer.knowledge.entity.KnowledgeNode;
+import com.superprogrammer.knowledge.event.DocumentUploadedEvent;
 import com.superprogrammer.knowledge.event.VisibilityInvalidationEvent;
+import com.superprogrammer.knowledge.mapper.KnowledgeDocEmbeddingMapper;
 import com.superprogrammer.knowledge.mapper.KnowledgeDocumentMapper;
 import com.superprogrammer.knowledge.mapper.KnowledgeDocumentVersionMapper;
+import com.superprogrammer.knowledge.mapper.KnowledgeEmbeddingMapper;
+import com.superprogrammer.knowledge.mapper.KnowledgeImageEmbeddingMapper;
+import com.superprogrammer.knowledge.mapper.KnowledgeNodeMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -28,12 +34,30 @@ class KnowledgeDocumentVersionServiceTest {
     @Mock private KnowledgeDocumentVersionMapper versionMapper;
     @Mock private KnowledgeBaseService knowledgeBaseService;
     @Mock private ApplicationEventPublisher eventPublisher;
+    @Mock private KnowledgeNodeMapper nodeMapper;
+    @Mock private KnowledgeEmbeddingMapper embeddingMapper;
+    @Mock private KnowledgeDocEmbeddingMapper docEmbeddingMapper;
+    @Mock private KnowledgeImageEmbeddingMapper imageEmbeddingMapper;
     private KnowledgeDocumentVersionService service;
 
     @BeforeEach
     void setUp() {
+        // Lambda Wrapper 需要 MP TableInfo 缓存（纯单测无 Spring 容器），沿用 HelpArticleServiceTest 范式
+        if (com.baomidou.mybatisplus.core.metadata.TableInfoHelper.getTableInfo(KnowledgeDocument.class) == null) {
+            com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
+                    new org.apache.ibatis.builder.MapperBuilderAssistant(
+                            new com.baomidou.mybatisplus.core.MybatisConfiguration(), ""),
+                    KnowledgeDocument.class);
+        }
+        if (com.baomidou.mybatisplus.core.metadata.TableInfoHelper.getTableInfo(KnowledgeNode.class) == null) {
+            com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
+                    new org.apache.ibatis.builder.MapperBuilderAssistant(
+                            new com.baomidou.mybatisplus.core.MybatisConfiguration(), ""),
+                    KnowledgeNode.class);
+        }
         service = new KnowledgeDocumentVersionService(
-                documentMapper, versionMapper, knowledgeBaseService, eventPublisher);
+                documentMapper, versionMapper, knowledgeBaseService, eventPublisher,
+                nodeMapper, embeddingMapper, docEmbeddingMapper, imageEmbeddingMapper);
     }
 
     @Test
@@ -73,9 +97,11 @@ class KnowledgeDocumentVersionServiceTest {
     }
 
     @Test
-    void activateVersion_archivesOldEffectiveAndPublishesInvalidation() {
+    void activateVersion_archivesOldEffectiveSwitchesContentAndReparses() {
         KnowledgeDocument doc = document(7L, 3L, 11L);
         KnowledgeDocumentVersion target = version(22L, 7L, 2, "DRAFT");
+        target.setFileRef("/api/files/f2.png");
+        target.setSourceHash("hash-2");
         when(documentMapper.selectByIdForUpdate(7L)).thenReturn(doc);
         when(versionMapper.selectById(22L)).thenReturn(target);
         when(versionMapper.markEffective(22L, 9L)).thenReturn(1);
@@ -86,6 +112,15 @@ class KnowledgeDocumentVersionServiceTest {
 
         verify(versionMapper).archiveEffective(7L, 22L);
         verify(versionMapper).markEffective(22L, 9L);
+        // Phase4 实测修复（Bug #5）：生效即换内容——fileRef/hash 切到新版 + 置 PENDING
+        verify(documentMapper).update(isNull(), any(com.baomidou.mybatisplus.core.conditions.Wrapper.class));
+        // 清旧节点+三池向量（writeNodes 不清旧）
+        verify(nodeMapper).delete(any(com.baomidou.mybatisplus.core.conditions.Wrapper.class));
+        verify(embeddingMapper).deleteByDocument(7L);
+        verify(docEmbeddingMapper).deleteByDocument(7L);
+        verify(imageEmbeddingMapper).deleteByDocument(7L);
+        // AFTER_COMMIT 重跑完整解析管线 + 可见性失效
+        verify(eventPublisher).publishEvent(isA(DocumentUploadedEvent.class));
         verify(eventPublisher).publishEvent(isA(VisibilityInvalidationEvent.class));
     }
 

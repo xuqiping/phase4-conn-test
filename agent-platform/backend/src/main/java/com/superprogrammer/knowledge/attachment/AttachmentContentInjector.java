@@ -73,9 +73,12 @@ public class AttachmentContentInjector {
         String attachmentText = str(nodeMetadata.get("attachmentText"));
         RagRecallProperties.Attachment cfg = recallProps.getAttachment();
 
-        // 路径1：文本类预提取全文直注（上传时已截 8000，此处按可配上限复裁）
+        // 路径1：文本类预提取全文直注（上传时已截 8000，此处按可配上限复裁）。
+        // attachmentTruncated=解析侧截 8000 的透传标志——此时长度恰好相等、比长度判不出
+        // 截断（Phase4 实测修复），标志与长度双口径任一命中即补标注。
         if (attachmentText != null && !attachmentText.isBlank()) {
-            return textBlock(originalName, attachmentText, cfg);
+            boolean preTruncated = Boolean.TRUE.equals(nodeMetadata.get("attachmentTruncated"));
+            return textBlock(originalName, attachmentText, cfg, preTruncated);
         }
 
         // 路径2：图片 → 缓存/实时识图
@@ -89,9 +92,11 @@ public class AttachmentContentInjector {
 
     // ---------------- 路径1：全文直注 ----------------
 
-    private String textBlock(String originalName, String text, RagRecallProperties.Attachment cfg) {
+    private String textBlock(String originalName, String text, RagRecallProperties.Attachment cfg,
+                             boolean preTruncated) {
         String trimmed = cap(text, cfg.getMaxInjectChars());
-        String truncatedMark = trimmed.length() < text.length() ? "（已截断，可下载原件查看全文）" : "";
+        boolean truncated = trimmed.length() < text.length() || preTruncated;
+        String truncatedMark = truncated ? "（已截断，可下载原件查看全文）" : "";
         return "[附件 " + (originalName == null ? "" : originalName) + "] 内容：" + trimmed + truncatedMark;
     }
 
@@ -123,6 +128,15 @@ public class AttachmentContentInjector {
         }
         if (text == null || text.isBlank()) {
             log.warn("附件图片识图返回空，降级仅描述 docId={}", doc.getId());
+            return label + DEGRADED_PLACEHOLDER;
+        }
+        // Phase4 实测修复（Bug #7）：glm-5.1 等纯文本模型被配成 visionModel 时不会报错，
+        // 而是礼貌回绝「无法查看图片（链接形式）」——非空文本若直接入缓存+注入，会把回绝话术
+        // 当图片描述喂给问答（实测证据块出现「抱歉，我无法查看」且被 Redis 缓存固化）。
+        // 回绝判定 → 视同失败：不写缓存，降级占位。
+        if (isLikelyRefusal(text)) {
+            log.warn("附件图片识图疑似被模型回绝（无视觉能力/格式不符），降级仅描述 docId={} model={} head={}",
+                    doc.getId(), visionModel, text.substring(0, Math.min(60, text.length())));
             return label + DEGRADED_PLACEHOLDER;
         }
         visionCache.put(cacheKey, text);
@@ -160,6 +174,19 @@ public class AttachmentContentInjector {
     }
 
     // ---------------- 工具 ----------------
+
+    /**
+     * Phase4 实测修复（Bug #7）：识别「模型没看到图」的礼貌回绝。中英双语常见话术做包含匹配，
+     * 命中任一即判回绝。误伤面控制：正常识图描述不会以「无法/不能查看·访问图片」开头或包含整句。
+     */
+    private static boolean isLikelyRefusal(String text) {
+        String t = text.replaceAll("\\s+", "");
+        return t.contains("无法查看") || t.contains("无法访问") || t.contains("无法识别该图")
+                || t.contains("不能查看该图") || t.contains("无法处理该图")
+                || t.contains("cannotview") || t.contains("cannotaccess")
+                || t.contains("unabletoview") || t.contains("unabletoaccess")
+                || t.contains("can'tview") || t.contains("can'tsee");
+    }
 
     private static String cap(String text, int maxChars) {
         return text.length() <= maxChars ? text : text.substring(0, maxChars);

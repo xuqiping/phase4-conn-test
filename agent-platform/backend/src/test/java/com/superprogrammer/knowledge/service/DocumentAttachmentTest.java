@@ -146,9 +146,19 @@ class DocumentAttachmentTest {
     @Test
     void loadAttachmentText_plainText_truncatedAt8000() {
         stubFile("长".repeat(20000));
-        String text = parser.loadAttachmentText(attachDoc(".txt", null));
-        assertNotNull(text);
-        assertEquals(8000, text.length());
+        var at = parser.loadAttachmentText(attachDoc(".txt", null));
+        assertNotNull(at);
+        assertEquals(8000, at.text().length());
+        assertTrue(at.truncated());   // Phase4 实测修复：截断事实必须透传（注入侧补标注）
+    }
+
+    @Test
+    void loadAttachmentText_plainText_underCap_notTruncated() {
+        stubFile("长".repeat(100));
+        var at = parser.loadAttachmentText(attachDoc(".txt", null));
+        assertNotNull(at);
+        assertEquals(100, at.text().length());
+        assertFalse(at.truncated());
     }
 
     @Test

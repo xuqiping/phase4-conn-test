@@ -171,6 +171,10 @@ const canConfirm = computed(() => {
   return true
 })
 
+// Phase4 实测修复：多选队列里 DocumentManager 在同一 tick 内 show=false→true（confirm 后同步
+// 弹下一个文件的选项框），默认 pre flush 的 watcher 只见终值 true（边沿丢失）→ 表单重置被
+// 跳过，第二个文件继承上一个的附件模式/描述。改 sync flush：每次赋值立即触发，false→true
+// 同 tick 也能观察到 true 边沿，重置必达。
 watch(
   () => props.show,
   (v) => {
@@ -182,7 +186,8 @@ watch(
       form.visionModel = ''
       form.selectedSheets = []
     }
-  }
+  },
+  { flush: 'sync' }
 )
 
 function onConfirm() {

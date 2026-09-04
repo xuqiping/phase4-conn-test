@@ -1,15 +1,24 @@
 package com.superprogrammer.knowledge.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.knowledge.entity.KnowledgeBase;
 import com.superprogrammer.knowledge.entity.KnowledgeDocument;
 import com.superprogrammer.knowledge.entity.KnowledgeDocumentVersion;
+import com.superprogrammer.knowledge.entity.KnowledgeNode;
 import com.superprogrammer.knowledge.dto.KnowledgeDocumentVersionVO;
+import com.superprogrammer.knowledge.event.DocumentUploadedEvent;
 import com.superprogrammer.knowledge.event.VisibilityInvalidationEvent;
+import com.superprogrammer.knowledge.mapper.KnowledgeDocEmbeddingMapper;
 import com.superprogrammer.knowledge.mapper.KnowledgeDocumentMapper;
 import com.superprogrammer.knowledge.mapper.KnowledgeDocumentVersionMapper;
+import com.superprogrammer.knowledge.mapper.KnowledgeEmbeddingMapper;
+import com.superprogrammer.knowledge.mapper.KnowledgeImageEmbeddingMapper;
+import com.superprogrammer.knowledge.mapper.KnowledgeNodeMapper;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,6 +28,7 @@ import java.util.List;
 import java.util.Objects;
 
 /** Canonical Document 版本状态机；版本内容不可变，只通过指针和状态完成生效、替代与撤销。 */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class KnowledgeDocumentVersionService {
@@ -26,6 +36,10 @@ public class KnowledgeDocumentVersionService {
     private final KnowledgeDocumentVersionMapper versionMapper;
     private final KnowledgeBaseService knowledgeBaseService;
     private final ApplicationEventPublisher eventPublisher;
+    private final KnowledgeNodeMapper nodeMapper;
+    private final KnowledgeEmbeddingMapper embeddingMapper;
+    private final KnowledgeDocEmbeddingMapper docEmbeddingMapper;
+    private final KnowledgeImageEmbeddingMapper imageEmbeddingMapper;
 
     @Transactional
     public KnowledgeDocumentVersion createInitialVersion(Long documentId, String fileRef, String sourceHash,
@@ -74,7 +88,26 @@ public class KnowledgeDocumentVersionService {
                 || documentMapper.moveCurrentVersion(documentId, versionId, expectedCurrentVersionId, operatorId) != 1) {
             throw new BusinessException(ErrorCode.CONFLICT, "文档版本冲突，请刷新后重试");
         }
+        // Phase4 实测修复（Bug #5）：生效只移指针不动内容——doc.fileRef 永远停在首版，
+        // 旧节点/向量继续被召回，新版本字节从未入索引，且卡壳状态（如重启残留 EMBEDDING）
+        // 永不恢复。补齐「生效即换内容」：切 fileRef/hash → 置 PENDING → 清旧节点+三池向量
+        // （writeNodes 不清旧，复用解析管线前必须先清，与 ConnectorSyncTxService.resetDocForResync
+        // 同构）→ 事务内发 DocumentUploadedEvent（AFTER_COMMIT 触发完整解析管线重跑）。
+        documentMapper.update(null, new LambdaUpdateWrapper<KnowledgeDocument>()
+                .eq(KnowledgeDocument::getId, documentId)
+                .set(KnowledgeDocument::getFileRef, target.getFileRef())
+                .set(KnowledgeDocument::getFileHash, target.getSourceHash())
+                .set(KnowledgeDocument::getStatus, "PENDING")
+                .set(KnowledgeDocument::getParseError, null));
+        nodeMapper.delete(new LambdaQueryWrapper<KnowledgeNode>()
+                .eq(KnowledgeNode::getDocumentId, documentId));
+        embeddingMapper.deleteByDocument(documentId);
+        docEmbeddingMapper.deleteByDocument(documentId);
+        imageEmbeddingMapper.deleteByDocument(documentId);
+        eventPublisher.publishEvent(new DocumentUploadedEvent(documentId, operatorId));
         eventPublisher.publishEvent(new VisibilityInvalidationEvent(doc.getKbId()));
+        log.info("版本生效 → 重解析 docId={} versionId={} versionNo={}",
+                documentId, versionId, target.getVersionNo());
     }
 
     @Transactional
