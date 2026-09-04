@@ -402,7 +402,7 @@ public class RagRetrievalService {
                                     .map(e -> new com.superprogrammer.knowledge.answer.GroundedAnswerService.Evidence(
                                             e.citationIndex(), e.content())).toList(),
                             Math.max(1, Math.min(5, pack.injected().size())),
-                            batch -> extractGroundedFacts(batch, userId, answerModel));
+                            batch -> extractGroundedFacts(batch, req.getQuery(), userId, answerModel));
             if (grounded.facts().isEmpty()) {
                 return finishAbstain(trace, budget, t0, "INSUFFICIENT", req, l0, l1,
                         bm25Fallback[0], bm25OnlyCands, toEvidencePreview(topK));
@@ -1429,7 +1429,7 @@ public class RagRetrievalService {
                 groundedAnswerService.synthesize(parsed.stream()
                                 .map(e -> new com.superprogrammer.knowledge.answer.GroundedAnswerService.Evidence(
                                         e.citationIndex(), e.content())).toList(),
-                        Math.max(1, Math.min(5, parsed.size())), batch -> extractGroundedFacts(batch, userId, answerModel));
+                        Math.max(1, Math.min(5, parsed.size())), batch -> extractGroundedFacts(batch, query, userId, answerModel));
         if (grounded.facts().isEmpty()) {
             return new GroundedAskResult(evidence, ABSTAIN_MSG, "INSUFFICIENT");
         }
@@ -1605,14 +1605,14 @@ public class RagRetrievalService {
                     .map(e -> new com.superprogrammer.knowledge.answer.GroundedAnswerService.Evidence(
                             e.citationIndex() + offset, e.content()))
                     .toList();
+            String detailQuery = query + "（重点覆盖：" + String.join("；", missing) + "）";
             com.superprogrammer.knowledge.answer.GroundedAnswerService.Result grounded =
                     groundedAnswerService.synthesize(renumbered,
                             Math.max(1, Math.min(5, renumbered.size())),
-                            batch -> extractGroundedFacts(batch, userId, answerModel));
+                            batch -> extractGroundedFacts(batch, detailQuery, userId, answerModel));
             if (grounded.facts().isEmpty()) {
                 return GlobalDetailFollowUp.UNUSED;
             }
-            String detailQuery = query + "（重点覆盖：" + String.join("；", missing) + "）";
             String segment = composeGroundedAnswer(detailQuery, grounded, userId, false, answerModel);
             Set<Integer> whitelist = new HashSet<>();
             for (int i = 1; i <= parsed.size(); i++) {
@@ -1950,9 +1950,11 @@ public class RagRetrievalService {
                 .build();
     }
 
+    /** Phase4 实测修复：提炼 prompt 原写「与回答问题相关」却不传问题——模型瞎猜相关性，
+     *  关键事实（如差旅住宿标准）被当无关丢弃 → 证据明明命中答案层却拒答。query 必入 prompt。 */
     private List<com.superprogrammer.knowledge.answer.GroundedAnswerService.Fact> extractGroundedFacts(
-            List<com.superprogrammer.knowledge.answer.GroundedAnswerService.Evidence> evidence, Long userId,
-            String answerModel) {
+            List<com.superprogrammer.knowledge.answer.GroundedAnswerService.Evidence> evidence, String query,
+            Long userId, String answerModel) {
         String evidenceJson;
         try {
             evidenceJson = objectMapper.writeValueAsString(evidence);
@@ -1966,9 +1968,10 @@ public class RagRetrievalService {
                                 // 14x 冒烟实证：无长度约束时 glm-5.1 对长证据逐条复述 → 输出 1200+ tok，
                                 // 生成 >30s 撞 ClaudeProvider 阻塞读超时/截断 JSON。强约束精简输出。
                                 + "务必精简：只输出 JSON 本身，不加任何解释或代码块；subject≤10字，value≤60字，"
-                                + "每条 citationId 只列编号；只提炼与回答问题相关的关键事实，宁少勿多。")
+                                + "每条 citationId 只列编号；只提炼与「问题」相关的关键事实，宁少勿多。")
                                 .build(),
-                        LlmMessage.builder().role("user").content(evidenceJson).build()))
+                        LlmMessage.builder().role("user").content("问题：" + (query == null ? "" : query)
+                                + "\n证据：" + evidenceJson).build()))
                 .temperature(0.0).maxTokens(ragConfig.getChatMaxTokens()).stream(false).model(answerModel)
                 .callPurpose("GROUNDING_FACT_EXTRACTION").build();
         String content = llmGateway.chat(request, userId).getContent();

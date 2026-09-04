@@ -465,33 +465,53 @@ const optionsModalFile = ref('')
 const optionsModalNames = ref<string[]>([])
 let pendingPreview: SheetPreview | null = null
 let pendingFile: File | null = null
+// Phase4 实测修复：n-upload 多选时对每个文件各调一次 customUpload，单 pendingFile 会被后到
+// 文件覆盖——首个文件被吞（实测：同选两 md 只弹最后一个的选项框）。改入队串行：
+// 当前文件确认上传后自动弹下一个的选项框；取消则整队清空。
+const uploadQueue: File[] = []
+let preparingNext = false
 
 function isExcel(name: string) {
   const n = name.toLowerCase()
   return n.endsWith('.xlsx') || n.endsWith('.xls')
 }
 
-async function customUpload({ file, onFinish, onError }: UploadCustomRequestOptions) {
+async function customUpload({ file, onFinish }: UploadCustomRequestOptions) {
   if (!file.file) return
+  uploadQueue.push(file.file)
+  onFinish()   // n-upload 请求结束（实际上传在 confirm；排队文件同此）
+  await startNextUpload()
+}
+
+/** 队列推进：选项框未开且无在途预读时取队首弹选项框（Excel 先预读 sheet）。 */
+async function startNextUpload() {
+  if (optionsModalShow.value || preparingNext) return
+  const next = uploadQueue.shift()
+  if (!next) return
+  preparingNext = true
   try {
-    pendingFile = file.file
-    if (isExcel(file.name)) {
+    pendingFile = next
+    if (isExcel(next.name)) {
       // Excel：阶段1 预读 sheet 名（供 modal 勾选）
-      const preview = await store.previewSheets(props.kbId, file.file)
+      const preview = await store.previewSheets(props.kbId, next)
       pendingPreview = preview
-      optionsModalFile.value = (preview && preview.fileName) || file.name
+      optionsModalFile.value = (preview && preview.fileName) || next.name
       optionsModalNames.value = (preview && preview.sheetNames) || []
     } else {
       pendingPreview = null
-      optionsModalFile.value = file.name
+      optionsModalFile.value = next.name
       optionsModalNames.value = []
     }
     optionsModalShow.value = true
-    onFinish()   // n-upload 请求结束（实际上传在 confirm）
   } catch {
-    message.error(`上传失败：${file.name}`)
-    onError()
+    message.error(`上传失败：${next.name}`)
+    pendingFile = null
+    pendingPreview = null
+  } finally {
+    preparingNext = false
   }
+  // 预读失败未开框/队列仍有剩余 → 继续推进
+  await startNextUpload()
 }
 
 async function onOptionsConfirm(payload: UploadOptions & { selectedSheets: string[] }) {
@@ -510,6 +530,7 @@ async function onOptionsConfirm(payload: UploadOptions & { selectedSheets: strin
     optionsModalShow.value = false
     pendingPreview = null
     pendingFile = null
+    await startNextUpload()   // 多选队列：弹下一个文件的选项框
   } catch {
     message.error('上传失败')
   } finally {
@@ -521,6 +542,7 @@ function onOptionsCancel() {
   optionsModalShow.value = false
   pendingPreview = null
   pendingFile = null
+  uploadQueue.length = 0   // 主动取消=放弃整批，避免后续排队文件反复弹窗
 }
 
 // ---- 14x-3：直接输入文本入库（docType=FILE + indexMode=MANUAL，复用既有 MANUAL 解析链路）----
