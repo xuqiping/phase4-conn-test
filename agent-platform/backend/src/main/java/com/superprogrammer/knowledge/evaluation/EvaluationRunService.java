@@ -45,9 +45,19 @@ public class EvaluationRunService {
         try {
             List<EvaluationService.EvalCase> cases = repository.listCases(queued.tenantId(), queued.datasetId());
             double recall = 0, mrr = 0, ndcg = 0;
-            int supported = 0, citationValid = 0, faithful = 0, correctAbstention = 0;
+            int supported = 0, citationValid = 0, faithful = 0, correctAbstention = 0, errors = 0;
             for (EvaluationService.EvalCase value : cases) {
-                Outcome outcome = pipeline.evaluate(dataset.kbId(), value.question(), queued.startedBy());
+                Outcome outcome;
+                try {
+                    outcome = pipeline.evaluate(dataset.kbId(), value.question(), queued.startedBy());
+                } catch (RuntimeException error) {
+                    // 单用例故障不废整跑批（LLM 偶发非法输出/网关抖动）：记 ERROR 结果继续，
+                    // 指标均值按 0 分计入该用例，errorCount 汇总暴露故障规模。
+                    repository.insertResult(new Result(0L, queued.id(), value.id(), null, Map.of(),
+                            "ERROR"));
+                    errors++;
+                    continue;
+                }
                 RagMetricsCalculator.Metrics metrics = calculator.calculate(outcome.rankedChunkIds(),
                         new LinkedHashSet<>(value.expectedChunkIds()), 10);
                 Map<String, Double> values = new LinkedHashMap<>();
@@ -69,6 +79,7 @@ public class EvaluationRunService {
             int count = cases.size();
             Map<String, Double> summary = new LinkedHashMap<>();
             summary.put("caseCount", (double) count);
+            summary.put("errorCount", (double) errors);
             summary.put("recall", average(recall, count));
             summary.put("mrr", average(mrr, count));
             summary.put("ndcg", average(ndcg, count));
