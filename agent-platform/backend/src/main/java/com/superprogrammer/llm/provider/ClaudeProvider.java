@@ -107,12 +107,23 @@ public class ClaudeProvider implements LlmProviderInterface {
                     .bodyValue(body)
                     .retrieve()
                     .bodyToMono(String.class)
-                    .block(RESPONSE_TIMEOUT);
+                    // Phase4 实测修复（Bug #10）：改硬编码 RESPONSE_TIMEOUT 为按请求解析——
+                    // GLOBAL map-reduce 等预算敏感调用方传 timeoutMs=min(剩余预算,总预算)，
+                    // 旧硬编码 30s 使超预算调用不中止（实测 reduce 预算 10.3s 实跑 19.3s 未降级）
+                    .block(resolveTimeout(request));
             return parseResponse(responseJson, System.currentTimeMillis() - start);
         } catch (Exception e) {
             log.error("Claude调用失败", e);
             throw new RuntimeException("Claude调用失败: " + e.getMessage(), e);
         }
+    }
+
+    /** 单次调用阻塞上限：请求显式带 timeoutMs 用之（预算敏感调用方），否则回退默认。 */
+    private Duration resolveTimeout(LlmRequest request) {
+        if (request == null || request.getTimeoutMs() == null || request.getTimeoutMs() <= 0) {
+            return RESPONSE_TIMEOUT;
+        }
+        return Duration.ofMillis(request.getTimeoutMs());
     }
 
     @Override
