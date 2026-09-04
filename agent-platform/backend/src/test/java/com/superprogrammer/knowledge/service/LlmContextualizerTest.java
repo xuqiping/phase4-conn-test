@@ -91,8 +91,23 @@ class LlmContextualizerTest {
 
         Map<String, String> out = contextualizer.generateLocators(doc(), null, chunks, 7L);
 
-        // 治理词（授权/所有者/可见）→ 整条丢弃降级，词级替换有残留风险不采用
+        // 强治理词（所有者/可见性等）→ 整条丢弃降级，词级替换有残留风险不采用
         assertEquals(Map.of("/L0-0/L2-1", "第1章 报销流程说明"), out);
+    }
+
+    @Test
+    void subjectWordLocator_kept() {
+        when(llmGateway.chat(any(), any())).thenReturn(LlmResponse.builder().content(
+                """
+                [{"path":"/L0-0/L2-0","locator":"第2章 核心条款 第十条 跨库导出双审批权限条款"},{"path":"/L0-0/L2-1","locator":"权限矩阵表：各角色审批权限速查"}]""").build());
+
+        Map<String, String> out = contextualizer.generateLocators(doc(), null, chunks, 7L);
+
+        // Bug #9 回归：「权限/授权」是权限矩阵类文档的内容主题词而非访问控制元数据——
+        // 保留（否则主题涉权限的文档系统性拿不到定位语，KB15 perm_matrix 实测 contextual_text 恒 NULL）
+        assertEquals(2, out.size());
+        assertTrue(out.get("/L0-0/L2-0").contains("第十条"));
+        assertTrue(out.get("/L0-0/L2-1").contains("权限矩阵"));
     }
 
     @Test

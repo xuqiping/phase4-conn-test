@@ -37,9 +37,16 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class LlmContextualizer {
 
-    /** 定位语不得携带治理信息（Contextualizer 既有约束「不含权限治理信息」的输出侧过滤）。 */
+    /**
+     * 定位语不得携带治理信息（Contextualizer 既有约束「不含权限治理信息」的输出侧过滤）。
+     * Phase4 实测修复（Bug #9）：「权限/授权」两个主题词移出过滤表——权限矩阵/审批条款类文档
+     * 的定位语天然以「权限」为主题（如「第2章 第十条 跨库导出双审批权限条款」），旧表会把
+     * 这类 chunk 的定位语整条丢弃 → 主题涉权限的文档系统性拿不到上下文增强（KB15 perm_matrix
+     * 实测 contextual_text 反复为 NULL）。主题词≠治理信息：定位语描述的是内容主题（检索者
+     * 本就可读 title/content），而访问控制元数据由强治理词（所有者/可见性/保密等）继续拦截。
+     */
     private static final List<String> GOVERNANCE_WORDS = List.of(
-            "所有者", "归属", "授权", "权限", "可见性", "保密", "机密", "密级",
+            "所有者", "归属", "可见性", "保密", "机密", "密级",
             "owner", "permission", "authorized", "confidential");
     private static final int LOCATOR_MAX_CHARS = 50;
 
