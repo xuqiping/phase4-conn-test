@@ -121,6 +121,10 @@
             <span>maxCtx <b>{{ result.tokenBudget.maxContextTokens }}</b></span>
             <span>modelMax <b>{{ result.tokenBudget.modelMaxContext }}</b></span>
             <span>reserve <b>{{ result.tokenBudget.answerTokenReserve }}</b></span>
+            <!-- C3 多轮检索：0=round0 即覆盖（基线行为）；>0=触发了补充轮（缺口锚点补召回） -->
+            <span :class="{ 'rag-debug__rounds-active': (result.tokenBudget.rounds ?? 0) > 0 }">
+              补检索轮 <b>{{ result.tokenBudget.rounds ?? 0 }}</b>
+            </span>
           </div>
         </div>
       </div>
@@ -407,6 +411,13 @@ async function run() {
   color: var(--color-text-secondary);
   font-size: 13px;
   b { color: var(--color-text-primary); }
+}
+/* C3 补检索轮 >0 高亮（触发补充轮=round0 有缺口被补上） */
+.rag-debug__rounds-active {
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-bg, rgba(255, 255, 255, 0.08));
+  b { color: var(--color-primary, #63e2b7); }
 }
 .rag-debug__rel-badge {
   padding: 1px 6px;

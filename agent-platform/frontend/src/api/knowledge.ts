@@ -289,6 +289,8 @@ export interface RagTokenBudget {
   answerTokenReserve: number
   effectiveContextCap: number
   promptTokens: number
+  /** C3 多轮检索：实际补充轮数（0=round0 即覆盖，行为同基线） */
+  rounds?: number
 }
 
 /** C1 相关文档（MAY_BE_CITED 反读，检索结果尾部推荐区） */
