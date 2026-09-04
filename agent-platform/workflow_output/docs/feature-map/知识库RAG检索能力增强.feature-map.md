@@ -60,6 +60,7 @@
 | V174 | `knowledge_bases.colpali_enabled` | ColPali 实验通道每库独立开关 |
 | V175 | `knowledge_connectors`+`knowledge_connector_docs` | 订阅合同（连接器配置，凭证密文）+签收登记本（每文件 etag 账）；账本 uq(connector,external_id) 防重复签收，FK CASCADE 删合同清账本 |
 | V176 | `sync_error_streak` 列 | 送奶工连败计数：连续 3 轮没送到→红灯停送（ERROR 停调度），人工「立即同步」可复位 |
+| V177 | 两表补 `version` 列 | 修 V175 漏建乐观锁列：合同/账本实体继承 BaseEntity（@Version）而建表没这列，真库每轮轮询 SELECT 直接报「字段不存在」——影子对比跑批炸出、单测 mock 层不暴露 |
 
 ## 关键调用链
 

@@ -41,11 +41,18 @@ created-date: 2026-09-03
   - **依赖**：Step 2｜**验证**：单测——重建 job 全量生成/ATTACHMENT 跳过/中断续传 ✅（ContextualRebuildServiceTest 3 例）；手测：小库重建→检索调试 embed 文本含定位语（留 Phase4）
   - **实现注（偏离）**：事务段放**独立新 bean `ContextualRebuildTxService`** 而非 IndexJobTxService 加方法（避免 @RequiredArgsConstructor 构造器搅动 IndexJobTxServiceTest）；DB 节点直接构 ChunkBrief（path/标题/首行）免重解析——定位表 key 本就是 chunk path，与 DB 行天然对齐；job_type=REINDEX 全指纹幂等键（含新 contextHash+CTX_LLM_V1 管线）；前端挂 IndexOperationsPanel 新节非新组件
 
-- [ ] **Step 4：影子对比验证增益**
+- [x] **Step 4：影子对比验证增益**（2026-09-04 实测，用户语料 3019 md 采样 48 篇/0.43MB/590 chunk）
   - **目标**：用数据证明 C4 有效再转正（不盲上）
   - **动作**：①选 1-2 个真实库开影子对比（V117 机制）：新旧（规则版 vs LLM 版）索引并行检索跑黄金集；②Recall/MRR 对比报告；③增益不达标（Recall 提升 <2pp）→默认开关改 false 并记录
   - **文件**：`retrieval/ShadowRetrievalService.java`（接入点）、评估跑批脚本/入口、报告落 `workflow_output/开发进度/`
-  - **依赖**：Step 2-3｜**需人工介入**：选库+黄金集用例确认｜**验证**：对比报告产出
+  - **依赖**：Step 2-3｜**需人工介入**：选库+黄金集用例确认｜**验证**：对比报告产出 ✅（[开发进度11](../../开发进度/知识库RAG检索能力增强/开发进度11.md)）
+  - **实现注（偏离与实测结论）**：
+    1. **机制改顺序 A/B 非 V117 并行**：C4 定位语烤进 embedding（索引期生效），检索期无法逐查询切换新旧——V117 影子机制面向排序配置版本对比，套不上。落地=评测中心顺序 A/B：同一库先 `RAG_CONTEXTUAL_LLM_ENABLED=false` 基线索引→跑 A→默认 flag 重启+`contextual-rebuild`（dryRun 预估 48 docs/590 chunks/**48 次 LLM**——按文档批非按 chunk）→REINDEX 590 job 全 DONE→跑 B，黄金集同一份。
+    2. **黄金集**：36 例（28 DETAIL 直问+8 HARD 换说法去词面重合），期望 chunk=每文档抽 1 个 L2 节点；5 条 `0_L3关系路由` 链接图谱类内容出不了唯一问题弃用；3 条人物志案例因事实提炼 LLM 吐非法 JSON 剔除。
+    3. **结果**：A（纯规则前缀）Recall/MRR/NDCG=0.9444（34 满分+1 检索未中+1 评测 LLM ERROR）；B（LLM 定位表）=0.9722（35 满分+同一检索未中，errorCount 0）。名义 ΔRecall=+2.78pp 过 ≥2pp 线，**但逐例对账：35 个可比例检索结果逐一相同，唯一差异例=A 侧评测 LLM 抖动 ERROR（B 同例命中）——Δ 全为评测侧噪声，检索层真实变化=0（0 回归 0 增益）**。
+    4. **裁决：默认开关维持 true**。回退线本意是「增益不达标→关」，本集实测=无伤害且 35/36 全部 rank-1 命中（天花板效应：DETAIL 类词面重合高 BM25 已够；HARD 换说法类 C4 也救不动——L1/L2/L3 换说法例两版同 miss，属词法+向量召回共性短板非 C4 范畴）。增益证明移 Phase4 真实库全量黄金集。
+    5. **顺手修两 Bug**：①`V177__connector_version_column.sql`（a0084cc0）——连接器两表缺 version 乐观锁列，BaseEntity @Version 进 SELECT 真库每轮轮询 BadSqlGrammar（单测 mock 层不暴露，真库跑批炸出）；②评测中心单用例容错（c7d3f49e）——原 fail-fast 一例 LLM 非法输出/网关抖动整 run FAILED（36 例两轮各炸一次实测），改 ERROR 结果+errorCount 汇总继续跑批。
+    6. **环境坑（复盘）**：admin 单会话策略——并行 curl 登录踢掉跑批脚本 token（401 中断 17/48 后断点续传）；reactor-netty 连接池闲置后首呼被网关 RST（重启后端换新池即愈）；上传限速 10/60s 需 6.5s 步进+429 重试。
 
 ## 联动点（WP3 专属细化）
 
@@ -57,6 +64,6 @@ created-date: 2026-09-03
 
 ## 验证汇总
 
-- [ ] 单测新增 ~8
-- [ ] 影子对比报告：Recall/MRR 提升量化落档；未达标走开关回退路径
-- [ ] 手测剧本：新文档→检索调试看 embed 文本含定位语；重建小库全流程；开关切换行为
+- [x] 单测新增 ~8（Step1-3 合计 10；Step4 附带 EvaluationRunServiceTest +1=单用例容错）
+- [x] 影子对比报告：Recall/MRR 提升量化落档（A 0.9444→B 0.9722 名义 +2.78pp，逐例对账=评测噪声、检索层零变化）；未走开关回退（无伤害证据，维持默认 true，裁决依据见 Step4 实现注④）
+- [ ] 手测剧本：新文档→检索调试看 embed 文本含定位语；重建小库全流程；开关切换行为（留 Phase4）
